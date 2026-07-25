@@ -1,4 +1,5 @@
 import Foundation
+import Markdown
 
 enum ChatMarkdownPreprocessor {
     /// Keep in sync with `src/auto-reply/reply/strip-inbound-meta.ts`
@@ -29,8 +30,80 @@ enum ChatMarkdownPreprocessor {
         "Zalo Personal",
     ]
 
-    private static let markdownImagePattern = #"!\[([^\]]*)\]\(([^)]+)\)"#
     private static let messageIdHintPattern = #"^\s*\[message_id:\s*[^\]]+\]\s*$"#
+
+    private struct ParsedImage {
+        let range: Range<String.Index>
+        let label: String
+        let source: String
+    }
+
+    private struct ImageCollector: MarkupWalker {
+        private let markdown: String
+        private let lineStarts: [String.Index]
+        private(set) var images: [ParsedImage] = []
+
+        init(markdown: String) {
+            self.markdown = markdown
+            var lineStarts = [markdown.startIndex]
+            let bytes = markdown.utf8
+            for index in bytes.indices {
+                let byte = bytes[index]
+                guard byte == 0x0A || byte == 0x0D else { continue }
+                let next = bytes.index(after: index)
+                // CommonMark treats CRLF as one line ending, while Swift
+                // treats it as one Character; only its final byte is a line.
+                if byte == 0x0D, next < bytes.endIndex, bytes[next] == 0x0A {
+                    continue
+                }
+                if let lineStart = String.Index(next, within: markdown) {
+                    lineStarts.append(lineStart)
+                }
+            }
+            self.lineStarts = lineStarts
+        }
+
+        mutating func visitImage(_ image: Markdown.Image) {
+            guard let source = image.source,
+                  let sourceRange = image.range,
+                  let lowerBound = self.index(at: sourceRange.lowerBound),
+                  let upperBound = self.index(at: sourceRange.upperBound),
+                  lowerBound <= upperBound
+            else {
+                return
+            }
+            self.images.append(ParsedImage(
+                range: lowerBound..<upperBound,
+                label: image.plainText,
+                source: source))
+        }
+
+        private func index(at location: SourceLocation) -> String.Index? {
+            guard location.line > 0,
+                  location.column > 0,
+                  self.lineStarts.indices.contains(location.line - 1)
+            else {
+                return nil
+            }
+
+            let bytes = self.markdown.utf8
+            guard let lineStart = self.lineStarts[location.line - 1].samePosition(in: bytes),
+                  let byteIndex = bytes.index(
+                      lineStart,
+                      offsetBy: location.column - 1,
+                      limitedBy: bytes.endIndex),
+                  let index = String.Index(byteIndex, within: self.markdown)
+            else {
+                return nil
+            }
+            if self.lineStarts.indices.contains(location.line),
+               index >= self.lineStarts[location.line]
+            {
+                return nil
+            }
+            return index
+        }
+    }
 
     struct InlineImage: Identifiable {
         let id = UUID()
@@ -48,29 +121,28 @@ enum ChatMarkdownPreprocessor {
         let withoutMessageIdHints = self.stripMessageIdHints(withoutEnvelope)
         let withoutContextBlocks = self.stripInboundContextBlocks(withoutMessageIdHints)
         let withoutTimestamps = self.stripPrefixedTimestamps(withoutContextBlocks)
-        guard let re = try? NSRegularExpression(pattern: self.markdownImagePattern) else {
+        guard withoutTimestamps.contains("![") else {
             return Result(cleaned: self.normalize(withoutTimestamps), images: [])
         }
 
-        let ns = withoutTimestamps as NSString
-        let matches = re.matches(
-            in: withoutTimestamps,
-            range: NSRange(location: 0, length: ns.length))
-        if matches.isEmpty { return Result(cleaned: self.normalize(withoutTimestamps), images: []) }
+        // Only parsed image nodes are renderable. Regex also matches fenced,
+        // indented, escaped, and inline code and silently corrupts transcripts.
+        var collector = ImageCollector(markdown: withoutTimestamps)
+        collector.visit(Document(parsing: withoutTimestamps))
+        guard !collector.images.isEmpty else {
+            return Result(cleaned: self.normalize(withoutTimestamps), images: [])
+        }
 
         var images: [InlineImage] = []
         let cleaned = NSMutableString(string: withoutTimestamps)
 
-        for match in matches.reversed() {
-            guard match.numberOfRanges >= 3 else { continue }
-            let label = ns.substring(with: match.range(at: 1))
-            let source = ns.substring(with: match.range(at: 2))
-
-            if let inlineImage = self.inlineImage(label: label, source: source) {
+        for image in collector.images.reversed() {
+            let range = NSRange(image.range, in: withoutTimestamps)
+            if let inlineImage = self.inlineImage(label: image.label, source: image.source) {
                 images.append(inlineImage)
-                cleaned.replaceCharacters(in: match.range, with: "")
+                cleaned.replaceCharacters(in: range, with: "")
             } else {
-                cleaned.replaceCharacters(in: match.range, with: self.fallbackImageLabel(label))
+                cleaned.replaceCharacters(in: range, with: self.fallbackImageLabel(image.label))
             }
         }
 
