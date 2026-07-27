@@ -421,7 +421,10 @@ export function listSessionsFromStore(params: {
       creatorEntries,
       sharedRowContext?.userProfileLabelById ?? new Map(),
     ),
-    defaults: getSessionDefaults(cfg, params.modelCatalog, { allowPluginNormalization: false }),
+    defaults: getSessionDefaults(cfg, params.modelCatalog, {
+      ...(typeof opts.agentId === "string" ? { agentId: opts.agentId } : {}),
+      allowPluginNormalization: false,
+    }),
     sessions,
   };
 }
@@ -558,7 +561,10 @@ export async function listSessionsFromStoreAsync(params: {
         creatorEntries,
         sharedRowContext?.userProfileLabelById ?? new Map(),
       ),
-      defaults: getSessionDefaults(cfg, params.modelCatalog, { allowPluginNormalization: false }),
+      defaults: getSessionDefaults(cfg, params.modelCatalog, {
+        ...(typeof opts.agentId === "string" ? { agentId: opts.agentId } : {}),
+        allowPluginNormalization: false,
+      }),
       sessions,
     };
   });

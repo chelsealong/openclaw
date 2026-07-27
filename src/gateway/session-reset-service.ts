@@ -169,6 +169,7 @@ export function emitGatewaySessionEndPluginHook(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     cfg: params.cfg,
+    agentId: params.agentId,
     reason: params.reason,
     sessionFile: transcript.sessionFile,
     transcriptArchived: transcript.transcriptArchived,
@@ -218,6 +219,7 @@ export function emitGatewaySessionStartPluginHook(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     cfg: params.cfg,
+    agentId: params.agentId,
     resumedFrom: params.resumedFrom,
   });
   void runWithGatewayIndependentRootWorkContinuation(async () => {
@@ -282,6 +284,7 @@ export async function drainActiveSessionsForShutdown(params: {
           sessionId: entry.sessionId,
           sessionKey: entry.sessionKey,
           cfg: entry.cfg,
+          agentId: entry.agentId,
           reason: params.reason,
           sessionFile: transcript.sessionFile,
           transcriptArchived: transcript.transcriptArchived,
