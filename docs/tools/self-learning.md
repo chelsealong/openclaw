@@ -133,6 +133,14 @@ The foreground answer is never delayed for learning. A failed or ineligible
 turn does not start experience review, although direct user corrections can
 still be offered as a suggestion when autonomy is disabled.
 
+## Runtime support
+
+Delayed experience review requires the embedded runner inside a long-running
+Gateway. Sessions on CLI-backed agent runtimes, for example the Codex app-server
+harness used by `openai/*` models, fail closed and never schedule experience
+review. Deterministic correction capture and `/learn` still work on those
+runtimes.
+
 ## What the reviewer receives
 
 The background reviewer receives only the current turn, starting at its most
