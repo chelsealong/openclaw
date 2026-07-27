@@ -242,6 +242,8 @@ export type EmbeddedRunAttemptResult = {
   bootstrapPromptWarningSignature?: string;
   systemPromptReport?: SessionSystemPromptReport;
   finalPromptText?: string;
+  /** Exact provider-response count when the harness can observe model iterations directly. */
+  modelIterations?: number;
   messagesSnapshot: AgentMessage[];
   /**
    * Complete application transcript frozen through a settled tool boundary.
