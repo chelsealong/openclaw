@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWithAgentToolExecutionContext } from "../../packages/agent-core/src/tool-execution-context.js";
 import { setPluginToolMeta } from "../plugins/tools.js";
 import type { Skill } from "../skills/loading/skill-contract.js";
+import { resolveSkillsPromptForRun } from "../skills/loading/workspace.js";
+import { createFixtureSkillEntry } from "../skills/test-support/test-helpers.js";
 import { buildBlockedToolResult } from "./agent-tools.before-tool-call.js";
 import { createOpenClawReadTool } from "./agent-tools.read.js";
 import { resolveCodeModeSkills, type CodeModeSkill } from "./code-mode-skills.js";
@@ -953,6 +955,24 @@ describe("Code Mode", () => {
     expect(details.output).toEqual([{ type: "text", text: "created" }]);
     expect(details.telemetry).toMatchObject({ searchCount: 1, describeCount: 0, callCount: 1 });
     expect(ticket.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Code Mode skill parsing aligned with the production prompt renderer", () => {
+    const entries = [createFixtureSkillEntry("alpha"), createFixtureSkillEntry("beta")];
+    const skillsPrompt = resolveSkillsPromptForRun({
+      entries,
+      workspaceDir: "/workspace",
+    });
+
+    expect(
+      resolveCodeModeSkills({
+        skillsPrompt,
+        candidates: entries.map((entry) => entry.skill),
+      }).map(({ name, location }) => ({ name, location })),
+    ).toEqual([
+      { name: "alpha", location: "/skills/alpha/SKILL.md" },
+      { name: "beta", location: "/skills/beta/SKILL.md" },
+    ]);
   });
 
   it("lists and reads only prompt-eligible skills through the worker bridge", async () => {
