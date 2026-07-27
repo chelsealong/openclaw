@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantMessage } from "../llm/types.js";
+import { mintSecretSentinel } from "../secrets/sentinel.js";
 import type { AgentHarness } from "./harness/types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -134,6 +135,54 @@ describe("runIsolatedCompletion", () => {
         sourceAuthFingerprint: "fingerprint",
         systemPrompt: "Return JSON.",
         prompt: "Do the task.",
+      }),
+    );
+  });
+
+  it("unwraps prepared credentials only at the external harness boundary", async () => {
+    const apiKey = mintSecretSentinel("github-source-token", { label: "isolated-auth" });
+    const authorization = mintSecretSentinel("Bearer github-source-token", {
+      label: "isolated-header",
+    });
+    mocks.prepareSimpleCompletionModel.mockResolvedValueOnce({
+      model: {
+        provider: "github-copilot",
+        id: "gpt-test",
+        api: "openai-responses",
+        headers: { Authorization: authorization },
+      },
+      auth: {
+        apiKey,
+        source: "profile:github-copilot:test",
+        mode: "token",
+      },
+      sourceAuthFingerprint: "fingerprint",
+    });
+    const runIsolatedCompletionHarness = vi.fn(async () => ({
+      assistant: assistant([{ type: "text", text: "done" }]),
+    }));
+    mocks.getRegisteredAgentHarness.mockReturnValue({
+      harness: {
+        id: "copilot",
+        label: "Copilot",
+        supports: () => ({ supported: true }),
+        runAttempt: vi.fn(),
+        runIsolatedCompletion: runIsolatedCompletionHarness,
+      } satisfies AgentHarness,
+    });
+
+    await runIsolatedCompletion({
+      ...request(),
+      provider: "github-copilot",
+      agentHarnessRuntimeOverride: "copilot",
+    });
+
+    expect(runIsolatedCompletionHarness).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ apiKey: "github-source-token" }),
+        model: expect.objectContaining({
+          headers: { Authorization: "Bearer github-source-token" },
+        }),
       }),
     );
   });

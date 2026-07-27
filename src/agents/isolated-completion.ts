@@ -22,6 +22,10 @@ import {
   isCliRuntimeAliasForProvider,
   resolveCliRuntimeExecutionProvider,
 } from "./model-runtime-aliases.js";
+import {
+  unwrapModelHeaderSentinelsForProviderEgress,
+  unwrapSecretSentinelsForProviderEgress,
+} from "./provider-secret-egress.js";
 import { prepareSimpleCompletionModel } from "./simple-completion-runtime.js";
 import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
 
@@ -233,6 +237,30 @@ async function resolveHarness(runtime: string): Promise<AgentHarness> {
   return harness;
 }
 
+function prepareIsolatedHarnessParams(
+  harness: AgentHarness,
+  params: AgentHarnessIsolatedCompletionParams,
+): AgentHarnessIsolatedCompletionParams {
+  if (harness.id === "openclaw") {
+    return params;
+  }
+  // External harnesses are the provider egress boundary. Keep credentials
+  // sentinelized until this owner is selected, then hand it usable values.
+  const boundary = "plugin harness isolated completion handoff";
+  const apiKey = params.auth.apiKey
+    ? unwrapSecretSentinelsForProviderEgress(params.auth.apiKey, boundary)
+    : params.auth.apiKey;
+  const model = unwrapModelHeaderSentinelsForProviderEgress(params.model, boundary);
+  if (apiKey === params.auth.apiKey && model === params.model) {
+    return params;
+  }
+  return {
+    ...params,
+    model,
+    auth: { ...params.auth, apiKey },
+  };
+}
+
 /** Run one fresh completion without any model-callable tool surface or fallback. */
 export async function runIsolatedCompletion(
   request: RunIsolatedCompletionParams,
@@ -323,7 +351,9 @@ export async function runIsolatedCompletion(
     thinkLevel: request.thinkLevel,
     streamParams: request.streamParams,
   };
-  const result = await harness.runIsolatedCompletion(harnessParams);
+  const result = await harness.runIsolatedCompletion(
+    prepareIsolatedHarnessParams(harness, harnessParams),
+  );
   return {
     text: requireIsolatedAssistantText(result.assistant),
     provider: result.assistant.provider,
