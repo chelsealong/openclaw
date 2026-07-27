@@ -439,8 +439,8 @@ describe("qa cli runtime", () => {
         outputDir: ".artifacts/qa-e2e/smoke-ci",
         profile: "smoke-ci",
         surface: "channels",
-        category: "channels.outbound-delivery-and-reply-pipeline",
-        scenarioIds: ["channel-top-level-reply-shape"],
+        category: "channels.channel-actions-commands-and-approvals",
+        scenarioIds: ["telegram-commands-command"],
         transportId: "qa-channel",
         fastMode: true,
         concurrency: 2,
@@ -461,7 +461,7 @@ describe("qa cli runtime", () => {
         channel: "telegram",
         channelDriver: "crabline",
       });
-      expect(suiteArgs.scenarioIds).toEqual(["channel-top-level-reply-shape"]);
+      expect(suiteArgs.scenarioIds).toEqual(["telegram-commands-command"]);
       expect(process.env.OPENCLAW_QA_PROFILE).toBe("release");
       const evidence = JSON.parse(await fs.readFile(suiteEvidencePath, "utf8")) as {
         evidenceMode?: unknown;
@@ -487,15 +487,11 @@ describe("qa cli runtime", () => {
       expect(evidence.scorecard).not.toHaveProperty("kind");
       expect(evidence.scorecard).not.toHaveProperty("taxonomy");
       expect(evidence.scorecard).not.toHaveProperty("profile");
-      expect(evidence.scorecard?.coverageIds?.fulfilled).toBe(1);
       expect(evidence.scorecard?.categoryReports?.[0]).toMatchObject({
-        id: "channels.outbound-delivery-and-reply-pipeline",
-        coverageIds: {
-          fulfilled: 1,
-        },
+        id: "channels.channel-actions-commands-and-approvals",
       });
       expect(evidence.entries?.[0]).not.toHaveProperty("execution");
-      expect(JSON.stringify(evidence.scorecard)).not.toContain("channel-top-level-reply-shape");
+      expect(JSON.stringify(evidence.scorecard)).not.toContain("telegram-commands-command");
       expectWriteContains(stdoutWrite, "QA run profile: smoke-ci; categories: 1; scenarios:");
       expectWriteContains(stdoutWrite, `QA profile scorecard: ${suiteEvidencePath}`);
     } finally {
@@ -572,34 +568,8 @@ describe("qa cli runtime", () => {
 
     const suiteArgs = mockFirstObjectArg(runQaSuite);
     expect(suiteArgs.channelDriver).toBe("crabline");
-    expect(suiteArgs.scenarioIds).toContain("channel-top-level-reply-shape");
-    expect(suiteArgs.scenarioIds).not.toEqual(
-      expect.arrayContaining([
-        "instruction-followthrough-repo-contract",
-        "subagent-forked-context",
-        "subagent-handoff",
-        "group-message-tool-unavailable-fallback",
-        "qa-channel-reconnect-dedupe",
-        "reaction-edit-delete",
-        "claude-cli-provider-capabilities",
-        "claude-cli-provider-capabilities-subscription",
-        "image-generation-roundtrip",
-        "image-understanding-attachment",
-        "native-image-generation",
-        "active-memory-preprompt-recall",
-        "memory-recall",
-        "session-memory-ranking",
-        "thread-memory-isolation",
-        "personal-channel-thread-reply",
-        "personal-memory-preference-recall",
-        "personal-reminder-roundtrip",
-        "cron-natural-fire-no-duplicate",
-        "cron-one-minute-ping",
-        "cron-single-run-no-duplicate",
-        "control-ui-qa-channel-image-roundtrip",
-        "config-apply-restart-wakeup",
-      ]),
-    );
+    expect(suiteArgs.scenarioIds).toContain("telegram-commands-command");
+    expect(suiteArgs.scenarioIds).not.toContain("control-ui-qa-channel-image-roundtrip");
   });
 
   it("rejects explicit profile selections with an incompatible scenario", async () => {
@@ -607,7 +577,7 @@ describe("qa cli runtime", () => {
       runQaProfileCommand({
         repoRoot: "/tmp/openclaw-repo",
         profile: "smoke-ci",
-        scenarioIds: ["channel-top-level-reply-shape", "control-ui-qa-channel-image-roundtrip"],
+        scenarioIds: ["control-ui-qa-channel-image-roundtrip"],
       }),
     ).rejects.toThrow(
       "qa run --qa-profile smoke-ci cannot run explicitly selected scenario(s): control-ui-qa-channel-image-roundtrip (channelDriver=qa-channel).",
@@ -664,7 +634,9 @@ describe("qa cli runtime", () => {
         repoRoot: "/tmp/openclaw-repo",
         profile: "nightly",
       }),
-    ).rejects.toThrow('--qa-profile must be one of smoke-ci, release, all, got "nightly".');
+    ).rejects.toThrow(
+      '--qa-profile must be one of smoke-ci, personal-agent, observability, release, all, got "nightly".',
+    );
     expect(runQaSuite).not.toHaveBeenCalled();
   });
 
@@ -1099,8 +1071,8 @@ describe("qa cli runtime", () => {
     expect(runQaFlowSuiteFromRuntime).toHaveBeenCalledWith(
       expect.objectContaining({
         scenarioIds: expect.arrayContaining([
-          "channel-canary",
-          "channel-mention-gating",
+          "telegram-commands-command",
+          "telegram-help-command",
           "telegram-other-bot-command-gating",
         ]),
       }),
@@ -1131,7 +1103,7 @@ describe("qa cli runtime", () => {
     vi.stubEnv("OPENCLAW_QA_TELEGRAM_SUT_UID", "1001");
     await runQaTelegramCommand({
       repoRoot: candidateRoot,
-      scenarioIds: ["telegram-help-command", "telegram-stream-final-single-message"],
+      scenarioIds: ["telegram-help-command", "telegram-commands-command"],
     });
 
     const sutOpenClawCommand = {
@@ -1252,7 +1224,7 @@ describe("qa cli runtime", () => {
         repoRoot: "/tmp/openclaw-repo",
         scenarioIds: ["telegram-help-command", "missing-telegram-scenario"],
       }),
-    ).rejects.toThrow("unknown Telegram QA scenario id(s): missing-telegram-scenario");
+    ).rejects.toThrow("unknown QA scenario id(s): missing-telegram-scenario");
 
     expect(runQaFlowSuiteFromRuntime).not.toHaveBeenCalled();
   });
@@ -1717,31 +1689,6 @@ describe("qa cli runtime", () => {
     });
   });
 
-  it("expands the personal-agent pack onto the suite scenario list", async () => {
-    await runQaSuiteCommand({
-      repoRoot: "/tmp/openclaw-repo",
-      pack: "personal-agent",
-      scenarioIds: ["channel-chat-baseline"],
-    });
-
-    expectFields(mockFirstObjectArg(runQaSuite), {
-      repoRoot: path.resolve("/tmp/openclaw-repo"),
-      scenarioIds: [
-        "channel-chat-baseline",
-        "personal-reminder-roundtrip",
-        "personal-channel-thread-reply",
-        "personal-memory-preference-recall",
-        "personal-redaction-no-secret-leak",
-        "personal-tool-safety-followthrough",
-        "personal-approval-denial-stop",
-        "personal-task-followthrough-status",
-        "personal-share-safe-diagnostics-artifact",
-        "personal-no-fake-progress",
-        "personal-failure-recovery",
-      ],
-    });
-  });
-
   it("expands runtime-pair lane selections onto the suite scenario list", async () => {
     await runQaSuiteCommand({
       repoRoot: "/tmp/openclaw-repo",
@@ -1859,17 +1806,6 @@ describe("qa cli runtime", () => {
         runtimePairLane: ["coreish"],
       }),
     ).rejects.toThrow('--runtime-pair-lane must be one of core, extended, soak, got "coreish".');
-  });
-
-  it("rejects unknown suite packs", async () => {
-    await expect(
-      runQaSuiteCommand({
-        repoRoot: "/tmp/openclaw-repo",
-        pack: "personal-admin",
-      }),
-    ).rejects.toThrow(
-      '--pack must be one of personal-agent, observability, smoke-ci, got "personal-admin"',
-    );
   });
 
   it("rejects unknown suite CLI auth modes", async () => {
