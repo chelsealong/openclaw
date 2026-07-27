@@ -160,7 +160,7 @@ function defaultChannelSetupWizardRunner(
     const snapshot = await readSetupConfigFileSnapshot();
     if (!snapshot.exists || !snapshot.valid || !snapshot.hash) {
       throw new Error(
-        "Channel setup requires a valid saved config snapshot. Run `openclaw doctor --fix`, then retry.",
+        "Channel setup requires a valid saved config snapshot. On the machine running OpenClaw, `openclaw doctor --fix` repairs it; then retry.",
       );
     }
     const baseConfig = snapshot.sourceConfig ?? snapshot.config;
@@ -909,7 +909,7 @@ export class SystemAgentChatEngine {
       this.clearPendingProposals();
       if (this.opts.surface === "gateway") {
         return {
-          text: "The app owns the setup screens here — use Settings, or run `openclaw onboard` in a terminal.",
+          text: "Setup has its own screens here — open Settings to change your model or connect a channel. On the machine running OpenClaw, `openclaw onboard` does the same job.",
           action: "none",
         };
       }
@@ -1127,7 +1127,7 @@ export class SystemAgentChatEngine {
     }
     return [
       "No usable inference route is configured, so OpenClaw cannot continue.",
-      "Exit and run `openclaw onboard`; it saves only a route that passes a live test.",
+      "Connecting a model happens on the machine running OpenClaw: `openclaw onboard` there saves only a route that passes a live test.",
     ].join("\n");
   }
 
@@ -1158,7 +1158,7 @@ export class SystemAgentChatEngine {
     return {
       text: [
         "Changing provider credentials would replace the inference route powering this session.",
-        "Exit OpenClaw and run `openclaw onboard`; it stages credentials, live-tests the new route, and saves only a passing setup. Then start OpenClaw again.",
+        "That happens on the machine running OpenClaw, with `openclaw onboard`: it stages credentials, live-tests the new route, and saves only a passing setup. OpenClaw has to start again afterward.",
       ].join("\n"),
       action: "none",
     };
