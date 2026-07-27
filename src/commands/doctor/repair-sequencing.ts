@@ -16,6 +16,7 @@ import {
   maybeRepairManagedNpmOpenClawPeerLinks,
   maybeRepairStaleManagedNpmBundledPlugins,
 } from "../doctor-plugin-registry.js";
+import { migrateLegacySkillWorkshopProposals } from "../doctor-skill-workshop-sqlite.js";
 import { collectActiveToolSchemaProjectionWarnings } from "./shared/active-tool-schema-warnings.js";
 import { maybeRepairGroupAllowFromFallback } from "./shared/allowfrom-fallback-migration.js";
 import { maybeRepairAllowlistPolicyAllowFrom } from "./shared/allowlist-policy-repair.js";
@@ -220,6 +221,7 @@ export async function runDoctorRepairSequence(params: {
   appendNotes(warningNotes, emptyAllowlistWarnings);
 
   await applyRepairStages([maybeRepairLegacyToolsBySenderKeys, maybeRepairExecSafeBinProfiles]);
+  appendRepairNotes(await migrateLegacySkillWorkshopProposals({ config: state.candidate, env }));
   appendRepairNotes(await cleanupLegacyPluginDependencyState({ env }));
   appendRepairNotes(
     migrateLegacyOnboardingRecommendationsScope({
