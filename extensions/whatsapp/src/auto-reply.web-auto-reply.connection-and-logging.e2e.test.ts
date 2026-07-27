@@ -314,6 +314,37 @@ describe("web auto-reply connection", () => {
     expectErrorContaining(runtime.error, "Retry 1/2");
   });
 
+  it("returns a terminal result for an opening-phase remote logout", async () => {
+    vi.mocked(waitForWaConnection).mockRejectedValueOnce({
+      output: { statusCode: 401 },
+    });
+    const listenerFactory = vi.fn(async () => createMockWebListener());
+    const sleep = vi.fn(async () => {});
+    const statuses: Array<{
+      running?: boolean;
+      connected?: boolean;
+      healthState?: string;
+    }> = [];
+    const { runtime, run } = startWebAutoReplyMonitor({
+      monitorWebChannelFn: monitorWebChannel as never,
+      listenerFactory,
+      sleep,
+      statusSink: (next) => statuses.push({ ...next }),
+    });
+
+    await expect(run).resolves.toEqual({ outcome: "terminal" });
+
+    expect(waitForWaConnection).toHaveBeenCalledOnce();
+    expect(listenerFactory).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(statuses.at(-1)).toMatchObject({
+      running: false,
+      connected: false,
+      healthState: "logged-out",
+    });
+    expectErrorContaining(runtime.error, "openclaw channels login --channel whatsapp");
+  });
+
   it("keeps post-open Baileys 428 on the reconnect path", async () => {
     const sleep = vi.fn(async () => {});
     const scripted = createScriptedWebListenerFactory();

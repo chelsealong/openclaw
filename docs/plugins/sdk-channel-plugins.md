@@ -206,6 +206,17 @@ resolved config unchanged, stopping one account settles only that account's
 monitor and drain, and a fresh monitor recovers that account's rows exactly
 once. If any guarantee cannot be proved, omit the flag.
 
+#### Terminal account exits
+
+`gateway.startAccount` normally runs until its abort signal fires. If it throws
+or resolves without the typed terminal result, the Gateway treats the exit as a
+crash and applies the existing restart policy. When an account reaches a state that requires
+operator action and must not restart, set an actionable status and return
+`{ outcome: "terminal" }`. The Gateway preserves that status, marks the account
+stopped with `restartPending: false`, and does not schedule a replacement.
+Return exactly that plain object literal: no extra keys, inherited discriminator,
+array, or class instance is accepted, because legacy adapters may resolve arbitrary values.
+
 ### Typing indicators
 
 If your channel supports typing indicators outside inbound replies, expose

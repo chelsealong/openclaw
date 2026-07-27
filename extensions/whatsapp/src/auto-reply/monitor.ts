@@ -1,6 +1,7 @@
 // Whatsapp plugin module implements monitor behavior.
 import type { WAMessageKey } from "baileys";
 import { CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY } from "openclaw/plugin-sdk/approval-handler-runtime";
+import type { ChannelGatewayStartResult } from "openclaw/plugin-sdk/channel-contract";
 import { shouldDebounceTextInbound } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveInboundDebounceMs } from "openclaw/plugin-sdk/channel-inbound-debounce";
 import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runtime-context";
@@ -132,7 +133,7 @@ export async function monitorWebChannel(
   runtime: RuntimeEnv = defaultRuntime,
   abortSignal?: AbortSignal,
   tuning: WebMonitorTuning = {},
-) {
+): Promise<void | ChannelGatewayStartResult> {
   const activeReplyResolver =
     replyResolver ?? (await loadReplyResolverRuntime()).getReplyFromConfig;
   const runId = newConnectionId();
@@ -405,6 +406,9 @@ export async function monitorWebChannel(
               );
             }
             await controller.shutdown();
+            if (setupDecision.healthState === "logged-out") {
+              return { outcome: "terminal" };
+            }
             break;
           }
           reconnectLogger.info(
@@ -646,6 +650,9 @@ export async function monitorWebChannel(
         }
 
         await controller.shutdown();
+        if (decision.healthState === "logged-out") {
+          return { outcome: "terminal" };
+        }
         break;
       }
 

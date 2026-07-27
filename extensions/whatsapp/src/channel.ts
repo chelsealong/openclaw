@@ -248,11 +248,13 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
                 selfId: { e164: null, jid: null, lid: null },
               };
           const linked =
-            typeof snapshot.linked === "boolean"
-              ? snapshot.linked
-              : auth.state === "unstable"
-                ? undefined
-                : auth.state === "linked";
+            snapshot.healthState === "logged-out"
+              ? false
+              : typeof snapshot.linked === "boolean"
+                ? snapshot.linked
+                : auth.state === "unstable"
+                  ? undefined
+                  : auth.state === "linked";
           const summaryAuthState =
             auth.state === "unstable"
               ? auth.state
@@ -301,16 +303,18 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
         resolveAccountSnapshot: async ({ account, runtime }) => {
           const channelRuntime = await loadWhatsAppChannelRuntime();
           const authState = await channelRuntime.readWebAuthState(account.authDir);
+          const locallyRevoked = runtime?.healthState === "logged-out";
+          const effectiveAuthState = locallyRevoked ? "not-linked" : authState;
           return {
             accountId: account.accountId,
             name: account.name,
             enabled: account.enabled,
-            configured: true,
+            configured: !locallyRevoked,
             extra: {
-              statusState: authState,
-              ...(authState === "linked"
+              statusState: effectiveAuthState,
+              ...(effectiveAuthState === "linked"
                 ? { linked: true }
-                : authState === "not-linked"
+                : effectiveAuthState === "not-linked"
                   ? { linked: false }
                   : {}),
               connected: runtime?.connected ?? false,

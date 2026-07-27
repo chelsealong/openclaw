@@ -182,7 +182,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +1: shared plugin SecretRef setup plan helper.
       // +1: shared multi-claim ingress lifecycle fan-in.
       // +3: channel prompt-context entry/compat types and channel metadata builder.
-      4727,
+      // +1: typed terminal channel account start result.
+      4728,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(

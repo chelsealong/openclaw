@@ -292,7 +292,16 @@ type ChannelLogoutContext<ResolvedAccount = unknown> = {
   log?: ChannelLogSink;
 };
 
+/** Exact terminal sentinel: return this plain object shape without extra keys. */
+export type ChannelGatewayStartResult = {
+  outcome: "terminal";
+};
+
 export type ChannelGatewayAdapter<ResolvedAccount = unknown> = {
+  /**
+   * Legacy plugins may resolve arbitrary values. Return `ChannelGatewayStartResult` only when the
+   * account reached an operator-action state that must not enter the gateway restart policy.
+   */
   startAccount?: (ctx: ChannelGatewayContext<ResolvedAccount>) => Promise<unknown>;
   stopAccount?: (ctx: ChannelGatewayContext<ResolvedAccount>) => Promise<void>;
   /** Keep gateway auth bypass resolution mirrored through a lightweight top-level `gateway-auth-api.ts` artifact. */
