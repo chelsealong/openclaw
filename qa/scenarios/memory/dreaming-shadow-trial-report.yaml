@@ -6,6 +6,8 @@ scenario:
   coverage:
     primary:
       - session-memory.memory-files-dreaming
+    representative:
+      - session-memory.memory-files-dreaming
     secondary:
       - session-memory.memory-files-promotion
       - session-memory.memory-files-artifact-safety
