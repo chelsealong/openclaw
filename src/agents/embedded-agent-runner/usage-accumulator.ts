@@ -10,6 +10,11 @@ export type UsageAccumulator = {
   cacheWrite: number;
   reasoningTokens: number;
   total: number;
+  /**
+   * Completed assistant round trips across every model attempt of the run.
+   * Kept beside token totals so retried attempts stay counted like their usage.
+   */
+  assistantTurns: number;
 };
 
 export const createUsageAccumulator = (): UsageAccumulator => ({
@@ -19,6 +24,7 @@ export const createUsageAccumulator = (): UsageAccumulator => ({
   cacheWrite: 0,
   reasoningTokens: 0,
   total: 0,
+  assistantTurns: 0,
 });
 
 type MaybeUsage = NormalizedUsage | undefined;

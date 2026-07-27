@@ -165,6 +165,7 @@ export async function normalizeEmbeddedRunAttempt(input: {
   });
   const attemptUsage = attempt.attemptUsage ?? callUsage.currentAttempt;
   mergeUsageIntoAccumulator(input.usageAccumulator, attemptUsage);
+  input.usageAccumulator.assistantTurns += attempt.assistantTurns ?? 0;
   const lastRunPromptUsage = callUsage.latest;
   const lastTurnTotal = callUsage.latest?.total;
   const breakerStep = stepIdleTimeoutBreaker(input.idleTimeoutBreakerState, {

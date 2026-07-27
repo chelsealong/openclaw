@@ -106,6 +106,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
       noteLaneTaskProgress: input.finalization.noteLaneTaskProgress,
     });
     mergeUsageIntoAccumulator(input.terminalBase.usageAccumulator, attempt.attemptUsage);
+    input.terminalBase.usageAccumulator.assistantTurns += attempt.assistantTurns ?? 0;
     lastRunPromptUsage = attempt.attemptUsage ?? lastRunPromptUsage;
     lastTurnTotal = attempt.attemptUsage?.total ?? lastTurnTotal;
     // Successful isolated finalization owns a fresh terminal, never the original abort signal.
