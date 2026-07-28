@@ -69,7 +69,6 @@ export type LegacyStateDetection = {
     hasLegacy: boolean;
     preview: string[];
   };
-  worktrees: { hasLegacy: boolean };
   taskStateSidecars: {
     taskRunsPath: string;
     flowRunsPath: string;

@@ -1,4 +1,5 @@
 // Doctor-only import for the retired commitments JSON store.
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -23,13 +24,16 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "./kysely-sync.js";
-import {
-  assertLegacyMigrationSourceUnchanged,
-  claimAndRemoveLegacyMigrationSource,
-  readLegacyMigrationSourceSnapshotSync,
-  type LegacyMigrationSourceSnapshot as LegacySourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
+
+type LegacySourceSnapshot = {
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  raw: string;
+  sha256: string;
+  size: number;
+};
 
 const LEGACY_STORE_KEYS = new Set(["version", "commitments"]);
 const ACTIVE_STATUSES = ["pending", "snoozed"] as const;
@@ -51,11 +55,46 @@ export function detectLegacyCommitments(params: {
 }
 
 function readLegacySourceSnapshot(sourcePath: string): LegacySourceSnapshot {
-  return readLegacyMigrationSourceSnapshotSync({ sourcePath, label: "commitments" });
+  const before = fs.lstatSync(sourcePath);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error("legacy commitments source is not a regular non-symlink file");
+  }
+  const raw = fs.readFileSync(sourcePath, "utf8");
+  const after = fs.lstatSync(sourcePath);
+  if (
+    !after.isFile() ||
+    after.isSymbolicLink() ||
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs
+  ) {
+    throw new Error("legacy commitments source changed while doctor was reading it");
+  }
+  return {
+    dev: after.dev,
+    ino: after.ino,
+    mtimeMs: after.mtimeMs,
+    raw,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    size: after.size,
+  };
+}
+
+function sourceSnapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size
+  );
 }
 
 function assertLegacySourceUnchanged(sourcePath: string, snapshot: LegacySourceSnapshot): void {
-  assertLegacyMigrationSourceUnchanged({ sourcePath, snapshot, label: "commitments" });
+  if (!sourceSnapshotsMatch(readLegacySourceSnapshot(sourcePath), snapshot)) {
+    throw new Error("legacy commitments source changed after doctor loaded it");
+  }
 }
 
 function parseLegacyCommitments(raw: string): CommitmentRecord[] {
@@ -130,6 +169,39 @@ function updateCommitmentRow(db: DatabaseSync, record: CommitmentRecord): void {
       .set(commitmentRecordToUpdate(record))
       .where("id", "=", record.id),
   );
+}
+
+function restoreClaimAfterCleanupFailure(claimPath: string, sourcePath: string): string | null {
+  if (!fs.existsSync(claimPath) || fs.existsSync(sourcePath)) {
+    return null;
+  }
+  try {
+    fs.renameSync(claimPath, sourcePath);
+    return null;
+  } catch (error) {
+    return `; claimed source remains at ${claimPath} because restore also failed: ${String(error)}`;
+  }
+}
+
+function claimAndRemoveSource(params: {
+  sourcePath: string;
+  snapshot: LegacySourceSnapshot;
+  beforeClaim?: () => void;
+  removeSource?: (sourcePath: string) => void;
+}): void {
+  params.beforeClaim?.();
+  const claimPath = `${params.sourcePath}.doctor-importing-${process.pid}-${randomUUID()}`;
+  fs.renameSync(params.sourcePath, claimPath);
+  try {
+    const claimed = readLegacySourceSnapshot(claimPath);
+    if (!sourceSnapshotsMatch(claimed, params.snapshot)) {
+      throw new Error("legacy commitments source changed before doctor could claim it");
+    }
+    (params.removeSource ?? fs.unlinkSync)(claimPath);
+  } catch (error) {
+    const restoreFailure = restoreClaimAfterCleanupFailure(claimPath, params.sourcePath);
+    throw new Error(`${String(error)}${restoreFailure ?? ""}`, { cause: error });
+  }
 }
 
 /** Import, verify, and remove the retired JSON store during explicit doctor repair. */
@@ -244,10 +316,9 @@ export function migrateLegacyCommitments(params: {
   }
 
   try {
-    claimAndRemoveLegacyMigrationSource({
+    claimAndRemoveSource({
       sourcePath: params.detected.sourcePath,
       snapshot,
-      label: "commitments",
       beforeClaim: params.beforeClaim,
       removeSource: params.removeSource,
     });

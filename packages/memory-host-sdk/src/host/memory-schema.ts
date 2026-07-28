@@ -16,6 +16,9 @@ import {
   assertLegacyMemoryRowsCopied,
   ensureLegacyMemoryMigrationIndexes,
 } from "./memory-schema-migration.js";
+import { ensureMemoryRecallMetadataColumns } from "./memory-schema-recall.js";
+export { ensureMemoryRecallMetadataColumns } from "./memory-schema-recall.js";
+import * as provenanceSchema from "./memory-schema-provenance.js";
 import { migrateSqliteSchemaToStrict } from "./openclaw-runtime-sqlite.js";
 
 export {
@@ -27,6 +30,10 @@ export {
   MEMORY_INDEX_SOURCES_TABLE,
   MEMORY_PATH_FTS_TRIGGER_DEFINITIONS,
 } from "./memory-schema-fts.js";
+export {
+  ensureMemoryChunkProvenance,
+  MEMORY_INDEX_CHUNK_PROVENANCE_TABLE,
+} from "./memory-schema-provenance.js";
 
 // SQLite schema setup for builtin memory index, embedding cache, and FTS.
 
@@ -613,8 +620,11 @@ function buildMemoryIndexStrictSchema(params: {
       model TEXT NOT NULL,
       text TEXT NOT NULL,
       embedding TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      importance INTEGER CHECK (importance IS NULL OR importance BETWEEN 1 AND 10),
+      triggers TEXT
     ) STRICT;
+    ${provenanceSchema.MEMORY_INDEX_CHUNK_PROVENANCE_SCHEMA_SQL}
     CREATE TABLE IF NOT EXISTS ${MEMORY_INDEX_STATE_TABLE} (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       revision INTEGER NOT NULL
@@ -642,6 +652,7 @@ export function ensureMemoryIndexSchema(params: {
       includeEmbeddingCache: params.cacheEnabled,
     }),
   );
+  ensureMemoryRecallMetadataColumns(params.db);
   params.db.exec(`
     INSERT OR IGNORE INTO ${MEMORY_INDEX_STATE_TABLE} (id, revision) VALUES (1, 0);
   `);
@@ -690,6 +701,7 @@ export function ensureMemoryIndexSchema(params: {
       ON ${MEMORY_INDEX_CHUNKS_TABLE}(source);
   `);
   migrateLegacyMemoryIndexTables(params.db, params.embeddingCacheTable, ftsTable);
+  provenanceSchema.ensureMemoryChunkProvenance(params.db);
   dropDisabledMemoryChunkFts(params.db, ftsTable, params.ftsEnabled);
   if (params.cacheEnabled) {
     const updatedAtIndex =

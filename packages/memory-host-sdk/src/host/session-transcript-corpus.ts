@@ -19,6 +19,7 @@ import {
   resolveStorePath,
   type SessionEntry,
 } from "./openclaw-runtime-session.js";
+import type { MemorySessionKind } from "./types.js";
 
 type SessionTranscriptCorpusArtifactKind = "active-session" | "archive-artifact";
 
@@ -38,6 +39,7 @@ export type SessionTranscriptCorpusEntry = {
   generatedByDreamingNarrative?: boolean;
   /** True when this transcript belongs to an isolated cron run session. */
   generatedByCronRun?: boolean;
+  sessionKind?: MemorySessionKind;
 };
 
 function fileContentRevision(filePath: string): string | undefined {
@@ -197,12 +199,25 @@ function classifySessionEntry(
 ): {
   generatedByDreamingNarrative: boolean;
   generatedByCronRun: boolean;
+  sessionKind: MemorySessionKind;
 } {
+  const generatedByDreamingNarrative =
+    isDreamingNarrativeSessionStoreKey(sessionKey) ||
+    isDreamingNarrativeSessionKeyLike(entry.spawnedBy);
+  const generatedByCronRun = cronGeneratedSessionKeys.has(sessionKey);
   return {
-    generatedByDreamingNarrative:
-      isDreamingNarrativeSessionStoreKey(sessionKey) ||
-      isDreamingNarrativeSessionKeyLike(entry.spawnedBy),
-    generatedByCronRun: cronGeneratedSessionKeys.has(sessionKey),
+    generatedByDreamingNarrative,
+    generatedByCronRun,
+    sessionKind: generatedByCronRun
+      ? "cron"
+      : typeof entry.heartbeatIsolatedBaseSessionKey === "string" &&
+          entry.heartbeatIsolatedBaseSessionKey.trim()
+        ? "heartbeat"
+        : generatedByDreamingNarrative || Boolean(entry.spawnedBy)
+          ? "subagent"
+          : sessionKey.includes(":subagent:")
+            ? "subagent"
+            : "interactive",
   };
 }
 
@@ -315,6 +330,7 @@ function toSessionStoreCorpusEntry(
     ...(sessionKey ? { sessionKey } : {}),
     ...(classification.generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
     ...(classification.generatedByCronRun ? { generatedByCronRun: true } : {}),
+    sessionKind: classification.sessionKind,
   };
 }
 
@@ -339,12 +355,14 @@ function classifyTranscriptArtifact(
 ): {
   generatedByDreamingNarrative: boolean;
   generatedByCronRun: boolean;
+  sessionKind: MemorySessionKind;
 } {
   const directEntry = activeEntriesByPath.get(normalizeRealComparablePath(artifactPath));
   if (directEntry) {
     return {
       generatedByDreamingNarrative: directEntry.generatedByDreamingNarrative === true,
       generatedByCronRun: directEntry.generatedByCronRun === true,
+      sessionKind: directEntry.sessionKind ?? "unknown",
     };
   }
   const sessionsDir = path.dirname(artifactPath);
@@ -358,6 +376,7 @@ function classifyTranscriptArtifact(
   return {
     generatedByDreamingNarrative: primaryEntry?.generatedByDreamingNarrative === true,
     generatedByCronRun: primaryEntry?.generatedByCronRun === true,
+    sessionKind: primaryEntry?.sessionKind ?? "unknown",
   };
 }
 
@@ -388,6 +407,7 @@ function toArtifactCorpusEntry(
     ...(contentRevision ? { contentRevision } : {}),
     ...(classification.generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
     ...(classification.generatedByCronRun ? { generatedByCronRun: true } : {}),
+    sessionKind: classification.sessionKind,
   };
 }
 

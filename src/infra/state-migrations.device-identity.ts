@@ -30,12 +30,6 @@ import {
   repairInvalidCanonicalIdentity,
 } from "./state-migrations.device-identity-repair.js";
 import type { LegacyDeviceIdentityDetection } from "./state-migrations.device-identity.types.js";
-import {
-  legacyMigrationSourceSnapshotsMatch as snapshotsMatch,
-  readLegacyMigrationSourceSnapshot,
-  resolveLegacyMigrationRelativePath,
-  type LegacyMigrationSourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { MigrationMessages } from "./state-migrations.types.js";
 
 const IDENTITY_KEY = "primary";
@@ -69,7 +63,13 @@ type DeviceIdentityMigrationDatabase = Pick<
   "device_identities" | "migration_runs" | "migration_sources"
 >;
 
-type LegacySourceSnapshot = LegacyMigrationSourceSnapshot & {
+type LegacySourceSnapshot = {
+  sourcePath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  sha256: string;
+  size: number;
   identity: NormalizedLegacyDeviceIdentity;
 };
 
@@ -82,7 +82,16 @@ type MigrationReceipt = {
 export { detectLegacyDeviceIdentity } from "./state-migrations.device-identity-repair.js";
 
 function relativeLegacyPath(stateDir: string, filePath: string): string {
-  return resolveLegacyMigrationRelativePath(stateDir, filePath, "device identity", false);
+  const relativePath = path.relative(path.resolve(stateDir), path.resolve(filePath));
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("legacy device identity path is outside the state directory");
+  }
+  return relativePath;
 }
 
 async function readLegacySourceSnapshot(params: {
@@ -90,16 +99,40 @@ async function readLegacySourceSnapshot(params: {
   stateDir: string;
   sourcePath: string;
 }): Promise<LegacySourceSnapshot> {
-  const snapshot = await readLegacyMigrationSourceSnapshot({
-    ...params,
-    maxBytes: MAX_LEGACY_IDENTITY_BYTES,
-    label: "device identity",
-  });
-  const identity = normalizeLegacyDeviceIdentity(JSON.parse(utf8Decoder.decode(snapshot.buffer)));
+  const opened = await params.stateRoot.read(
+    relativeLegacyPath(params.stateDir, params.sourcePath),
+    {
+      hardlinks: "reject",
+      maxBytes: MAX_LEGACY_IDENTITY_BYTES,
+      symlinks: "reject",
+    },
+  );
+  if (opened.stat.size !== opened.buffer.byteLength) {
+    throw new Error("legacy device identity changed while it was being read");
+  }
+  const identity = normalizeLegacyDeviceIdentity(JSON.parse(utf8Decoder.decode(opened.buffer)));
   if (!identity) {
     throw new Error("legacy device identity is invalid or unsupported");
   }
-  return { ...snapshot, identity };
+  return {
+    sourcePath: params.sourcePath,
+    dev: opened.stat.dev,
+    ino: opened.stat.ino,
+    mtimeMs: opened.stat.mtimeMs,
+    sha256: createHash("sha256").update(opened.buffer).digest("hex"),
+    size: opened.stat.size,
+    identity,
+  };
+}
+
+function snapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size
+  );
 }
 
 function receiptSourceKey(sourcePath: string): string {

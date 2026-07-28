@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetLogger, setLoggerOverride } from "../logging.js";
-import { flushLogger } from "../logging/logger.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createTrackedTempDirs } from "../test-utils/tracked-temp-dirs.js";
 import {
@@ -439,8 +438,6 @@ describe("device bootstrap tokens", () => {
       },
     });
 
-    // The file transport appends asynchronously; drain it before reading.
-    await flushLogger();
     const content = await fs.readFile(logPath, "utf8");
     expect(content).toContain("bootstrap_token_scopes_stripped");
     expect(content).toContain("node.exec");

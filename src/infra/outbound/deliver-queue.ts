@@ -14,7 +14,6 @@ import {
   stageAndEnqueueOutboundDelivery,
 } from "./deliver-queue-admission.js";
 import {
-  createQueuedDeliveryOwner,
   isDeliveryAbortError,
   persistQueuedPostSendState,
   persistQueuedPreSendState,
@@ -34,6 +33,7 @@ import {
 } from "./delivery-completion.js";
 import { loadPendingDelivery } from "./delivery-queue-storage.js";
 import {
+  ackDelivery,
   claimDeliveryPlatformSendAttempt,
   failDelivery,
   failDeliveryAfterPlatformSend,
@@ -198,26 +198,29 @@ async function deliverOutboundPayloadsWithQueueCleanup(
   let platformSendRoute: PlatformSendRoute | undefined;
   let deliveredResults: OutboundDeliveryResult[] = [];
   let commitHooksRun = false;
-  const queueOwner = queueId
-    ? createQueuedDeliveryOwner({
-        queueId,
-        expectedPlatformSendAttemptId: () => producerClaimId,
-      })
-    : undefined;
   const ackOwnedQueue = (options?: { suppressCompletionReceipt?: boolean }) => {
-    if (!queueOwner) {
+    if (!queueId) {
       throw new Error("Queued delivery acknowledgement requires a queue id");
     }
-    return queueOwner.ack(options);
+    return producerClaimId
+      ? ackDelivery(queueId, undefined, {
+          ...options,
+          expectedPlatformSendAttemptId: producerClaimId,
+        })
+      : options
+        ? ackDelivery(queueId, undefined, options)
+        : ackDelivery(queueId);
   };
   const recordOwnedQueueFailure = (
     record: typeof failDelivery | typeof failDeliveryAfterPlatformSend,
     error: string,
   ) => {
-    if (!queueOwner) {
+    if (!queueId) {
       throw new Error("Queued delivery failure requires a queue id");
     }
-    return queueOwner.fail(record, error);
+    return producerClaimId
+      ? record(queueId, error, undefined, producerClaimId)
+      : record(queueId, error);
   };
   const persistOwnedPostSendState = () => {
     if (!queueId) {

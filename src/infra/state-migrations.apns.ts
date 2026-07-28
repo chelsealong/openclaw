@@ -1,5 +1,6 @@
 // Doctor-only import for the retired APNs registration JSON store.
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { root, type Root } from "@openclaw/fs-safe";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
@@ -25,12 +26,6 @@ import {
   normalizeCanonicalApnsRegistration,
   type ApnsRegistration,
 } from "./push-apns-store.js";
-import {
-  legacyMigrationSourceOrClaimMayExist,
-  legacyMigrationSourceSnapshotsMatch as snapshotsMatch,
-  resolveLegacyMigrationRelativePath,
-  type LegacyMigrationSourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
 
 const LEGACY_APNS_REGISTRATION_PATH = "push/apns-registrations.json";
@@ -68,10 +63,14 @@ type ApnsMigrationDatabase = Pick<
   "apns_registrations" | "apns_registration_tombstones" | "migration_runs" | "migration_sources"
 >;
 
-type LegacySourceSnapshot = Pick<
-  LegacyMigrationSourceSnapshot,
-  "sourcePath" | "dev" | "ino" | "mtimeMs" | "sha256" | "size"
->;
+type LegacySourceSnapshot = {
+  sourcePath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  sha256: string;
+  size: number;
+};
 
 type MigrationReceipt = {
   sourceKey: string;
@@ -82,6 +81,21 @@ function resolveLegacyApnsPath(stateDir: string): string {
   return path.join(stateDir, LEGACY_APNS_REGISTRATION_PATH);
 }
 
+function legacyPathMayExist(filePath: string): boolean {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+function sourceOrClaimMayExist(sourcePath: string): boolean {
+  return (
+    legacyPathMayExist(sourcePath) || legacyPathMayExist(`${sourcePath}${APNS_DOCTOR_CLAIM_SUFFIX}`)
+  );
+}
+
 /** Detect the retired APNs store only when an explicit Doctor flow opts in. */
 export function detectLegacyApnsRegistrations(params: {
   stateDir: string;
@@ -90,14 +104,21 @@ export function detectLegacyApnsRegistrations(params: {
   const sourcePath = resolveLegacyApnsPath(params.stateDir);
   return {
     sourcePath,
-    hasLegacy:
-      params.doctorOnlyStateMigrations === true &&
-      legacyMigrationSourceOrClaimMayExist(sourcePath, APNS_DOCTOR_CLAIM_SUFFIX),
+    hasLegacy: params.doctorOnlyStateMigrations === true && sourceOrClaimMayExist(sourcePath),
   };
 }
 
 function relativeLegacyPath(stateDir: string, filePath: string): string {
-  return resolveLegacyMigrationRelativePath(stateDir, filePath, "APNs", false);
+  const relativePath = path.relative(path.resolve(stateDir), path.resolve(filePath));
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("legacy APNs path is outside the state directory");
+  }
+  return relativePath;
 }
 
 async function readLegacySourceSnapshot(
@@ -115,6 +136,16 @@ async function readLegacySourceSnapshot(
     sourcePath,
     ...snapshot,
   };
+}
+
+function snapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size
+  );
 }
 
 function assertOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): void {

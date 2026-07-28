@@ -157,6 +157,7 @@ describe("listSessionTranscriptCorpusEntriesForAgent", () => {
       artifactKind: "archive-artifact",
       contentRevision: expect.any(String),
       generatedByCronRun: true,
+      sessionKind: "cron",
       sessionFile: archivePath,
       sessionId: "cron-run",
     });
@@ -165,7 +166,7 @@ describe("listSessionTranscriptCorpusEntriesForAgent", () => {
   it("reads live SQLite rows by session identity while preserving archived JSONL artifacts", async () => {
     const sessionsDir = path.join(tmpDir, "agents", "main", "sessions");
     const storePath = path.join(sessionsDir, "sessions.json");
-    const sessionKey = "agent:main:chat:sqlite-live";
+    const sessionKey = "agent:main:chat:sqlite-live:heartbeat";
     const sessionId = "sqlite-live";
     const updatedAt = Date.parse("2026-06-25T12:00:00.000Z");
     fsSync.mkdirSync(sessionsDir, { recursive: true });
@@ -212,6 +213,7 @@ describe("listSessionTranscriptCorpusEntriesForAgent", () => {
           sessionKey,
           transcriptSource: "sqlite",
           updatedAtMs: expect.any(Number),
+          sessionKind: "interactive",
         }),
         expect.objectContaining({
           agentId: "main",
@@ -380,6 +382,7 @@ describe("listSessionTranscriptCorpusEntriesForAgent", () => {
         artifactKind: "archive-artifact",
         contentRevision: expect.any(String),
         generatedByCronRun: true,
+        sessionKind: "cron",
         sessionFile: expectedArchivePath,
         sessionId: "cron-run",
       },
@@ -552,6 +555,7 @@ describe("listSessionTranscriptCorpusEntriesForAgent", () => {
         contentRevision: expect.any(String),
         sessionFile: archivePath,
         sessionId: "retained",
+        sessionKind: "unknown",
       },
     ]);
   });
@@ -959,6 +963,10 @@ describe("buildSessionEntry", () => {
     const entry = requireSessionEntry(await buildSessionEntry(filePath));
     expect(entry.content).toBe("Assistant: User-facing summary.\nUser: Actual user follow-up.");
     expect(entry.lineMap).toStrictEqual([2, 3]);
+    expect(entry.lineProvenance.map((item) => item.originClass)).toEqual([
+      "untrusted",
+      "untrusted",
+    ]);
   });
 
   it("drops every assistant response in a provenance-marked heartbeat turn", async () => {

@@ -15,7 +15,7 @@ import type { DurableDeliveryCompletion } from "./delivery-completion.js";
 import type {
   QueuedReplyPayloadSendingHook,
   QueuedRenderedMessageBatchPlan,
-} from "./delivery-queue-storage.js";
+} from "./delivery-queue.js";
 import type { OutboundDeliveryFormattingOptions } from "./formatting.js";
 import type { OutboundIdentity } from "./identity.js";
 import type { OutboundMessageSendOverrides } from "./message-plan.js";

@@ -26,6 +26,11 @@ import {
   AGENT_V14_CORE_SCHEMA_SQL,
   AGENT_V14_SESSION_SHARING_SCHEMA_SQL,
 } from "./openclaw-agent-session-sharing-schema.js";
+import {
+  STANDING_INTENTS_FTS_SHADOW_TABLES,
+  STANDING_INTENTS_FTS_TABLE,
+  STANDING_INTENTS_TABLE,
+} from "./openclaw-agent-standing-intents-schema.js";
 
 type ExistingAgentSchemaMeta = {
   agentId: string | null;
@@ -34,6 +39,11 @@ type ExistingAgentSchemaMeta = {
 };
 
 const AGENT_SCHEMA_COMPATIBILITY = {
+  allowedMissingTables: [
+    STANDING_INTENTS_TABLE,
+    STANDING_INTENTS_FTS_TABLE,
+    ...STANDING_INTENTS_FTS_SHADOW_TABLES,
+  ],
   allowedColumnDefinitions: {
     "conversations.delivery_target": ["delivery_target TEXT NOT NULL DEFAULT ''"],
   },

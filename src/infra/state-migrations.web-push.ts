@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { root, type Root } from "@openclaw/fs-safe";
@@ -20,14 +22,6 @@ import {
   type WebPushDatabase,
   type WebPushSubscription,
 } from "./push-web-store.js";
-import {
-  legacyMigrationSourceContentMatches as contentSnapshotsMatch,
-  legacyMigrationSourceOrClaimMayExist as sourceOrClaimMayExist,
-  legacyMigrationSourceSnapshotsMatch as sourceSnapshotsMatch,
-  readLegacyMigrationSourceSnapshot,
-  resolveLegacyMigrationRelativePath,
-  type LegacyMigrationSourceSnapshot as LegacySourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
 import {
   parseLegacySubscriptions,
@@ -39,6 +33,16 @@ const LEGACY_VAPID_KEYS_MAX_BYTES = 64 * 1024;
 const MIGRATION_LOCK_TIMEOUT_MS = 250;
 const MIGRATION_LOCK_POLL_INTERVAL_MS = 25;
 const DOCTOR_CLAIM_SUFFIX = ".doctor-importing";
+
+type LegacySourceSnapshot = {
+  sourcePath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  raw: string;
+  sha256: string;
+  size: number;
+};
 
 type ParsedLegacyState = {
   subscriptions: Map<string, WebPushSubscription>;
@@ -53,9 +57,30 @@ function resolveLegacyWebPushPaths(stateDir: string) {
   };
 }
 
-function relativeLegacyPath(stateDir: string, filePath: string): string {
-  return resolveLegacyMigrationRelativePath(stateDir, filePath, "Web Push");
+function legacyPathMayExist(filePath: string): boolean {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
 }
+
+function relativeLegacyPath(stateDir: string, filePath: string): string {
+  const relativePath = path.relative(path.resolve(stateDir), path.resolve(filePath));
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(`legacy Web Push path is outside the state directory: ${filePath}`);
+  }
+  return relativePath;
+}
+
+const sourceOrClaimMayExist = (sourcePath: string) =>
+  legacyPathMayExist(sourcePath) || legacyPathMayExist(`${sourcePath}${DOCTOR_CLAIM_SUFFIX}`);
 
 export function detectLegacyWebPush(params: {
   stateDir: string;
@@ -77,14 +102,35 @@ async function readLegacySourceSnapshot(
   sourcePath: string,
   maxBytes: number,
 ): Promise<LegacySourceSnapshot> {
-  return readLegacyMigrationSourceSnapshot({
-    stateRoot,
-    stateDir,
-    sourcePath,
+  const opened = await stateRoot.read(relativeLegacyPath(stateDir, sourcePath), {
+    hardlinks: "reject",
     maxBytes,
-    label: "Web Push",
-    hashDecodedText: true,
+    symlinks: "reject",
   });
+  const raw = opened.buffer.toString("utf8");
+  return {
+    sourcePath,
+    dev: opened.stat.dev,
+    ino: opened.stat.ino,
+    mtimeMs: opened.stat.mtimeMs,
+    raw,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    size: opened.stat.size,
+  };
+}
+
+function sourceSnapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size
+  );
+}
+
+function contentSnapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return left.sha256 === right.sha256 && left.size === right.size;
 }
 
 function maxBytesForSource(sourcePath: string, subscriptionsPath: string): number {

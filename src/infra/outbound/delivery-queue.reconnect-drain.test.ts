@@ -4,17 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { controlNextRecoverySleep } from "../../../test/helpers/infra/delivery-recovery.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
-import {
-  loadPendingDeliveries,
-  markDeliveryPlatformOutcomeUnknown,
-  markDeliveryPlatformSendAttemptStarted,
-  reserveDeliveryAttempt,
-} from "./delivery-queue-storage.js";
+import { loadPendingDeliveries, reserveDeliveryAttempt } from "./delivery-queue-storage.js";
 import {
   type DeliverFn,
   drainPendingDeliveries,
   enqueueDelivery,
   failDelivery,
+  markDeliveryPlatformOutcomeUnknown,
+  markDeliveryPlatformSendAttemptStarted,
   type RecoveryLogger,
   recoverPendingDeliveries,
   withActiveDeliveryClaim,

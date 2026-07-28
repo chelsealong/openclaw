@@ -1,4 +1,5 @@
 // Doctor-only import for the retired TUI last-session JSON store.
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
@@ -11,12 +12,6 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "./kysely-sync.js";
-import {
-  assertLegacyMigrationSourceUnchanged,
-  claimAndRemoveLegacyMigrationSource,
-  readLegacyMigrationSourceSnapshotSync,
-  type LegacyMigrationSourceSnapshot as LegacySourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
 
 type TuiLastSessionMigrationDatabase = Pick<OpenClawStateKyselyDatabase, "tui_last_sessions">;
@@ -25,6 +20,15 @@ type LegacyTuiLastSession = {
   scopeKey: string;
   sessionKey: string;
   updatedAt: number;
+};
+
+type LegacySourceSnapshot = {
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  raw: string;
+  sha256: string;
+  size: number;
 };
 
 const LEGACY_RECORD_KEYS = new Set(["sessionKey", "updatedAt"]);
@@ -46,20 +50,87 @@ export function detectLegacyTuiLastSessions(params: {
 }
 
 function readLegacySourceSnapshot(sourcePath: string): LegacySourceSnapshot {
-  return readLegacyMigrationSourceSnapshotSync({
-    sourcePath,
-    label: "TUI last-session",
-    followSymlinks: true,
-  });
+  const before = fs.statSync(sourcePath);
+  if (!before.isFile()) {
+    throw new Error("legacy TUI last-session source is not a regular file");
+  }
+  const raw = fs.readFileSync(sourcePath, "utf8");
+  const after = fs.statSync(sourcePath);
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs
+  ) {
+    throw new Error("legacy TUI last-session source changed while doctor was reading it");
+  }
+  return {
+    dev: after.dev,
+    ino: after.ino,
+    mtimeMs: after.mtimeMs,
+    raw,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    size: after.size,
+  };
 }
 
 function assertLegacySourceUnchanged(sourcePath: string, expected: LegacySourceSnapshot): void {
-  assertLegacyMigrationSourceUnchanged({
-    sourcePath,
-    snapshot: expected,
-    label: "TUI last-session",
-    followSymlinks: true,
-  });
+  const current = readLegacySourceSnapshot(sourcePath);
+  if (!legacySourceSnapshotsMatch(current, expected)) {
+    throw new Error("legacy TUI last-session source changed after doctor loaded it");
+  }
+}
+
+function legacySourceSnapshotsMatch(
+  current: LegacySourceSnapshot,
+  expected: LegacySourceSnapshot,
+): boolean {
+  return (
+    current.dev === expected.dev &&
+    current.ino === expected.ino &&
+    current.size === expected.size &&
+    current.mtimeMs === expected.mtimeMs &&
+    current.sha256 === expected.sha256
+  );
+}
+
+function restoreClaimAfterCleanupFailure(params: {
+  claimPath: string;
+  sourcePath: string;
+}): string | null {
+  if (!fs.existsSync(params.claimPath) || fs.existsSync(params.sourcePath)) {
+    return null;
+  }
+  try {
+    fs.renameSync(params.claimPath, params.sourcePath);
+    return null;
+  } catch (error) {
+    return `; the claimed source remains at ${params.claimPath} because restore also failed: ${String(error)}`;
+  }
+}
+
+function claimAndRemoveVerifiedLegacySource(params: {
+  sourcePath: string;
+  snapshot: LegacySourceSnapshot;
+  beforeClaim?: () => void;
+  removeSource?: (sourcePath: string) => void;
+}): void {
+  params.beforeClaim?.();
+  const claimPath = `${params.sourcePath}.doctor-importing-${process.pid}-${randomUUID()}`;
+  fs.renameSync(params.sourcePath, claimPath);
+  try {
+    const claimedSnapshot = readLegacySourceSnapshot(claimPath);
+    if (!legacySourceSnapshotsMatch(claimedSnapshot, params.snapshot)) {
+      throw new Error("legacy TUI last-session source changed before doctor could claim it");
+    }
+    (params.removeSource ?? fs.unlinkSync)(claimPath);
+  } catch (error) {
+    const restoreFailure = restoreClaimAfterCleanupFailure({
+      claimPath,
+      sourcePath: params.sourcePath,
+    });
+    throw new Error(`${String(error)}${restoreFailure ?? ""}`, { cause: error });
+  }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -234,11 +305,9 @@ export function migrateLegacyTuiLastSessions(params: {
   }
 
   try {
-    claimAndRemoveLegacyMigrationSource({
+    claimAndRemoveVerifiedLegacySource({
       sourcePath: params.detected.sourcePath,
       snapshot,
-      label: "TUI last-session",
-      followSymlinks: true,
       beforeClaim: params.beforeClaim,
       removeSource: params.removeSource,
     });

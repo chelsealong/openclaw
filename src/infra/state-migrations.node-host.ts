@@ -1,4 +1,6 @@
 // Doctor-only import for the retired node-host JSON config.
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { root, type Root } from "@openclaw/fs-safe";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
@@ -18,14 +20,6 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "./kysely-sync.js";
-import {
-  legacyMigrationSourceContentMatches as contentSnapshotsMatch,
-  legacyMigrationSourceOrClaimMayExist,
-  legacyMigrationSourceSnapshotsMatch as sourceSnapshotsMatch,
-  readLegacyMigrationSourceSnapshot,
-  resolveLegacyMigrationRelativePath,
-  type LegacyMigrationSourceSnapshot as LegacySourceSnapshot,
-} from "./state-migrations.source-snapshot.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
 
 const LEGACY_NODE_HOST_MAX_BYTES = 64 * 1024;
@@ -36,10 +30,36 @@ const GATEWAY_KEYS = new Set(["host", "port", "tls", "tlsFingerprint", "contextP
 
 type NodeHostConfigDatabase = Pick<OpenClawStateKyselyDatabase, "node_host_config">;
 
+type LegacySourceSnapshot = {
+  sourcePath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  raw: string;
+  sha256: string;
+  size: number;
+};
+
 type CanonicalNodeHostState = {
   config: NodeHostConfig;
   updatedAtMs: number;
 };
+
+function legacyPathMayExist(filePath: string): boolean {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+function sourceOrClaimMayExist(sourcePath: string): boolean {
+  return (
+    legacyPathMayExist(sourcePath) ||
+    legacyPathMayExist(`${sourcePath}${LEGACY_NODE_HOST_CONFIG_CLAIM_SUFFIX}`)
+  );
+}
 
 /** Detect retired node-host state only when an explicit Doctor flow opts in. */
 export function detectLegacyNodeHostConfig(params: {
@@ -49,14 +69,21 @@ export function detectLegacyNodeHostConfig(params: {
   const sourcePath = path.join(params.stateDir, LEGACY_NODE_HOST_CONFIG_FILE);
   return {
     sourcePath,
-    hasLegacy:
-      params.doctorOnlyStateMigrations === true &&
-      legacyMigrationSourceOrClaimMayExist(sourcePath, LEGACY_NODE_HOST_CONFIG_CLAIM_SUFFIX),
+    hasLegacy: params.doctorOnlyStateMigrations === true && sourceOrClaimMayExist(sourcePath),
   };
 }
 
 function relativeLegacyPath(stateDir: string, filePath: string): string {
-  return resolveLegacyMigrationRelativePath(stateDir, filePath, "node-host");
+  const relativePath = path.relative(path.resolve(stateDir), path.resolve(filePath));
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(`legacy node-host path is outside the state directory: ${filePath}`);
+  }
+  return relativePath;
 }
 
 async function readLegacySourceSnapshot(
@@ -64,14 +91,35 @@ async function readLegacySourceSnapshot(
   stateDir: string,
   sourcePath: string,
 ): Promise<LegacySourceSnapshot> {
-  return readLegacyMigrationSourceSnapshot({
-    stateRoot,
-    stateDir,
-    sourcePath,
+  const opened = await stateRoot.read(relativeLegacyPath(stateDir, sourcePath), {
+    hardlinks: "reject",
     maxBytes: LEGACY_NODE_HOST_MAX_BYTES,
-    label: "node-host",
-    hashDecodedText: true,
+    symlinks: "reject",
   });
+  const raw = opened.buffer.toString("utf8");
+  return {
+    sourcePath,
+    dev: opened.stat.dev,
+    ino: opened.stat.ino,
+    mtimeMs: opened.stat.mtimeMs,
+    raw,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    size: opened.stat.size,
+  };
+}
+
+function sourceSnapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size
+  );
+}
+
+function contentSnapshotsMatch(left: LegacySourceSnapshot, right: LegacySourceSnapshot): boolean {
+  return left.sha256 === right.sha256 && left.size === right.size;
 }
 
 async function recoverInterruptedClaim(
