@@ -31,7 +31,7 @@ const GROUP_LABELS: Record<string, string> = {
   messages: "Messages",
   commands: "Commands",
   session: "Session",
-  cron: "Cron",
+  cron: "Automations",
   worktrees: "Worktrees",
   hooks: "Hooks",
   ui: "UI",

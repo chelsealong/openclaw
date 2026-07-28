@@ -56,7 +56,7 @@ export function registerCronEditCommand(cron: Command) {
   addGatewayClientOptions(
     cron
       .command("edit")
-      .description("Edit a cron job (patch fields)")
+      .description("Edit an automation (patch fields)")
       .argument("<id>", "Job id")
       .option("--name <name>", "Set name")
       .option("--description <text>", "Set description")
