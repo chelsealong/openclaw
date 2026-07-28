@@ -12,7 +12,6 @@ import type { ElevatedLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import type { CommandContext } from "./commands-types.js";
 import { isDirectiveOnly } from "./directive-handling.directive-only.js";
-import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime.js";
 import { resolveModelSelectionFromDirective } from "./directive-handling.model-selection.js";
 import type { ApplyInlineDirectivesFastLaneParams } from "./directive-handling.params.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
@@ -324,8 +323,6 @@ export async function applyInlineDirectiveOverrides(params: {
       typing.cleanup();
       return { kind: "reply", reply: undefined };
     }
-    // Only the exact model-only case uses the focused service; mixed directives
-    // fall through so their settings remain one broad atomic session transaction.
     if (hasOnlyModelDirective(directives) && effectiveModelDirective) {
       const modelResolution = resolveModelSelectionFromDirective({
         directives: {
@@ -348,47 +345,24 @@ export async function applyInlineDirectiveOverrides(params: {
       }
       const modelSelection = modelResolution.modelSelection;
       if (modelSelection) {
-        const runtime = resolveModelRuntimeDirective({
-          rawRuntime: directives.rawModelRuntime,
-          provider: modelSelection.provider,
-          cfg,
-          sessionEntry,
-        });
-        if (runtime.kind === "invalid") {
-          typing.cleanup();
-          return { kind: "reply", reply: { text: runtime.errorText } };
-        }
-        const applied = await (
+        const persisted = await (
           await loadDirectivePersist()
-        ).applySessionModelSelection({
-          cfg,
-          agentId,
-          sessionKey,
-          storePath,
-          sessionEntry,
-          sessionStore,
-          defaultProvider,
-          defaultModel,
-          currentProvider: provider,
-          currentModel: model,
-          allowedModelKeys: modelState.allowedModelKeys,
-          modelCatalog: modelState.allowedModelCatalog,
-          thinkingCatalog: modelState.allowedModelCatalog,
-          request: {
-            ...modelSelection,
-            profileOverride: modelResolution.profileOverride,
-            runtime,
-          },
-          patchModel: effectiveModelDirective,
+        ).persistInlineDirectives({
+          ...directivePersistenceContext,
+          provider,
+          model,
           markLiveSwitchPending: true,
         });
-        if (applied.status === "rejected") {
+        if (persisted.errorText) {
           typing.cleanup();
-          return { kind: "reply", reply: { text: applied.message } };
+          return { kind: "reply", reply: { text: persisted.errorText } };
         }
-        if (applied.status === "conflict") {
+        if (!persisted.sessionChangesApplied) {
           typing.cleanup();
-          return { kind: "reply", reply: { text: applied.message } };
+          return {
+            kind: "reply",
+            reply: { text: "Model change was not applied because the session changed. Retry." },
+          };
         }
         const label = `${modelSelection.provider}/${modelSelection.model}`;
         const labelWithAlias = modelSelection.alias ? `${modelSelection.alias} (${label})` : label;
@@ -398,13 +372,13 @@ export async function applyInlineDirectiveOverrides(params: {
           modelSelection.isDefault
             ? `Model reset to default (${labelWithAlias}).`
             : `Model set to ${labelWithAlias} for this session.`,
-          applied.thinkingRemap
-            ? `Thinking level set to ${applied.thinkingRemap.to} (${applied.thinkingRemap.from} not supported for ${applied.thinkingRemap.provider}/${applied.thinkingRemap.model}).`
+          persisted.thinkingRemap
+            ? `Thinking level set to ${persisted.thinkingRemap.to} (${persisted.thinkingRemap.from} not supported for ${persisted.thinkingRemap.provider}/${persisted.thinkingRemap.model}).`
             : undefined,
-          applied.runtimeChange?.kind === "clear"
+          persisted.runtimeChange?.kind === "clear"
             ? "Runtime reset to configured policy."
-            : applied.runtimeChange?.kind === "set"
-              ? `Runtime set to ${applied.runtimeChange.runtime} for this session.`
+            : persisted.runtimeChange?.kind === "set"
+              ? `Runtime set to ${persisted.runtimeChange.runtime} for this session.`
               : undefined,
           modelResolution.profileOverride
             ? `Auth profile set to ${modelResolution.profileOverride}.`

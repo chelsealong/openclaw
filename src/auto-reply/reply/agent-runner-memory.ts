@@ -1328,6 +1328,19 @@ export async function runMemoryFlushIfNeeded(params: {
     workspaceDir: params.followupRun.run.workspaceDir,
     relativePath: memoryFlushWritePath,
   });
+  const memoryFlushAbsolutePath = path.join(
+    params.followupRun.run.workspaceDir,
+    memoryFlushWritePath,
+  );
+  const readMemoryFlushContent = () =>
+    fs.promises.readFile(memoryFlushAbsolutePath, "utf8").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return "";
+      }
+      throw error;
+    });
+  let memoryFlushContentBefore: Promise<string> | undefined;
+  let memoryFlushContentAfter: Promise<string> | undefined;
   const flushSystemPrompt = [
     params.followupRun.run.extraSystemPrompt,
     activeMemoryFlushPlan.systemPrompt,
@@ -1425,6 +1438,13 @@ export async function runMemoryFlushIfNeeded(params: {
           abortSignal: params.replyOperation.abortSignal,
           replyOperation: params.replyOperation,
           onAgentEvent: (evt) => {
+            if (evt.stream === "tool" && evt.data.name === "write") {
+              if (evt.data.phase === "start") {
+                memoryFlushContentBefore = readMemoryFlushContent();
+              } else if (evt.data.phase === "result" && evt.data.isError !== true) {
+                memoryFlushContentAfter = readMemoryFlushContent();
+              }
+            }
             if (evt.stream === "compaction") {
               const phase = typeof evt.data.phase === "string" ? evt.data.phase : "";
               if (phase === "end") {
@@ -1446,6 +1466,20 @@ export async function runMemoryFlushIfNeeded(params: {
         return result;
       },
     });
+    if (
+      activeMemoryFlushPlan.recordWriteProvenance &&
+      memoryFlushContentBefore &&
+      memoryFlushContentAfter
+    ) {
+      await activeMemoryFlushPlan.recordWriteProvenance({
+        workspaceDir: params.followupRun.run.workspaceDir,
+        relativePath: memoryFlushWritePath,
+        contentBefore: await memoryFlushContentBefore,
+        contentAfter: await memoryFlushContentAfter,
+        originClass: params.followupRun.run.senderIsOwner ? "agent" : "untrusted",
+        observedAt: memoryDeps.now(),
+      });
+    }
     const flushedCompactionCount =
       activeSessionEntry?.compactionCount ??
       (params.sessionKey ? activeSessionStore?.[params.sessionKey]?.compactionCount : 0) ??

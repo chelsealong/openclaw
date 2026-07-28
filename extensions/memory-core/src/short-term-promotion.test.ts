@@ -3260,6 +3260,66 @@ describe("short-term promotion", () => {
     });
   });
 
+  it("lets new trusted evidence classify legacy entries without provenance", async () => {
+    await withTempWorkspace(async (workspaceDir) => {
+      const key = "memory:memory/2026-04-01.md:1:1";
+      await testing.writeRawRecallStore(workspaceDir, {
+        version: 1,
+        updatedAt: "2026-04-01T10:00:00.000Z",
+        entries: {
+          [key]: {
+            key,
+            path: "memory/2026-04-01.md",
+            startLine: 1,
+            endLine: 1,
+            source: "memory",
+            snippet: "The owner prefers green tea.",
+            recallCount: 1,
+            dailyCount: 0,
+            groundedCount: 0,
+            totalScore: 0.8,
+            maxScore: 0.8,
+            firstRecalledAt: "2026-04-01T10:00:00.000Z",
+            lastRecalledAt: "2026-04-01T10:00:00.000Z",
+            queryHashes: ["legacy"],
+            recallDays: ["2026-04-01"],
+            conceptTags: [],
+          },
+        },
+      });
+      const legacy = await testing.readRecallStore(workspaceDir, "2026-04-01T10:00:00.000Z");
+      expect(legacy.entries[key]?.provenance).toBeUndefined();
+
+      await recordShortTermRecalls({
+        workspaceDir,
+        query: "tea preference",
+        results: [
+          {
+            path: "memory/2026-04-01.md",
+            startLine: 1,
+            endLine: 1,
+            score: 0.9,
+            snippet: "The owner prefers green tea.",
+            source: "memory",
+            provenance: {
+              originClass: "owner",
+              sessionKind: "interactive",
+              observedAt: Date.parse("2026-04-02T10:00:00.000Z"),
+            },
+          },
+        ],
+        nowMs: Date.parse("2026-04-02T10:00:00.000Z"),
+      });
+
+      const updated = await testing.readRecallStore(workspaceDir, "2026-04-02T10:00:00.000Z");
+      expect(updated.entries[key]?.provenance).toEqual({
+        originClass: "owner",
+        sessionKind: "interactive",
+        observedAt: Date.parse("2026-04-02T10:00:00.000Z"),
+      });
+    });
+  });
+
   it("rejects long contaminated legacy recall entries before truncating snippets", async () => {
     await withTempWorkspace(async (workspaceDir) => {
       const maxSnippetChars = testing.SHORT_TERM_RECALL_MAX_SNIPPET_CHARS;
@@ -3336,6 +3396,11 @@ describe("short-term promotion", () => {
               path: "memory/2026-04-01.md",
               snippet,
             }),
+            provenance: {
+              originClass: "agent",
+              sessionKind: "unknown",
+              observedAt: Date.parse("2026-04-04T00:00:00.000Z"),
+            },
           },
         },
       };
@@ -3579,6 +3644,79 @@ describe("short-term promotion", () => {
     });
   });
 
+  it("defers append-only promotion when recall state changes during rehydration", async () => {
+    await withTempWorkspace(async (workspaceDir) => {
+      const notePath = await writeDailyMemoryNote(workspaceDir, "2026-04-29", [
+        "Keep the deployment window on Tuesday.",
+      ]);
+      const recallResult = {
+        path: "memory/2026-04-29.md",
+        startLine: 1,
+        endLine: 1,
+        score: 0.9,
+        snippet: "Keep the deployment window on Tuesday.",
+        source: "memory" as const,
+      };
+      await recordShortTermRecalls({
+        workspaceDir,
+        query: "deployment window",
+        results: [recallResult],
+        nowMs: Date.parse("2026-04-29T10:00:00.000Z"),
+      });
+      const ranked = await rankShortTermPromotionCandidates({
+        workspaceDir,
+        minScore: 0,
+        minRecallCount: 0,
+        minUniqueQueries: 0,
+        nowMs: Date.parse("2026-04-29T10:00:00.000Z"),
+      });
+      const candidate = expectDefined(ranked[0], "append-only candidate");
+      const originalReadFile = fs.readFile.bind(fs);
+      let injectedUpdate = false;
+      vi.spyOn(fs, "readFile").mockImplementation((async (
+        ...args: Parameters<typeof fs.readFile>
+      ) => {
+        if (
+          !injectedUpdate &&
+          typeof args[0] === "string" &&
+          path.resolve(args[0]) === path.resolve(notePath)
+        ) {
+          injectedUpdate = true;
+          await recordShortTermRecalls({
+            workspaceDir,
+            query: "Tuesday deployment",
+            results: [{ ...recallResult, score: 1 }],
+            dayBucket: "2026-04-30",
+            nowMs: Date.parse("2026-04-30T10:00:00.000Z"),
+          });
+        }
+        return await originalReadFile(...args);
+      }) as typeof fs.readFile);
+
+      const applied = await applyShortTermPromotions({
+        workspaceDir,
+        candidates: ranked,
+        minScore: 0,
+        minRecallCount: 0,
+        minUniqueQueries: 0,
+        nowMs: Date.parse("2026-04-29T10:00:00.000Z"),
+      });
+
+      expect(applied).toMatchObject({ applied: 0, appended: 0 });
+      await expect(fs.readFile(path.join(workspaceDir, "MEMORY.md"), "utf8")).rejects.toMatchObject(
+        { code: "ENOENT" },
+      );
+      const retryable = await rankShortTermPromotionCandidates({
+        workspaceDir,
+        minScore: 0,
+        minRecallCount: 0,
+        minUniqueQueries: 0,
+        nowMs: Date.parse("2026-04-30T10:00:00.000Z"),
+      });
+      expect(retryable.map((entry) => entry.key)).toContain(candidate.key);
+    });
+  });
+
   describe("MEMORY.md atomic promotion write", () => {
     it.runIf(process.platform !== "win32")(
       "preserves a dangling MEMORY.md symlink and its target directory mode",
@@ -3677,20 +3815,19 @@ describe("short-term promotion", () => {
             minUniqueQueries: 0,
           });
 
-          const canonicalTargetPath = await fs.realpath(targetPath);
-          const openSpy = vi.spyOn(fs, "open");
           await fs.chmod(targetPath, 0o600);
           await fs.chmod(sharedDir, 0o555);
           try {
-            await applyShortTermPromotions({
+            const applied = await applyShortTermPromotions({
               workspaceDir: workspaceAlias,
               candidates: secondRanked,
               minScore: 0,
               minRecallCount: 0,
               minUniqueQueries: 0,
+              memoryFileMaxChars: 400,
             });
+            expect(applied.applied).toBe(1);
             expect(await fs.readFile(targetPath, "utf-8")).toContain(secondSnippet);
-            expect(openSpy).toHaveBeenCalledWith(canonicalTargetPath, "r+");
             expect((await fs.stat(sharedDir)).mode & 0o7777).toBe(0o555);
           } finally {
             await fs.chmod(sharedDir, 0o755);

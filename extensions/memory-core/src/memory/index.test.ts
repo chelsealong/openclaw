@@ -444,6 +444,7 @@ describe("memory index", () => {
     messages: Array<{
       content: string;
       role: "assistant" | "user";
+      senderIsOwner?: boolean;
       timestamp: number | string;
     }>;
     sessionId: string;
@@ -480,6 +481,7 @@ describe("memory index", () => {
           role: message.role,
           timestamp: message.timestamp,
           content: [{ type: "text", text: message.content }],
+          ...(message.senderIsOwner ? { __openclaw: { senderIsOwner: true } } : {}),
         },
       });
     }
@@ -604,6 +606,10 @@ describe("memory index", () => {
       const results = await manager.search("alpha");
       expect(results.length).toBeGreaterThan(0);
       expect(results[0]?.path).toContain("memory/2026-01-12.md");
+      expect(results[0]?.provenance).toMatchObject({
+        originClass: "untrusted",
+        sessionKind: "unknown",
+      });
       const status = manager.status();
       expect(status.sourceCounts).toStrictEqual([
         {
@@ -4090,6 +4096,48 @@ describe("memory index", () => {
 
       expect(results[0]?.source).toBe("sessions");
       expect(results[0]?.snippet).toContain("ORBIT-10");
+      expect(results[0]?.provenance).toMatchObject({
+        originClass: "untrusted",
+        sessionKind: "interactive",
+      });
+    } finally {
+      restoreMemoryIndexStateDir();
+    }
+  });
+
+  it("preserves trusted per-line provenance through session indexing", async () => {
+    try {
+      const manager = await getFtsSessionManager({
+        stateDirName: ".state-session-provenance",
+      });
+      if (!manager) {
+        return;
+      }
+
+      await seedMemoryIndexSessionTranscript({
+        sessionId: "session-provenance",
+        messages: [
+          {
+            role: "user",
+            senderIsOwner: true,
+            timestamp: "2026-07-01T10:00:00.000Z",
+            content: "The owner prefers green tea.",
+          },
+        ],
+      });
+
+      await manager.sync({ reason: "test", force: true });
+      const results = await manager.search("owner prefers green tea", {
+        minScore: 0,
+        maxResults: 3,
+      });
+
+      expect(results[0]?.source).toBe("sessions");
+      expect(results[0]?.provenance).toEqual({
+        originClass: "owner",
+        sessionKind: "interactive",
+        observedAt: Date.parse("2026-07-01T10:00:00.000Z"),
+      });
     } finally {
       restoreMemoryIndexStateDir();
     }

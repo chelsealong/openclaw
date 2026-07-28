@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { withFileLock } from "openclaw/plugin-sdk/file-lock";
+import { resolveStateDir } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import {
   DEFAULT_MEMORY_DEEP_DREAMING_MAX_PROMOTED_SNIPPET_TOKENS,
   formatMemoryDreamingDay,
@@ -7,7 +10,17 @@ import {
 import { appendMemoryHostEvent } from "openclaw/plugin-sdk/memory-host-events";
 import { replaceFileAtomic } from "openclaw/plugin-sdk/security-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
+import {
+  applyMemoryConsolidationPlan,
+  appendConsolidationSkippedSummary,
+  appendConsolidationSummary,
+  consolidateMemory,
+  isConsolidationCandidateEligible,
+  isPromotionOriginBlocked,
+  storeMemoryPreimage,
+} from "./dreaming-consolidation.js";
 import { compactMemoryForBudget, DEFAULT_MEMORY_FILE_MAX_CHARS } from "./memory-budget.js";
+import { resolveShortTermSourcePathCandidates } from "./short-term-promotion-record.js";
 import { rehydratePromotionCandidate } from "./short-term-promotion-rehydrate.js";
 import { readStore, withShortTermLock, writeStore } from "./short-term-promotion-store.js";
 import {
@@ -17,6 +30,7 @@ import {
   type ApplyShortTermPromotionsOptions,
   type ApplyShortTermPromotionsResult,
   type PromotionCandidate,
+  type ShortTermRecallEntry,
 } from "./short-term-promotion-types.js";
 import {
   isContaminatedDreamingSnippet,
@@ -28,6 +42,25 @@ import { resolveMemoryCoreNowMs, resolveMemoryCoreTimestamp } from "./time.js";
 
 const PROMOTION_MARKER_PREFIX = "openclaw-memory-promotion:";
 const PROMOTED_SNIPPET_CHARS_PER_TOKEN_ESTIMATE = 4;
+const MEMORY_WRITE_LOCK_OPTIONS = {
+  retries: { retries: 100, factor: 1.2, minTimeout: 25, maxTimeout: 250 },
+  stale: 120_000,
+  staleRecovery: "fail-closed" as const,
+};
+
+class MemoryWriteConflictError extends Error {
+  constructor() {
+    super("MEMORY.md changed before the dreaming write could commit");
+    this.name = "MemoryWriteConflictError";
+  }
+}
+
+class MemoryWriteCommittedError extends Error {
+  constructor(cause: unknown) {
+    super("MEMORY.md rename committed before a later write step failed", { cause });
+    this.name = "MemoryWriteCommittedError";
+  }
+}
 
 function buildPromotionSection(
   candidates: PromotionCandidate[],
@@ -133,25 +166,114 @@ async function resolveMemoryWritePath(filePath: string): Promise<string> {
   return await resolveMemoryWritePath(targetPath);
 }
 
+async function readMemoryContent(filePath: string): Promise<string> {
+  return await fs.readFile(filePath, "utf-8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  });
+}
+
 function isAtomicReplacePermissionError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException)?.code;
+  const code = (error as NodeJS.ErrnoException).code;
   return code === "EACCES" || code === "EPERM" || code === "EEXIST" || code === "EROFS";
 }
 
-async function writeExistingMemoryInPlace(filePath: string, content: string): Promise<boolean> {
+async function writeExistingMemoryInPlace(params: {
+  filePath: string;
+  expectedContent: string;
+  content: string;
+}): Promise<boolean> {
+  if ((await readMemoryContent(params.filePath)) !== params.expectedContent) {
+    throw new MemoryWriteConflictError();
+  }
   let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
-    handle = await fs.open(filePath, "r+");
+    handle = await fs.open(params.filePath, "r+");
   } catch {
     return false;
   }
   try {
-    await handle.writeFile(content, { encoding: "utf-8" });
-    await handle.truncate(Buffer.byteLength(content));
+    await handle.writeFile(params.content, { encoding: "utf-8" });
+    await handle.truncate(Buffer.byteLength(params.content));
     await handle.sync();
     return true;
   } finally {
     await handle.close();
+  }
+}
+
+function hashMemoryContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+async function writeMemoryContent(params: {
+  memoryPath: string;
+  memoryWritePath: string;
+  expectedHash?: string;
+  expectedContent?: string;
+  allowInPlaceFallback?: boolean;
+  content: string;
+}): Promise<void> {
+  const memoryDirMode = (await fs.stat(path.dirname(params.memoryWritePath))).mode & 0o7777;
+  let renameCommitted = false;
+  const trackedRename: typeof fs.rename = async (source, destination) => {
+    if (
+      params.expectedHash &&
+      hashMemoryContent(await readMemoryContent(params.memoryWritePath)) !== params.expectedHash
+    ) {
+      throw new MemoryWriteConflictError();
+    }
+    // External editors can still write between this check and rename. OpenClaw writers
+    // are serialized; policy accepts this millisecond-wide race because the preimage is recoverable.
+    await fs.rename(source, destination);
+    renameCommitted = true;
+  };
+  try {
+    await replaceFileAtomic({
+      filePath: params.memoryWritePath,
+      content: params.content,
+      dirMode: memoryDirMode,
+      mode: 0o600,
+      preserveExistingMode: true,
+      tempPrefix: `${path.basename(params.memoryPath)}.promotion`,
+      syncTempFile: true,
+      syncParentDir: true,
+      throwOnCleanupError: true,
+      fileSystem: {
+        promises: {
+          mkdir: fs.mkdir,
+          chmod: fs.chmod,
+          writeFile: fs.writeFile,
+          rename: trackedRename,
+          copyFile: fs.copyFile,
+          unlink: fs.unlink,
+          rm: fs.rm,
+          open: fs.open,
+          stat: fs.stat,
+          lstat: fs.lstat,
+        },
+      },
+    });
+  } catch (error) {
+    // Append-only promotion retains the shipped writable-file fallback when
+    // directory ACLs block temp-file replacement; consolidation never uses it.
+    if (renameCommitted) {
+      throw new MemoryWriteCommittedError(error);
+    }
+    if (
+      !params.allowInPlaceFallback ||
+      params.expectedContent === undefined ||
+      !isAtomicReplacePermissionError(error) ||
+      !(await writeExistingMemoryInPlace({
+        filePath: params.memoryWritePath,
+        expectedContent: params.expectedContent,
+        content: params.content,
+      }))
+    ) {
+      throw error;
+    }
   }
 }
 
@@ -168,6 +290,61 @@ function extractPromotionMarkers(memoryText: string): Set<string> {
     }
   }
   return markers;
+}
+
+function consolidationCandidateFingerprint(candidate: PromotionCandidate): string {
+  return JSON.stringify({
+    key: candidate.key,
+    path: candidate.path,
+    startLine: candidate.startLine,
+    endLine: candidate.endLine,
+    snippet: candidate.snippet,
+    provenance: candidate.provenance,
+  });
+}
+
+function withAuthoritativeProvenance(
+  candidate: PromotionCandidate,
+  provenance: PromotionCandidate["provenance"],
+): PromotionCandidate {
+  const next = { ...candidate };
+  if (provenance) {
+    next.provenance = provenance;
+  } else {
+    delete next.provenance;
+  }
+  return next;
+}
+
+function recallStoreEntryFingerprint(entry: ShortTermRecallEntry | undefined): string {
+  return JSON.stringify(entry ?? null);
+}
+
+async function promotionSourceFingerprint(
+  workspaceDir: string,
+  candidate: PromotionCandidate,
+): Promise<string> {
+  for (const sourcePath of resolveShortTermSourcePathCandidates(workspaceDir, candidate.path)) {
+    try {
+      const content = await fs.readFile(sourcePath);
+      return createHash("sha256").update(content).digest("hex");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  return "missing";
+}
+
+async function resolveMemoryPromotionLockTarget(workspaceDir: string): Promise<string> {
+  const lockDir = path.join(resolveStateDir(), "locks");
+  await fs.mkdir(lockDir, { recursive: true, mode: 0o700 });
+  const canonicalWorkspace = await fs
+    .realpath(workspaceDir)
+    .catch(() => path.resolve(workspaceDir));
+  const workspaceHash = createHash("sha256").update(canonicalWorkspace).digest("hex");
+  return path.join(lockDir, `memory-promotion-${workspaceHash}`);
 }
 
 export async function applyShortTermPromotions(
@@ -191,175 +368,388 @@ export async function applyShortTermPromotions(
   const maxAgeDays = toFiniteNonNegativeInt(options.maxAgeDays, -1);
   const memoryPath = path.join(workspaceDir, "MEMORY.md");
 
-  return await withShortTermLock(workspaceDir, async () => {
-    const store = await readStore(workspaceDir, nowIso);
-    const selected = options.candidates
-      .filter((candidate) => {
-        if (isContaminatedDreamingSnippet(candidate.snippet)) {
-          return false;
-        }
-        if (candidate.promotedAt) {
-          return false;
-        }
-        if (candidate.score < minScore) {
-          return false;
-        }
-        if (candidate.signalCount < minRecallCount) {
-          return false;
-        }
-        if (Math.max(candidate.uniqueQueries, candidate.recallDays.length) < minUniqueQueries) {
-          return false;
-        }
-        if (maxAgeDays >= 0 && candidate.ageDays > maxAgeDays) {
-          return false;
-        }
-        const latest = store.entries[candidate.key];
-        if (latest?.promotedAt) {
-          return false;
-        }
-        return true;
-      })
-      .slice(0, limit);
-
-    const rehydratedSelected: PromotionCandidate[] = [];
-    for (const candidate of selected) {
-      const rehydrated = await rehydratePromotionCandidate(workspaceDir, candidate);
-      if (rehydrated && !isContaminatedDreamingSnippet(rehydrated.snippet)) {
-        rehydratedSelected.push(rehydrated);
-      }
-    }
-
-    if (rehydratedSelected.length === 0) {
-      return {
-        memoryPath,
-        applied: 0,
-        appended: 0,
-        reconciledExisting: 0,
-        appliedCandidates: [],
-        compactedSections: 0,
-        compactedDates: [],
-      };
-    }
-
-    // Promotions historically follow user-managed MEMORY.md symlinks. Replace the
-    // final target atomically without severing the chain, matching the prior writeFile path.
-    const memoryWritePath = await resolveMemoryWritePath(memoryPath);
-    const existingMemory = await fs.readFile(memoryWritePath, "utf-8").catch((err: unknown) => {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-        return "";
-      }
-      throw err;
-    });
-    const existingMarkers = extractPromotionMarkers(existingMemory);
-    const alreadyWritten = rehydratedSelected.filter((candidate) =>
-      existingMarkers.has(candidate.key),
-    );
-    const toAppend = rehydratedSelected.filter((candidate) => !existingMarkers.has(candidate.key));
-
-    let compactedDates: string[] = [];
-    if (toAppend.length > 0) {
-      const section = buildPromotionSection(
-        toAppend,
-        nowMs,
-        options.timezone,
-        options.maxPromotedSnippetTokens,
-      );
-      const budgetChars =
-        typeof options.memoryFileMaxChars === "number" &&
-        Number.isFinite(options.memoryFileMaxChars)
-          ? Math.max(0, Math.floor(options.memoryFileMaxChars))
-          : DEFAULT_MEMORY_FILE_MAX_CHARS;
-      const compaction = compactMemoryForBudget({
-        existingMemory,
-        newSection: section,
-        budgetChars,
-      });
-      compactedDates = compaction.droppedDates;
-      const baseMemory = compaction.compacted;
-      const header = baseMemory.trim().length > 0 ? "" : "# Long-Term Memory\n\n";
-      const content = `${header}${withTrailingNewline(baseMemory)}${section}`;
-      const memoryDirMode = (await fs.stat(path.dirname(memoryWritePath))).mode & 0o7777;
-      let atomicRenameCommitted = false;
-      const trackedRename: typeof fs.rename = async (source, destination) => {
-        await fs.rename(source, destination);
-        atomicRenameCommitted = true;
-      };
-      try {
-        await replaceFileAtomic({
-          filePath: memoryWritePath,
-          content,
-          dirMode: memoryDirMode,
-          mode: 0o600,
-          preserveExistingMode: true,
-          tempPrefix: `${path.basename(memoryPath)}.promotion`,
-          syncTempFile: true,
-          syncParentDir: true,
-          throwOnCleanupError: true,
-          // Stage proof prevents a future post-rename permission error from entering fallback.
-          fileSystem: {
-            promises: {
-              mkdir: fs.mkdir,
-              chmod: fs.chmod,
-              writeFile: fs.writeFile,
-              rename: trackedRename,
-              copyFile: fs.copyFile,
-              unlink: fs.unlink,
-              rm: fs.rm,
-              open: fs.open,
-              stat: fs.stat,
-              lstat: fs.lstat,
-            },
+  const store = await withShortTermLock(workspaceDir, async () => readStore(workspaceDir, nowIso));
+  const currentCandidates = options.candidates.map((candidate) => {
+    const entry = store.entries[candidate.key];
+    return entry
+      ? withAuthoritativeProvenance(
+          {
+            ...candidate,
+            path: entry.path,
+            startLine: entry.startLine,
+            endLine: entry.endLine,
+            snippet: entry.snippet,
           },
-        });
-      } catch (error) {
-        // Released promotion writes could update an existing writable MEMORY.md even when
-        // directory ACLs blocked rename. Retain that in-place contract only after a real
-        // atomic permission failure and a successful writable-file open.
-        if (
-          atomicRenameCommitted ||
-          !isAtomicReplacePermissionError(error) ||
-          !(await writeExistingMemoryInPlace(memoryWritePath, content))
-        ) {
-          throw error;
-        }
+          entry.provenance,
+        )
+      : candidate;
+  });
+  const selected = currentCandidates
+    .filter((candidate) => {
+      const latest = store.entries[candidate.key];
+      // Explicit untrusted/system origins never promote on ANY path (append or
+      // consolidation): recall frequency must never launder externally-derived
+      // content into MEMORY.md. Workspace memory files index as 'agent', so
+      // legitimate daily-note candidates stay eligible.
+      if (isPromotionOriginBlocked(candidate)) {
+        return false;
       }
-    }
-
-    for (const candidate of rehydratedSelected) {
-      const entry = store.entries[candidate.key];
-      if (!entry) {
-        continue;
+      if (options.consolidation && (!latest || !isConsolidationCandidateEligible(candidate))) {
+        return false;
       }
-      entry.startLine = candidate.startLine;
-      entry.endLine = candidate.endLine;
-      entry.snippet = candidate.snippet;
-      entry.promotedAt = nowIso;
-    }
-    store.updatedAt = nowIso;
-    await writeStore(workspaceDir, store);
-    await appendMemoryHostEvent(workspaceDir, {
-      type: "memory.promotion.applied",
-      timestamp: nowIso,
-      memoryPath,
-      applied: rehydratedSelected.length,
-      candidates: rehydratedSelected.map((candidate) => ({
-        key: candidate.key,
-        path: candidate.path,
-        startLine: candidate.startLine,
-        endLine: candidate.endLine,
-        score: candidate.score,
-        recallCount: candidate.recallCount,
-      })),
-    });
+      if (isContaminatedDreamingSnippet(candidate.snippet)) {
+        return false;
+      }
+      if (candidate.promotedAt) {
+        return false;
+      }
+      if (candidate.score < minScore) {
+        return false;
+      }
+      if (candidate.signalCount < minRecallCount) {
+        return false;
+      }
+      if (Math.max(candidate.uniqueQueries, candidate.recallDays.length) < minUniqueQueries) {
+        return false;
+      }
+      if (maxAgeDays >= 0 && candidate.ageDays > maxAgeDays) {
+        return false;
+      }
+      if (latest?.promotedAt) {
+        return false;
+      }
+      return true;
+    })
+    .slice(0, limit);
 
+  const rehydratedSelected: PromotionCandidate[] = [];
+  const plannedSourceFingerprints = new Map<string, string>();
+  for (const candidate of selected) {
+    const sourceFingerprintBefore = await promotionSourceFingerprint(workspaceDir, candidate);
+    const rehydrated = await rehydratePromotionCandidate(workspaceDir, candidate);
+    const sourceFingerprintAfter = await promotionSourceFingerprint(workspaceDir, candidate);
+    // Integrity is guarded by source-fingerprint stability during rehydration,
+    // successful rehydration (the snippet still exists in the live file), the
+    // contamination check, and the origin block above. Rehydration is meant to
+    // reshape the snippet (capping, heading context, moved lines), so we do not
+    // additionally require the rehydrated text to equal the stored recall.
+    if (
+      sourceFingerprintBefore === sourceFingerprintAfter &&
+      rehydrated &&
+      !isContaminatedDreamingSnippet(rehydrated.snippet)
+    ) {
+      rehydratedSelected.push(rehydrated);
+      plannedSourceFingerprints.set(candidate.key, sourceFingerprintAfter);
+    }
+  }
+
+  if (rehydratedSelected.length === 0) {
     return {
       memoryPath,
-      applied: rehydratedSelected.length,
-      appended: toAppend.length,
-      reconciledExisting: alreadyWritten.length,
-      appliedCandidates: rehydratedSelected,
-      compactedSections: compactedDates.length,
-      compactedDates,
+      applied: 0,
+      appended: 0,
+      reconciledExisting: 0,
+      appliedCandidates: [],
+      compactedSections: 0,
+      compactedDates: [],
     };
+  }
+
+  const plannedStoreEntryFingerprints = new Map(
+    rehydratedSelected.map((candidate) => [
+      candidate.key,
+      recallStoreEntryFingerprint(store.entries[candidate.key]),
+    ]),
+  );
+  // Promotions historically follow user-managed MEMORY.md symlinks. Replace the
+  // final target atomically without severing the chain, matching the prior writeFile path.
+  let memoryWritePath = await resolveMemoryWritePath(memoryPath);
+  let existingMemory = await fs.readFile(memoryWritePath, "utf-8").catch((err: unknown) => {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return "";
+    }
+    throw err;
   });
+  let existingMarkers = extractPromotionMarkers(existingMemory);
+  let alreadyWritten = rehydratedSelected.filter((candidate) => existingMarkers.has(candidate.key));
+  let toAppend = rehydratedSelected.filter((candidate) => !existingMarkers.has(candidate.key));
+  const consolidationBaseMemoryHash = hashMemoryContent(existingMemory);
+  const plannedCandidateFingerprints = new Map(
+    toAppend.map((candidate) => [candidate.key, consolidationCandidateFingerprint(candidate)]),
+  );
+
+  let compactedDates: string[] = [];
+  const budgetChars =
+    typeof options.memoryFileMaxChars === "number" && Number.isFinite(options.memoryFileMaxChars)
+      ? Math.max(0, Math.floor(options.memoryFileMaxChars))
+      : DEFAULT_MEMORY_FILE_MAX_CHARS;
+  const consolidationPlan =
+    options.consolidation?.subagent && toAppend.length > 0
+      ? await consolidateMemory({
+          subagent: options.consolidation.subagent,
+          workspaceDir,
+          existingMemory,
+          candidates: toAppend,
+          ...(options.consolidation.model ? { model: options.consolidation.model } : {}),
+          maxPriorEntryLossFraction: Math.max(
+            0,
+            Math.min(1, options.maxPriorEntryLossFraction ?? 0.25),
+          ),
+          memoryFileMaxChars: budgetChars,
+          ...(typeof options.maxPromotedSnippetTokens === "number"
+            ? { maxPromotedSnippetTokens: options.maxPromotedSnippetTokens }
+            : {}),
+          nowMs,
+          logger: options.consolidation.logger,
+        })
+      : null;
+  let consolidationResult: Awaited<ReturnType<typeof applyMemoryConsolidationPlan>> = null;
+  let committedCandidates: PromotionCandidate[] = [];
+  let appendedCandidates = 0;
+  let rewriteSkippedReason: string | undefined;
+  const promotionLockTarget = await resolveMemoryPromotionLockTarget(workspaceDir);
+  await withFileLock(promotionLockTarget, MEMORY_WRITE_LOCK_OPTIONS, async () => {
+    await withShortTermLock(workspaceDir, async () => {
+      const latestStore = await readStore(workspaceDir, nowIso);
+      const authoritativeSelected: PromotionCandidate[] = [];
+      for (const candidate of rehydratedSelected) {
+        const entry = latestStore.entries[candidate.key];
+        if (!entry) {
+          const wasDirectCandidate =
+            !options.consolidation &&
+            plannedStoreEntryFingerprints.get(candidate.key) ===
+              recallStoreEntryFingerprint(undefined);
+          const sourceUnchanged =
+            plannedSourceFingerprints.get(candidate.key) ===
+            (await promotionSourceFingerprint(workspaceDir, candidate));
+          if (
+            wasDirectCandidate &&
+            sourceUnchanged &&
+            !isContaminatedDreamingSnippet(candidate.snippet)
+          ) {
+            authoritativeSelected.push(candidate);
+          }
+          continue;
+        }
+        if (entry.promotedAt) {
+          continue;
+        }
+        const storeChanged =
+          plannedStoreEntryFingerprints.get(candidate.key) !== recallStoreEntryFingerprint(entry);
+        const sourceChanged =
+          plannedSourceFingerprints.get(candidate.key) !==
+          (await promotionSourceFingerprint(workspaceDir, candidate));
+        if (storeChanged || sourceChanged) {
+          continue;
+        }
+        const currentCandidate = withAuthoritativeProvenance(candidate, entry.provenance);
+        if (options.consolidation && !isConsolidationCandidateEligible(currentCandidate)) {
+          continue;
+        }
+        if (!isContaminatedDreamingSnippet(currentCandidate.snippet)) {
+          authoritativeSelected.push(currentCandidate);
+        }
+      }
+      memoryWritePath = await resolveMemoryWritePath(memoryPath);
+      existingMemory = await fs.readFile(memoryWritePath, "utf-8").catch((err: unknown) => {
+        if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+          return "";
+        }
+        throw err;
+      });
+      existingMarkers = extractPromotionMarkers(existingMemory);
+      alreadyWritten = authoritativeSelected.filter((candidate) =>
+        existingMarkers.has(candidate.key),
+      );
+      toAppend = authoritativeSelected.filter((candidate) => !existingMarkers.has(candidate.key));
+      const successfulCandidates = new Map(
+        alreadyWritten.map((candidate) => [candidate.key, candidate]),
+      );
+      const plannedKeys = new Set(
+        consolidationPlan?.operations.map((operation) => operation.candidateKey) ?? [],
+      );
+      const planIsCurrent =
+        consolidationPlan !== null &&
+        plannedKeys.size === toAppend.length &&
+        toAppend.every(
+          (candidate) =>
+            plannedKeys.has(candidate.key) &&
+            plannedCandidateFingerprints.get(candidate.key) ===
+              consolidationCandidateFingerprint(candidate),
+        );
+      if (planIsCurrent && consolidationPlan) {
+        if (hashMemoryContent(existingMemory) !== consolidationBaseMemoryHash) {
+          rewriteSkippedReason = "MEMORY.md changed while consolidation was running";
+        } else {
+          consolidationResult = applyMemoryConsolidationPlan({
+            existingMemory,
+            plan: consolidationPlan,
+            nowMs,
+            ...(options.timezone ? { timezone: options.timezone } : {}),
+            memoryFileMaxChars: budgetChars,
+            maxPriorEntryLossFraction: Math.max(
+              0,
+              Math.min(1, options.maxPriorEntryLossFraction ?? 0.25),
+            ),
+          });
+        }
+      }
+      if (consolidationResult) {
+        try {
+          await storeMemoryPreimage({ workspaceDir, content: existingMemory, nowMs });
+        } catch (error) {
+          options.consolidation?.logger.warn(
+            `memory-core: consolidation preimage failed (${String(error)}); using append-only fallback.`,
+          );
+          consolidationResult = null;
+        }
+      }
+      if (consolidationResult) {
+        try {
+          await writeMemoryContent({
+            memoryPath,
+            memoryWritePath,
+            expectedHash: consolidationBaseMemoryHash,
+            content: consolidationResult.content,
+          });
+          for (const candidate of toAppend) {
+            successfulCandidates.set(candidate.key, candidate);
+          }
+          appendedCandidates = toAppend.length;
+        } catch (error) {
+          if (
+            !(error instanceof MemoryWriteConflictError) &&
+            !isAtomicReplacePermissionError(error)
+          ) {
+            throw error;
+          }
+          rewriteSkippedReason =
+            error instanceof MemoryWriteConflictError
+              ? "MEMORY.md changed immediately before the consolidation rename"
+              : "the MEMORY.md directory blocked atomic replacement";
+          consolidationResult = null;
+          existingMemory = await readMemoryContent(memoryWritePath);
+          existingMarkers = extractPromotionMarkers(existingMemory);
+          alreadyWritten = authoritativeSelected.filter((candidate) =>
+            existingMarkers.has(candidate.key),
+          );
+          toAppend = authoritativeSelected.filter(
+            (candidate) => !existingMarkers.has(candidate.key),
+          );
+          successfulCandidates.clear();
+          for (const candidate of alreadyWritten) {
+            successfulCandidates.set(candidate.key, candidate);
+          }
+        }
+      }
+      if (!consolidationResult) {
+        if (consolidationPlan) {
+          options.consolidation?.logger.warn(
+            "memory-core: promotion state or MEMORY.md changed during consolidation; using append-only fallback.",
+          );
+        }
+        if (toAppend.length > 0) {
+          // Model absence or rejected output preserves the shipped append-only
+          // promotion contract, so a deep sweep never loses eligible memories.
+          const section = buildPromotionSection(
+            toAppend,
+            nowMs,
+            options.timezone,
+            options.maxPromotedSnippetTokens,
+          );
+          const compaction = compactMemoryForBudget({
+            existingMemory,
+            newSection: section,
+            budgetChars,
+          });
+          const droppedDates = compaction.droppedDates;
+          const baseMemory = compaction.compacted;
+          const header = baseMemory.trim().length > 0 ? "" : "# Long-Term Memory\n\n";
+          const content = `${header}${withTrailingNewline(baseMemory)}${section}`;
+          // Append fallback keeps the historical read-modify-replace contract. Policy accepts
+          // its external-editor race because OpenClaw writers remain serialized by this sweep lock.
+          await writeMemoryContent({
+            memoryPath,
+            memoryWritePath,
+            expectedHash: hashMemoryContent(existingMemory),
+            expectedContent: existingMemory,
+            allowInPlaceFallback: true,
+            content,
+          });
+          for (const candidate of toAppend) {
+            successfulCandidates.set(candidate.key, candidate);
+          }
+          compactedDates = droppedDates;
+          appendedCandidates = toAppend.length;
+        }
+      }
+      if (rewriteSkippedReason) {
+        options.consolidation?.logger.warn(
+          `memory-core: ${rewriteSkippedReason}; using append-only fallback.`,
+        );
+      }
+      for (const candidate of successfulCandidates.values()) {
+        const entry = latestStore.entries[candidate.key];
+        if (!entry) {
+          continue;
+        }
+        entry.startLine = candidate.startLine;
+        entry.endLine = candidate.endLine;
+        entry.snippet = candidate.snippet;
+        entry.promotedAt = nowIso;
+      }
+      const latestUpdatedAtMs = Date.parse(latestStore.updatedAt);
+      latestStore.updatedAt = resolveMemoryCoreTimestamp(
+        Math.max(nowMs, Number.isFinite(latestUpdatedAtMs) ? latestUpdatedAtMs : 0),
+      );
+      await writeStore(workspaceDir, latestStore);
+      committedCandidates = [...successfulCandidates.values()];
+    });
+  });
+  if (consolidationResult) {
+    await appendConsolidationSummary({
+      workspaceDir,
+      result: consolidationResult,
+      nowMs,
+    }).catch((error: unknown) => {
+      options.consolidation?.logger.warn(
+        `memory-core: MEMORY.md was consolidated but DREAMS.md summary failed: ${String(error)}`,
+      );
+    });
+  } else if (rewriteSkippedReason) {
+    await appendConsolidationSkippedSummary({
+      workspaceDir,
+      nowMs,
+      reason: rewriteSkippedReason,
+    }).catch((error: unknown) => {
+      options.consolidation?.logger.warn(
+        `memory-core: consolidation skip summary failed: ${String(error)}`,
+      );
+    });
+  }
+
+  await appendMemoryHostEvent(workspaceDir, {
+    type: "memory.promotion.applied",
+    timestamp: nowIso,
+    memoryPath,
+    applied: committedCandidates.length,
+    candidates: committedCandidates.map((candidate) => ({
+      key: candidate.key,
+      path: candidate.path,
+      startLine: candidate.startLine,
+      endLine: candidate.endLine,
+      score: candidate.score,
+      recallCount: candidate.recallCount,
+    })),
+  });
+
+  return {
+    memoryPath,
+    applied: committedCandidates.length,
+    appended: appendedCandidates,
+    reconciledExisting: alreadyWritten.length,
+    appliedCandidates: committedCandidates,
+    compactedSections: compactedDates.length,
+    compactedDates,
+  };
 }

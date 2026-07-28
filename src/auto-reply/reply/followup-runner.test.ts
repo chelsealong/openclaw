@@ -29,13 +29,6 @@ vi.mock("./agent-runner-result-accounting.js", () => ({
 
 vi.mock("./followup-turn-admission.js", () => ({
   admitFollowupTurn: (...args: unknown[]) => state.admit(...args),
-  settleQueuedFollowupPresentation: async (defaults: {
-    opts?: { onQueuedFollowupSettled?: () => Promise<void> | void };
-  }) => {
-    try {
-      await defaults.opts?.onQueuedFollowupSettled?.();
-    } catch {}
-  },
 }));
 
 vi.mock("./followup-turn-execution.js", () => ({
@@ -260,23 +253,15 @@ describe("createFollowupRunner", () => {
     });
     state.completeLifecycle.mockImplementation(() => order.push("lifecycle-complete"));
 
-    await createFollowupRunner({
-      typing,
-      typingMode: "instant",
-      defaultModel: "claude",
-      opts: {
-        onQueuedFollowupSettled: () => {
-          order.push("presentation-settled");
-        },
-      },
-    })(turn.queued);
+    await createFollowupRunner({ typing, typingMode: "instant", defaultModel: "claude" })(
+      turn.queued,
+    );
 
     expect(order).toEqual([
       "progress-drained",
       "accounted",
       "decision",
       "delivered",
-      "presentation-settled",
       "lifecycle-complete",
       "operation-complete",
     ]);

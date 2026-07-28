@@ -7,7 +7,6 @@ import { accountFollowupTurn } from "./agent-runner-result-accounting.js";
 import { deliverFollowupDecision, resolveFollowupDeliveryDecision } from "./followup-delivery.js";
 import {
   admitFollowupTurn,
-  settleQueuedFollowupPresentation,
   type AdmittedFollowupTurn,
   type FollowupRunnerParams,
 } from "./followup-turn-admission.js";
@@ -33,7 +32,6 @@ export function createFollowupRunner(
     let operation: ReplyOperation | undefined;
     let admittedRunId: string | undefined;
     let executionStarted = false;
-    let queuedFollowupAdmitted = false;
     const initiallyAborted =
       queued.abortSignal?.aborted === true || queued.queueAbortSignal?.aborted === true;
     const endDeliveryCorrelations = initiallyAborted
@@ -75,7 +73,6 @@ export function createFollowupRunner(
       const turn: AdmittedFollowupTurn = admission.turn;
       admittedRunId = turn.runId;
       operation = turn.operation;
-      queuedFollowupAdmitted = true;
       const execution = await executeFollowupTurn({
         turn,
         defaults,
@@ -154,9 +151,6 @@ export function createFollowupRunner(
         disposition = { kind: "retry", error };
       }
     } finally {
-      if (queuedFollowupAdmitted) {
-        await settleQueuedFollowupPresentation(defaults);
-      }
       for (const end of endDeliveryCorrelations.toReversed()) {
         try {
           end();

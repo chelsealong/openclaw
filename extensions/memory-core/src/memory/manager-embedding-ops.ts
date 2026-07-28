@@ -22,6 +22,8 @@ import {
   runWithConcurrency,
   type MemoryChunk,
   type MemorySource,
+  type MemoryEntryProvenance,
+  MEMORY_INDEX_CHUNK_PROVENANCE_TABLE,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { MAX_TIMER_TIMEOUT_MS, resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
@@ -933,6 +935,29 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
             JSON.stringify(embedding),
             now,
           );
+        const provenance = chunk.provenance ?? {
+          originClass: "untrusted" as const,
+          sessionKind: "unknown" as const,
+          observedAt: now,
+        };
+        this.db
+          .prepare(
+            `INSERT INTO ${MEMORY_INDEX_CHUNK_PROVENANCE_TABLE} (
+               chunk_id, origin_class, session_kind, observed_at, supersedes_key
+             ) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(chunk_id) DO UPDATE SET
+               origin_class=excluded.origin_class,
+               session_kind=excluded.session_kind,
+               observed_at=excluded.observed_at,
+               supersedes_key=excluded.supersedes_key`,
+          )
+          .run(
+            id,
+            provenance.originClass,
+            provenance.sessionKind,
+            provenance.observedAt,
+            provenance.supersedesKey ?? null,
+          );
         if (vectorReady && embedding.length > 0) {
           replaceMemoryVectorRow({
             db: this.db,
@@ -977,10 +1002,12 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         this.deleteFileRecord(entry.path, options.source);
         return null;
       }
+      const chunk = multimodalChunk.chunk;
+      chunk.provenance = this.resolveChunkProvenance(entry, options.source, chunk);
       return {
         entry,
         source: options.source,
-        chunks: [multimodalChunk.chunk],
+        chunks: [chunk],
         structuredInputBytes: multimodalChunk.structuredInputBytes,
       };
     }
@@ -993,6 +1020,9 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         `read memory markdown for indexing ${entry.absPath}`,
       ));
     const baseChunks = filterNonEmptyMemoryChunks(chunkMarkdown(content, this.settings.chunking));
+    for (const chunk of baseChunks) {
+      chunk.provenance = this.resolveChunkProvenance(entry, options.source, chunk);
+    }
     const chunks =
       generation?.kind === "semantic"
         ? enforceEmbeddingMaxInputTokens(
@@ -1005,6 +1035,43 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       remapChunkLines(chunks, entry.lineMap);
     }
     return { entry, source: options.source, chunks };
+  }
+
+  private resolveChunkProvenance(
+    entry: MemoryIndexEntry,
+    source: MemorySource,
+    chunk: MemoryChunk,
+  ): MemoryEntryProvenance {
+    const lineProvenance = entry.lineProvenance?.slice(chunk.startLine - 1, chunk.endLine) ?? [];
+    if (source === "sessions" && lineProvenance.length > 0) {
+      const originPriority = ["owner", "agent", "system", "untrusted"] as const;
+      const originClass = originPriority.findLast((origin) =>
+        lineProvenance.some((item) => item.originClass === origin),
+      );
+      const sessionKinds = new Set(lineProvenance.map((item) => item.sessionKind));
+      const supersedesKeys = new Set(
+        lineProvenance.flatMap((item) => (item.supersedesKey ? [item.supersedesKey] : [])),
+      );
+      return {
+        originClass: originClass ?? "untrusted",
+        sessionKind:
+          sessionKinds.size === 1 ? (lineProvenance[0]?.sessionKind ?? "unknown") : "unknown",
+        observedAt: Math.max(...lineProvenance.map((item) => item.observedAt)),
+        ...(supersedesKeys.size === 1 ? { supersedesKey: [...supersedesKeys][0] } : {}),
+      };
+    }
+
+    const normalizedPath = entry.path.replaceAll("\\", "/").toLowerCase();
+    const isSystemArtifact =
+      normalizedPath === "dreams.md" ||
+      normalizedPath.startsWith("memory/dreaming/") ||
+      normalizedPath.startsWith("memory/.dreams/");
+    const isConsolidatedMemory = normalizedPath === "memory.md";
+    return {
+      originClass: isSystemArtifact ? "system" : isConsolidatedMemory ? "agent" : "untrusted",
+      sessionKind: "unknown",
+      observedAt: Math.max(0, Math.floor(entry.mtimeMs)),
+    };
   }
 
   protected override async indexFiles(items: MemoryIndexWorkItem[]): Promise<void> {

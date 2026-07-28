@@ -1,4 +1,5 @@
 // Memory Core plugin module implements flush plan behavior.
+import { createHash } from "node:crypto";
 import {
   DEFAULT_AGENT_COMPACTION_RESERVE_TOKENS_FLOOR,
   parseNonNegativeByteSize,
@@ -7,6 +8,11 @@ import {
   type MemoryFlushPlan,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
+import {
+  DREAMING_DAILY_PROVENANCE_NAMESPACE,
+  readMemoryCoreWorkspaceEntries,
+  writeMemoryCoreWorkspaceEntry,
+} from "./dreaming-state.js";
 import { resolveMemoryCoreNowMs } from "./time.js";
 
 const DEFAULT_MEMORY_FLUSH_SOFT_TOKENS = 4000;
@@ -132,5 +138,27 @@ export function buildMemoryFlushPlan(
     prompt: appendCurrentTimeLine(promptBase.replaceAll("YYYY-MM-DD", dateStamp), timeLine),
     systemPrompt: systemPrompt.replaceAll("YYYY-MM-DD", dateStamp),
     relativePath,
+    recordWriteProvenance: async (write) => {
+      const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+      const existing = (
+        await readMemoryCoreWorkspaceEntries<{
+          fileHash: string;
+          originClass: "agent" | "untrusted";
+          observedAt: number;
+        }>({ namespace: DREAMING_DAILY_PROVENANCE_NAMESPACE, workspaceDir: write.workspaceDir })
+      ).find((entry) => entry.key === write.relativePath)?.value;
+      const originClass =
+        write.originClass === "agent" &&
+        (!write.contentBefore ||
+          (existing?.originClass === "agent" && existing.fileHash === hash(write.contentBefore)))
+          ? "agent"
+          : "untrusted";
+      await writeMemoryCoreWorkspaceEntry({
+        namespace: DREAMING_DAILY_PROVENANCE_NAMESPACE,
+        workspaceDir: write.workspaceDir,
+        key: write.relativePath,
+        value: { fileHash: hash(write.contentAfter), originClass, observedAt: write.observedAt },
+      });
+    },
   };
 }
