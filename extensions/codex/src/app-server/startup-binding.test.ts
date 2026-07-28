@@ -284,6 +284,55 @@ describe("Codex app-server startup binding", () => {
     expect(countFileReads.map((count) => count())).toEqual([1]);
   });
 
+  it("keeps rollouts above the safe root default on the bounded direct path", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const agentDir = path.join(tempDir, "agent");
+    const rolloutDir = path.join(agentDir, "codex-home", "sessions");
+    const rolloutPath = path.join(rolloutDir, "rollout-thread-existing.jsonl");
+    await fs.mkdir(rolloutDir, { recursive: true });
+    const tokenSnapshot = Buffer.from(
+      `\n${JSON.stringify({
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { total_tokens: 120_000 },
+            model_context_window: 128_000,
+          },
+        },
+      })}\n`,
+    );
+    const oversizedOffset = 16 * 1024 * 1024 + 1;
+    const rolloutHandle = await fs.open(rolloutPath, "w");
+    try {
+      await rolloutHandle.truncate(oversizedOffset);
+      await rolloutHandle.write(tokenSnapshot, 0, tokenSnapshot.byteLength, oversizedOffset);
+    } finally {
+      await rolloutHandle.close();
+    }
+    await writeExistingBinding(sessionFile, workspaceDir, { rolloutPath });
+    const readDirectories = vi.spyOn(fs, "readdir");
+    const openFile = fs.open.bind(fs);
+    const countFileReads: Array<() => number> = [];
+    vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+      const handle = await openFile(file, flags, mode);
+      const read = vi.spyOn(handle, "read");
+      countFileReads.push(() => read.mock.calls.length);
+      return handle;
+    });
+
+    const binding = await rotateOversizedCodexAppServerStartupBinding({
+      binding: await readCodexAppServerBinding(sessionFile),
+      sessionFile,
+      agentDir,
+      config: undefined,
+    });
+
+    expect(binding).toBeUndefined();
+    expect(readDirectories).not.toHaveBeenCalled();
+    expect(countFileReads.map((count) => count())).toEqual([1]);
+  });
+
   it("scans a large trailing transcript record without repeatedly copying it", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");

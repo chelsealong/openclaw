@@ -118,6 +118,9 @@ async function listCodexAppServerRolloutFilesForThread(
       // another open would allow a symlinked parent to escape the native root.
       const safeRoot = await openSafeFilesystemRoot(rolloutRoot, {
         hardlinks: "reject",
+        // Tail reads stay bounded; the default 16 MiB whole-file cap would
+        // send large native rollouts back through recursive discovery.
+        maxBytes: Number.MAX_SAFE_INTEGER,
         symlinks: "reject",
       });
       const opened = await safeRoot.open(path.relative(rolloutRoot, rolloutPath));
