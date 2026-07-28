@@ -3,7 +3,8 @@ import { html } from "lit";
 
 export const page = definePage({
   id: "cron",
-  path: "/cron",
+  path: "/automations",
+  aliases: ["/cron"],
   component: () =>
     import("./cron-page.ts").then(() => ({
       header: true,
