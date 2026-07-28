@@ -5,6 +5,7 @@ import {
   readSessionTranscriptMessageEventCount,
   readSessionTranscriptMessageEventPage,
   readSessionTranscriptMessageEvents,
+  readSessionTranscriptWatermark,
   resolveSessionTranscriptReadTarget,
   waitForSessionTranscriptProjection,
   type SessionTranscriptMessageEvent,
@@ -53,6 +54,31 @@ type SessionTitleFields = {
 // this many active-path messages from either end, widening only once.
 const SQLITE_TITLE_PROBE_INITIAL_MESSAGES = 20;
 const SQLITE_TITLE_PROBE_MAX_MESSAGES = 100;
+const SQLITE_TITLE_FIELD_CACHE_MAX_ENTRIES = 256;
+
+type SqliteTitleFieldCacheEntry = ReturnType<typeof readSessionTranscriptWatermark> & {
+  fields: Partial<Record<"default" | "includeInterSession", SessionTitleFields>>;
+};
+
+// Appends advance maxSeq while rewind, fork, and compaction rotate generation. Both tokens must
+// match or stale titles can survive transcript replacement; keep only a few list pages in memory.
+const sqliteTitleFieldCache = new Map<string, SqliteTitleFieldCacheEntry>();
+
+function sqliteTitleFieldCacheKey(target: ResolvedTranscriptReadTarget): string {
+  return `${target.agentId ?? ""}\0${target.sessionId}\0${target.storePath ?? ""}`;
+}
+
+function setSqliteTitleFieldCache(key: string, entry: SqliteTitleFieldCacheEntry): void {
+  sqliteTitleFieldCache.delete(key);
+  sqliteTitleFieldCache.set(key, entry);
+  if (sqliteTitleFieldCache.size <= SQLITE_TITLE_FIELD_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const oldestKey = sqliteTitleFieldCache.keys().next().value;
+  if (oldestKey !== undefined) {
+    sqliteTitleFieldCache.delete(oldestKey);
+  }
+}
 
 export type ReadRecentSessionMessagesResult = {
   activeLeafEntryId?: string | null;
@@ -330,6 +356,18 @@ function readSqliteTitleFields(
   opts?: { includeInterSession?: boolean },
 ): SessionTitleFields {
   const scope = toTranscriptReadScope(target);
+  const cacheKey = sqliteTitleFieldCacheKey(target);
+  const watermark = readSessionTranscriptWatermark(scope);
+  const variant = opts?.includeInterSession === true ? "includeInterSession" : "default";
+  const cached = sqliteTitleFieldCache.get(cacheKey);
+  const cachedFields =
+    cached?.generation === watermark.generation && cached.maxSeq === watermark.maxSeq
+      ? cached.fields[variant]
+      : undefined;
+  if (cached && cachedFields) {
+    setSqliteTitleFieldCache(cacheKey, cached);
+    return { ...cachedFields };
+  }
   const tail = readSessionTranscriptMessageEventPage(scope, {
     maxMessages: SQLITE_TITLE_PROBE_INITIAL_MESSAGES,
     offset: 0,
@@ -367,10 +405,17 @@ function readSqliteTitleFields(
       opts?.includeInterSession === true,
     );
   }
-  return {
+  const fields = {
     firstUserMessage: firstUser ? extractMessageText(firstUser) : null,
     lastMessagePreview: lastText,
   };
+  const fieldsByVariant =
+    cached?.generation === watermark.generation && cached.maxSeq === watermark.maxSeq
+      ? cached.fields
+      : {};
+  fieldsByVariant[variant] = fields;
+  setSqliteTitleFieldCache(cacheKey, { ...watermark, fields: fieldsByVariant });
+  return { ...fields };
 }
 
 function readSqliteAggregateUsageSnapshot(

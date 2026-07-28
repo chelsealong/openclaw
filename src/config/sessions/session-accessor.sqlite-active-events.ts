@@ -67,6 +67,11 @@ export type SessionTranscriptMessageEventPage = {
   totalMessages: number;
 };
 
+export type SessionTranscriptWatermark = {
+  generation: string | null;
+  maxSeq: number | null;
+};
+
 export type SessionTranscriptMessageAnchorPage = SessionTranscriptMessageEventPage & {
   found: boolean;
   hasOverreadContext: boolean;
@@ -110,6 +115,30 @@ const EMPTY_PROJECTION_STATE: SessionTranscriptProjectionState = {
 
 function getActiveTranscriptKysely(database: OpenClawAgentDatabase) {
   return getNodeSqliteKysely<ActiveTranscriptDatabase>(database.db);
+}
+
+/** Reads the append and rewrite tokens that validate transcript-derived caches. */
+export function readSessionTranscriptWatermark(
+  scope: SessionTranscriptReadScope,
+): SessionTranscriptWatermark {
+  const resolved = resolveSqliteTranscriptReadScope(scope);
+  const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
+  const db = getActiveTranscriptKysely(database);
+  const maxSeq = executeSqliteQueryTakeFirstSync(
+    database.db,
+    db
+      .selectFrom("transcript_events")
+      .select((eb) => eb.fn.max<number>("seq").as("max_seq"))
+      .where("session_id", "=", resolved.sessionId),
+  )?.max_seq;
+  const generation = executeSqliteQueryTakeFirstSync(
+    database.db,
+    db
+      .selectFrom("transcript_rewrite_watermarks")
+      .select("generation")
+      .where("session_id", "=", resolved.sessionId),
+  )?.generation;
+  return { generation: generation ?? null, maxSeq: maxSeq ?? null };
 }
 
 function normalizeVisibleMessageLimit(
