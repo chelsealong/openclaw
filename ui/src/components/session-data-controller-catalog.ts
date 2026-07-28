@@ -56,16 +56,14 @@ export interface SessionCatalogDataOwner {
   refreshSessionCatalogs(): Promise<void>;
 }
 
-export function visibleSessionCatalogClient(
-  owner: SessionCatalogDataOwner,
-): GatewayBrowserClient | null {
+function visibleSessionCatalogClient(owner: SessionCatalogDataOwner): GatewayBrowserClient | null {
   if (document.visibilityState === "hidden") {
     return null;
   }
   return sessionCatalogListClient(owner.context?.gateway.snapshot, owner.sessionDataHostConnected);
 }
 
-export function synchronizeSessionCatalogAgent(
+function synchronizeSessionCatalogAgent(
   owner: SessionCatalogDataOwner,
   agentId: string | null,
 ): void {
@@ -127,7 +125,7 @@ function resolveSessionCatalogAgentId(
   return selected && selected !== helloDefault ? null : helloDefault;
 }
 
-export function requestSessionCatalogRefresh(owner: SessionCatalogDataOwner): void {
+function requestSessionCatalogRefresh(owner: SessionCatalogDataOwner): void {
   const snapshot = owner.context?.gateway.snapshot;
   owner.sessionCatalogLive.requestRefresh({
     visible: document.visibilityState !== "hidden",
