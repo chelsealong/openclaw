@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import XCTest
 @testable import OpenClaw
+@testable import OpenClawChatUI
 
 @MainActor
 final class TraceHeadingVisualProofTests: XCTestCase {
