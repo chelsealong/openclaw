@@ -2851,7 +2851,7 @@ describe("mcp loopback server", () => {
       toolSchema: buildMockMcpToolSchema([tool]),
     });
 
-    expectMcpResultText(payload, "SCHEDULED", false);
+    expectMcpResultText(payload as McpToolResultPayload, "SCHEDULED", false);
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
@@ -2869,7 +2869,7 @@ describe("mcp loopback server", () => {
       toolSchema: buildMockMcpToolSchema([tool]),
     });
 
-    expectMcpResultText(payload, "Tool not available: cron", true);
+    expectMcpResultText(payload as McpToolResultPayload, "Tool not available: cron", true);
   });
 
   it("preserves request-disconnect evidence without classifying a tool failure", async () => {

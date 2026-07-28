@@ -79,7 +79,7 @@
     "agents_list",
     "sessions_spawn",
     "nodes",
-    "cron",
+    "automations",
     "tts",
     "gateway",
     "sessions_list",
@@ -221,20 +221,20 @@ This is the deterministic model-bound layer stack OpenClaw can snapshot for the 
     "roughTokens": 0
   },
   "dynamicToolsJson": {
-    "chars": 61075,
-    "roughTokens": 15269
+    "chars": 61082,
+    "roughTokens": 15271
   },
   "openClawDeveloperInstructions": {
-    "chars": 2362,
-    "roughTokens": 591
+    "chars": 2369,
+    "roughTokens": 593
   },
   "totalTextOnly": {
-    "chars": 26374,
-    "roughTokens": 6594
+    "chars": 26381,
+    "roughTokens": 6596
   },
   "totalWithDynamicToolsJson": {
-    "chars": 87451,
-    "roughTokens": 21863
+    "chars": 87465,
+    "roughTokens": 21867
   },
   "userInputText": {
     "chars": 929,
@@ -421,7 +421,7 @@ Approval policy is currently never. Do not provide the `sandbox_permissions` for
 ````text
 You are a personal agent running inside OpenClaw. OpenClaw has dynamic tools for OpenClaw-owned messaging, cron, sessions, media, gateway, and nodes.
 
-Deferred searchable OpenClaw dynamic tools available: cron, gateway, nodes, session_status, sessions_history, sessions_list, sessions_search, sessions_send, subagents, tts, web_fetch, web_search. Use `tool_search` to load exact callable specs before use.
+Deferred searchable OpenClaw dynamic tools available: automations, gateway, nodes, session_status, sessions_history, sessions_list, sessions_search, sessions_send, subagents, tts, web_fetch, web_search. Use `tool_search` to load exact callable specs before use.
 
 Use Codex native `spawn_agent` for Codex subagents. `spawn_agent` and the other native collaboration tools may be deferred: when `spawn_agent` is not directly listed, load it with `tool_search` before spawning. Use OpenClaw `sessions_spawn` only for OpenClaw or ACP delegation, never as a substitute for `spawn_agent`.
 
@@ -519,7 +519,7 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
   "agents_list",
   "sessions_spawn",
   "nodes",
-  "cron",
+  "automations",
   "tts",
   "gateway",
   "sessions_list",
