@@ -12,7 +12,7 @@ const RETIRED_ARM_GROUPS = new Set(["camera", "screen", "computer", "mobile-ui",
 
 // This is the exact pre-retirement setup seed. Keep it independent of the
 // current dangerous-command set so future policy changes cannot widen cleanup.
-export const RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS = [
+const RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS = [
   "camera.snap",
   "camera.clip",
   "screen.record",
@@ -33,7 +33,7 @@ type RetiredArmState = {
   removedFromDeny?: unknown;
 };
 
-export type RetiredPhoneControlCleanupPlan = {
+type RetiredPhoneControlCleanupPlan = {
   config: OpenClawConfig;
   configChanges: string[];
   cleanupPending: boolean;

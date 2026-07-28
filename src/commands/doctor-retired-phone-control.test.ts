@@ -11,8 +11,22 @@ import {
 import {
   finalizeRetiredPhoneControlCleanup,
   prepareRetiredPhoneControlCleanup,
-  RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS,
 } from "./doctor-retired-phone-control.js";
+
+const RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS = [
+  "camera.snap",
+  "camera.clip",
+  "screen.record",
+  "computer.act",
+  "mobile.ui.observe",
+  "mobile.ui.act",
+  "contacts.add",
+  "calendar.add",
+  "reminders.add",
+  "sms.send",
+  "sms.search",
+  "health.summary",
+] as const;
 
 function createV3State(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
