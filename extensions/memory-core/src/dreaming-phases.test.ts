@@ -39,8 +39,6 @@ const LIGHT_SLEEP_EVENT_TEXT = "__openclaw_memory_core_light_sleep__";
 const REM_SLEEP_EVENT_TEXT = "__openclaw_memory_core_rem_sleep__";
 const originalDreamingTestFast = process.env.OPENCLAW_TEST_FAST;
 const originalDreamingStateDir = process.env.OPENCLAW_STATE_DIR;
-const EMPTY_SESSION_CONTENT_HASH =
-  "75a11da44c802486bc6f65640aa48a730f0f684c5c07a42ba3cd1735eb3fb070";
 const LIGHT_DREAMING_TEST_CONFIG: OpenClawConfig = {
   plugins: {
     entries: {
@@ -140,16 +138,6 @@ async function expectPathMissing(targetPath: string): Promise<void> {
   throw new Error(`expected path to be missing: ${targetPath}`);
 }
 
-function requireFirstIngestionEntry(sessionIngestion: {
-  files: Record<string, { lineCount: number; lastContentLine: number; contentHash: string }>;
-}) {
-  const firstEntry = Object.values(sessionIngestion.files)[0];
-  if (!firstEntry) {
-    throw new Error("expected session ingestion entry");
-  }
-  return firstEntry;
-}
-
 async function seedDreamingSessionTranscript(params: {
   agentId?: string;
   messages: Array<{
@@ -160,6 +148,7 @@ async function seedDreamingSessionTranscript(params: {
   }>;
   sessionId: string;
   sessionKey?: string;
+  spawnedBy?: string;
 }): Promise<void> {
   const agentId = params.agentId ?? "main";
   const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
@@ -183,7 +172,12 @@ async function seedDreamingSessionTranscript(params: {
     agentId,
     sessionKey,
     storePath,
-    entry: { sessionFile, sessionId: params.sessionId, updatedAt },
+    entry: {
+      sessionFile,
+      sessionId: params.sessionId,
+      updatedAt,
+      ...(params.spawnedBy ? { spawnedBy: params.spawnedBy } : {}),
+    },
   });
   for (const message of params.messages) {
     await appendSessionTranscriptMessageByIdentity({
@@ -203,7 +197,12 @@ async function seedDreamingSessionTranscript(params: {
     agentId,
     sessionKey,
     storePath,
-    entry: { sessionFile, sessionId: params.sessionId, updatedAt },
+    entry: {
+      sessionFile,
+      sessionId: params.sessionId,
+      updatedAt,
+      ...(params.spawnedBy ? { spawnedBy: params.spawnedBy } : {}),
+    },
   });
 }
 
@@ -1313,6 +1312,9 @@ describe("memory-core dreaming phases", () => {
     expect(ranked.map((candidate) => candidate.path)).toContain(
       "memory/.dreams/session-corpus/2026-04-05.txt",
     );
+    expect(
+      ranked.find((candidate) => candidate.path.includes("session-corpus"))?.provenance,
+    ).toMatchObject({ sessionKind: "interactive" });
     const snippets = ranked.map((candidate) => candidate.snippet);
     expectIncludesSubstring(snippets, "Move backups to S3 Glacier.");
     expectIncludesSubstring(snippets, "Set retention to 365 days.");
@@ -1448,11 +1450,7 @@ describe("memory-core dreaming phases", () => {
     );
 
     const sessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
-    expect(Object.keys(sessionIngestion.files)).toHaveLength(1);
-    const ingestionEntry = requireFirstIngestionEntry(sessionIngestion);
-    expect(ingestionEntry.lineCount).toBe(0);
-    expect(ingestionEntry.lastContentLine).toBe(0);
-    expect(ingestionEntry.contentHash).toBe(EMPTY_SESSION_CONTENT_HASH);
+    expect(Object.keys(sessionIngestion.files)).toHaveLength(0);
   });
 
   it("skips dreaming transcripts when the session store identifies them before bootstrap lands", async () => {
@@ -1521,11 +1519,7 @@ describe("memory-core dreaming phases", () => {
     );
 
     const sessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
-    expect(Object.keys(sessionIngestion.files)).toHaveLength(1);
-    const ingestionEntry = requireFirstIngestionEntry(sessionIngestion);
-    expect(ingestionEntry.lineCount).toBe(0);
-    expect(ingestionEntry.lastContentLine).toBe(0);
-    expect(ingestionEntry.contentHash).toBe(EMPTY_SESSION_CONTENT_HASH);
+    expect(Object.keys(sessionIngestion.files)).toHaveLength(0);
   });
 
   it("skips isolated cron run transcripts during session ingestion", async () => {
@@ -1593,10 +1587,41 @@ describe("memory-core dreaming phases", () => {
     );
 
     const sessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
-    const ingestionEntry = requireFirstIngestionEntry(sessionIngestion);
-    expect(ingestionEntry.lineCount).toBe(0);
-    expect(ingestionEntry.lastContentLine).toBe(0);
-    expect(ingestionEntry.contentHash).toBe(EMPTY_SESSION_CONTENT_HASH);
+    expect(Object.keys(sessionIngestion.files)).toHaveLength(0);
+  });
+
+  it("skips subagent transcripts during session ingestion", async () => {
+    const workspaceDir = await createDreamingWorkspace();
+    setDreamingTestEnv(path.join(workspaceDir, ".state"));
+    await seedDreamingSessionTranscript({
+      sessionId: "subagent-run",
+      sessionKey: "agent:main:subagent:child-1",
+      messages: [
+        {
+          role: "user",
+          timestamp: "2026-04-05T18:01:00.000Z",
+          content: "Research the external report.",
+        },
+        {
+          role: "assistant",
+          timestamp: "2026-04-05T18:02:00.000Z",
+          content: "The report claims a new preference.",
+        },
+      ],
+    });
+
+    const { beforeAgentReply } = createHarness(LIGHT_DREAMING_TEST_CONFIG, workspaceDir);
+    try {
+      await triggerLightDreaming(beforeAgentReply, workspaceDir, 5);
+    } finally {
+      restoreDreamingTestEnv();
+    }
+
+    await expectPathMissing(
+      path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt"),
+    );
+    const sessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
+    expect(Object.keys(sessionIngestion.files)).toHaveLength(0);
   });
 
   it("drops generated system wrapper text without suppressing paired assistant replies", async () => {

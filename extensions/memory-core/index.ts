@@ -26,6 +26,7 @@ import type { MemoryCoreRuntimeHost } from "./src/memory/runtime-host.js";
 import { buildPromptSection } from "./src/prompt-section.js";
 
 type MemoryToolsModule = typeof import("./src/tools.js");
+type StandingIntentsModule = typeof import("./src/standing-intents.js");
 
 type MemoryToolOptions = {
   config?: OpenClawConfig;
@@ -40,6 +41,9 @@ type MemoryToolOptions = {
 };
 
 const loadMemoryToolsModule = createLazyRuntimeModule(() => import("./src/tools.js"));
+const loadStandingIntentsModule = createLazyRuntimeModule(
+  () => import("./src/standing-intents.js"),
+);
 
 const loadRuntimeProviderModule = createLazyRuntimeModule(
   () => import("./src/runtime-provider.js"),
@@ -147,6 +151,58 @@ function createLazyMemoryGetTool(options: MemoryToolOptions): AnyAgentTool | nul
   });
 }
 
+function createLazyStandingIntentTool(ctx: OpenClawPluginToolContext): AnyAgentTool | null {
+  const cfg = ctx.getRuntimeConfig?.() ?? ctx.runtimeConfig ?? ctx.config;
+  if (!cfg) {
+    return null;
+  }
+  const { sessionAgentId: agentId } = resolveSessionAgentIds({
+    sessionKey: ctx.sessionKey,
+    config: cfg,
+    agentId: ctx.agentId,
+  });
+  let toolPromise: Promise<AnyAgentTool> | undefined;
+  const loadTool = async (): Promise<AnyAgentTool> => {
+    toolPromise ??= loadStandingIntentsModule().then((module: StandingIntentsModule) =>
+      module.createStandingIntentTool({
+        agentId,
+        sourceSessionId: ctx.sessionId,
+      }),
+    );
+    return await toolPromise;
+  };
+  return {
+    label: "Standing Intent",
+    name: "intent",
+    description:
+      "Create, list, or explicitly cancel event-conditioned standing intents. Use cron or scheduled tasks for time-based reminders.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "list", "cancel"] },
+        id: { type: "string" },
+        description: { type: "string" },
+        triggerKeywords: { type: "array", items: { type: "string" } },
+        channelScope: { type: "string" },
+        senderScope: { type: "string" },
+        expiresAt: { type: "string" },
+        maxFires: { type: "integer", minimum: 1 },
+        cooldownSeconds: { type: "integer", minimum: 0 },
+        status: {
+          type: "string",
+          enum: ["pending", "armed", "fired", "done", "cancelled", "expired"],
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    execute: async (toolCallId, params, signal, onUpdate) => {
+      const tool = await loadTool();
+      return await tool.execute(toolCallId, params, signal, onUpdate);
+    },
+  };
+}
+
 function resolveMemoryToolOptions(
   ctx: OpenClawPluginToolContext,
   host: MemoryCoreRuntimeHost,
@@ -216,6 +272,62 @@ export default definePluginEntry({
 
     api.registerTool((ctx) => createLazyMemoryGetTool(resolveMemoryToolOptions(ctx, host)), {
       names: ["memory_get"],
+    });
+
+    api.registerTool((ctx) => createLazyStandingIntentTool(ctx), {
+      names: ["intent"],
+    });
+
+    api.on("before_prompt_build", async (event, ctx) => {
+      if (ctx.trigger !== "user") {
+        return undefined;
+      }
+      try {
+        const module = await loadStandingIntentsModule();
+        if (!module.isEligibleStandingIntentTurn(ctx)) {
+          return undefined;
+        }
+        const config = (api.runtime.config?.current?.() ?? api.config) as OpenClawConfig;
+        const { sessionAgentId: agentId } = resolveSessionAgentIds({
+          sessionKey: ctx.sessionKey,
+          config,
+          agentId: ctx.agentId,
+        });
+        const intents = module.matchStandingIntents({
+          agentId,
+          prompt: event.prompt,
+          channel: ctx.channelId ?? ctx.chatId,
+          senderId: ctx.senderId,
+        });
+        const prependContext = module.buildStandingIntentContext(intents);
+        return prependContext ? { prependContext } : undefined;
+      } catch (error) {
+        api.logger.warn?.(
+          `memory-core: standing intent matching failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
+      }
+    });
+
+    api.on("before_agent_reply", async (_event, ctx) => {
+      if (ctx.trigger !== "heartbeat" && ctx.trigger !== "cron") {
+        return undefined;
+      }
+      try {
+        const module = await loadStandingIntentsModule();
+        const config = (api.runtime.config?.current?.() ?? api.config) as OpenClawConfig;
+        const { sessionAgentId: agentId } = resolveSessionAgentIds({
+          sessionKey: ctx.sessionKey,
+          config,
+          agentId: ctx.agentId,
+        });
+        module.sweepStandingIntents({ agentId });
+      } catch (error) {
+        api.logger.warn?.(
+          `memory-core: standing intent maintenance failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return undefined;
     });
 
     api.registerCommand({

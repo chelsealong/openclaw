@@ -127,6 +127,27 @@ describe("memory-core plugin runtime registration", () => {
     expect(command?.description).toContain("Enable or disable");
   });
 
+  it("registers the standing-intent tool and deterministic prompt hook", () => {
+    const toolNames: string[] = [];
+    const hooks: string[] = [];
+    const subagentRun = vi.fn();
+    plugin.register(
+      createTestPluginApi({
+        runtime: { ...hostRuntime, subagent: { run: subagentRun } } as never,
+        registerTool(_factory, options?: Parameters<OpenClawPluginApi["registerTool"]>[1]) {
+          toolNames.push(...(options?.names ?? []));
+        },
+        on(hookName) {
+          hooks.push(hookName);
+        },
+      }),
+    );
+
+    expect(toolNames).toContain("intent");
+    expect(hooks).toContain("before_prompt_build");
+    expect(subagentRun).not.toHaveBeenCalled();
+  });
+
   it("wires scoped memory search cleanup through the lazy runtime", async () => {
     const runtime = registerMemoryCoreRuntime();
     const cfg = {} as OpenClawConfig;

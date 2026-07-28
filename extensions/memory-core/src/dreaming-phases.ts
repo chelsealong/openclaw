@@ -42,6 +42,7 @@ import {
 import { formatErrorMessage } from "./dreaming-shared.js";
 import {
   DREAMING_DAILY_INGESTION_NAMESPACE,
+  DREAMING_DAILY_PROVENANCE_NAMESPACE,
   DREAMING_SESSION_INGESTION_FILES_NAMESPACE,
   DREAMING_SESSION_INGESTION_SEEN_NAMESPACE,
   SESSION_SEEN_HASHES_PER_CHUNK,
@@ -424,6 +425,7 @@ type SessionIngestionMessage = {
   day: string;
   snippet: string;
   rendered: string;
+  provenance: NonNullable<MemorySearchResult["provenance"]>;
 };
 
 type SessionIngestionCollectionResult = {
@@ -659,6 +661,7 @@ async function appendSessionCorpusLines(params: {
       score: SESSION_INGESTION_SCORE,
       snippet: entry.snippet,
       source: "memory",
+      provenance: entry.provenance,
     };
   });
 }
@@ -699,6 +702,7 @@ async function collectSessionIngestionBatches(params: {
     generatedByCronRun: boolean;
     sessionId: string;
     sessionPath: string;
+    sessionKind: "interactive";
     transcriptSource?: "sqlite";
     updatedAtMs?: number;
   }> = [];
@@ -713,12 +717,16 @@ async function collectSessionIngestionBatches(params: {
       ) {
         continue;
       }
+      if (entry.sessionKind !== "interactive") {
+        continue;
+      }
       sessionFiles.push({
         agentId,
         absolutePath,
         generatedByDreamingNarrative: entry.generatedByDreamingNarrative === true,
         generatedByCronRun: entry.generatedByCronRun === true,
         sessionId: entry.sessionId,
+        sessionKind: entry.sessionKind,
         sessionPath:
           entry.transcriptSource === "sqlite"
             ? buildSqliteDreamingSessionPath(entry.agentId, entry.sessionId)
@@ -758,6 +766,7 @@ async function collectSessionIngestionBatches(params: {
       entry = await buildSessionEntry(file.absolutePath, {
         generatedByDreamingNarrative: file.generatedByDreamingNarrative,
         generatedByCronRun: file.generatedByCronRun,
+        sessionKind: file.sessionKind,
         ...(file.updatedAtMs !== undefined ? { updatedAtMs: file.updatedAtMs } : {}),
       });
       if (!entry) {
@@ -802,6 +811,7 @@ async function collectSessionIngestionBatches(params: {
       entry = await buildSessionEntry(file.absolutePath, {
         generatedByDreamingNarrative: file.generatedByDreamingNarrative,
         generatedByCronRun: file.generatedByCronRun,
+        sessionKind: file.sessionKind,
       });
       if (!entry) {
         continue;
@@ -881,6 +891,11 @@ async function collectSessionIngestionBatches(params: {
       }
       const lineNumber = entry.lineMap[index] ?? index + 1;
       const messageTimestampMs = entry.messageTimestampsMs[index] ?? 0;
+      const provenance = entry.lineProvenance[index] ?? {
+        originClass: "untrusted",
+        sessionKind: "interactive",
+        observedAt: messageTimestampMs || fingerprint.mtimeMs,
+      };
       const day = formatMemoryDreamingDay(
         messageTimestampMs > 0 ? messageTimestampMs : fingerprint.mtimeMs,
         params.timezone,
@@ -907,7 +922,7 @@ async function collectSessionIngestionBatches(params: {
         snippet,
       });
       const bucket = batchByDay.get(day) ?? [];
-      bucket.push({ day, snippet, rendered });
+      bucket.push({ day, snippet, rendered, provenance });
       batchByDay.set(day, bucket);
       seenSet.add(messageHash);
       newSeenHashes.push(messageHash);
@@ -1056,6 +1071,12 @@ async function collectDailyIngestionBatches(params: {
   ingestionDreamingDay: string;
   state: DailyIngestionState;
 }): Promise<DailyIngestionCollectionResult> {
+  const provenanceEntries = await readMemoryCoreWorkspaceEntries<{
+    fileHash: string;
+    originClass: "agent" | "untrusted";
+    observedAt: number;
+  }>({ namespace: DREAMING_DAILY_PROVENANCE_NAMESPACE, workspaceDir: params.workspaceDir });
+  const provenanceByPath = new Map(provenanceEntries.map((entry) => [entry.key, entry.value]));
   const memoryDir = path.join(params.workspaceDir, "memory");
   const cutoffMs = calculateLookbackCutoffMs(params.nowMs, params.lookbackDays);
   const entries = await fs.readdir(memoryDir, { withFileTypes: true }).catch((err: unknown) => {
@@ -1126,6 +1147,15 @@ async function collectDailyIngestionBatches(params: {
     if (!raw) {
       continue;
     }
+    const recordedProvenance = provenanceByPath.get(relativePath);
+    const provenanceMatches =
+      recordedProvenance?.fileHash === createHash("sha256").update(raw).digest("hex");
+    // Workspace daily notes are owner-controlled and default to 'agent' (hand
+    // edits, imports, and pre-existing notes must stay promotable). A recorded
+    // hash-matching entry can still downgrade a file the flush explicitly
+    // marked untrusted.
+    const originClass = provenanceMatches ? recordedProvenance.originClass : "agent";
+    const observedAt = provenanceMatches ? recordedProvenance.observedAt : fingerprint.mtimeMs;
     const lines = stripManagedDailyDreamingLines(raw.split(/\r?\n/));
     const chunks = buildDailySnippetChunks(lines, perFileCap);
     const results: MemorySearchResult[] = [];
@@ -1137,6 +1167,11 @@ async function collectDailyIngestionBatches(params: {
         score: DAILY_INGESTION_SCORE,
         snippet: chunk.snippet,
         source: "memory",
+        provenance: {
+          originClass,
+          sessionKind: "unknown",
+          observedAt,
+        },
       });
       if (results.length >= perFileCap || total + results.length >= totalCap) {
         break;
@@ -1230,6 +1265,12 @@ export async function seedHistoricalDailyMemorySignals(params: {
       skippedPaths: [],
     };
   }
+  const provenanceEntries = await readMemoryCoreWorkspaceEntries<{
+    fileHash: string;
+    originClass: "agent" | "untrusted";
+    observedAt: number;
+  }>({ namespace: DREAMING_DAILY_PROVENANCE_NAMESPACE, workspaceDir: params.workspaceDir });
+  const provenanceByPath = new Map(provenanceEntries.map((entry) => [entry.key, entry.value]));
 
   const resolved = normalizedPaths
     .map((filePath) => {
@@ -1288,6 +1329,13 @@ export async function seedHistoricalDailyMemorySignals(params: {
     if (!raw) {
       continue;
     }
+    const recordedProvenance = provenanceByPath.get(entry.relativePath);
+    const provenanceMatches =
+      recordedProvenance?.fileHash === createHash("sha256").update(raw).digest("hex");
+    // Same owner-controlled default as live daily ingestion above: workspace
+    // notes are 'agent' unless the flush explicitly recorded a downgrade.
+    const originClass = provenanceMatches ? recordedProvenance.originClass : "agent";
+    const observedAt = provenanceMatches ? recordedProvenance.observedAt : params.nowMs;
     const lines = stripManagedDailyDreamingLines(raw.split(/\r?\n/));
     const chunks = buildDailySnippetChunks(lines, perFileCap);
     const results: MemorySearchResult[] = [];
@@ -1299,6 +1347,11 @@ export async function seedHistoricalDailyMemorySignals(params: {
         score: DAILY_INGESTION_SCORE,
         snippet: chunk.snippet,
         source: "memory",
+        provenance: {
+          originClass,
+          sessionKind: "unknown",
+          observedAt,
+        },
       });
       if (results.length >= perFileCap || importedSignalCount + results.length >= totalCap) {
         break;

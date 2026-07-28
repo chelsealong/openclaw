@@ -803,7 +803,8 @@ describe("memory cli", () => {
       await runMemoryCli(["status"]);
 
       expectLogged(log, "Recall store: 1 entries");
-      expectLogged(log, "Dreaming: off");
+      // Dreaming is on by default, so status prints the phase-config detail line.
+      expectLogged(log, "Dreaming: light=");
       expect(close).toHaveBeenCalled();
     });
   });
@@ -2424,6 +2425,7 @@ describe("memory cli", () => {
         lastRecalledAt: "<now>",
         recallDays: ["<today>"],
         queryHashes: ["<hash>"],
+        provenance: entry.provenance ? { ...entry.provenance, observedAt: 0 } : undefined,
       }).toEqual({
         key: "memory:memory/2026-04-03.md:1:2",
         path: "memory/2026-04-03.md",
@@ -2441,6 +2443,9 @@ describe("memory cli", () => {
         queryHashes: ["<hash>"],
         recallDays: ["<today>"],
         conceptTags: ["backup", "backups", "glacier", "s3"],
+        // Memory-source recalls default to agent provenance (workspace files
+        // are owner-controlled); see mergeRecallProvenance.
+        provenance: { originClass: "agent", sessionKind: "unknown", observedAt: 0 },
       });
       expect(close).toHaveBeenCalled();
     });
