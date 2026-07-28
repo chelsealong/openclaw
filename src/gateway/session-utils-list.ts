@@ -19,7 +19,7 @@ import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.j
 import { isCronRunSessionKey } from "../sessions/session-key-utils.js";
 import { type SessionEntryPair, sortAndLimitSessionEntries } from "./session-list-order.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
-import { readSessionTitleFieldsFromTranscriptAsync as readScopedSessionTitleFieldsFromTranscriptAsync } from "./session-transcript-readers.js";
+import { readSessionTitleFieldsFromTranscriptAsync as readScopedSessionTitleFieldsFromTranscriptAsync } from "./session-transcript-title-reader.js";
 import type {
   SessionListRowContext,
   SessionListRowContextProvider,

@@ -222,7 +222,6 @@ export {
   readSessionTranscriptMessageEventCount,
   readSessionTranscriptMessageEventPage,
   readSessionTranscriptMessageEvents,
-  readSessionTranscriptWatermark,
   readSessionTranscriptVisibleMessageDelta,
   SessionTranscriptProjectionUnavailableError,
   waitForSessionTranscriptProjection,
@@ -232,8 +231,11 @@ export type {
   SessionTranscriptMessageAnchorPage,
   SessionTranscriptMessageEvent,
   SessionTranscriptMessageEventPage,
-  SessionTranscriptWatermark,
 } from "./session-accessor.sqlite-active-events.js";
+export {
+  readSessionTranscriptWatermark,
+  type SessionTranscriptWatermark,
+} from "./session-accessor.sqlite-transcript-watermark.js";
 export {
   resolveConcreteSessionStorePath,
   resolveSessionTranscriptReadTarget,

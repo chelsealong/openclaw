@@ -22,9 +22,9 @@ import {
   readSessionMessagesAsync,
   readSessionMessagesPageWithStatsAsync,
   readLatestSessionUsageFromTranscriptAsync,
-  readSessionTitleFieldsFromTranscript,
   type SessionTranscriptReadScope,
 } from "./session-transcript-readers.js";
+import { readSessionTitleFieldsFromTranscript } from "./session-transcript-title-reader.js";
 
 vi.mock("../config/sessions/session-accessor.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/sessions/session-accessor.js")>();
