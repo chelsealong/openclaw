@@ -57,14 +57,13 @@ describe("retired Phone Control doctor migration", () => {
       createV3State({
         addedToAllow: ["sms.send"],
         removedFromDeny: ["sms.send"],
-        persistentAllows: ["health.summary"],
       }),
     );
     const cfg = {
       gateway: {
         nodes: {
           commands: {
-            allow: ["sms.send", "health.summary"],
+            allow: ["sms.send", "custom.command"],
             deny: RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS.filter(
               (command) => command !== "sms.send",
             ),
@@ -75,7 +74,7 @@ describe("retired Phone Control doctor migration", () => {
 
     const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
 
-    expect(result.config.gateway?.nodes?.commands?.allow).toEqual(["health.summary"]);
+    expect(result.config.gateway?.nodes?.commands?.allow).toEqual(["custom.command"]);
     expect(result.config.gateway?.nodes?.commands?.deny).toBeUndefined();
     expect(result.cleanupPending).toBe(true);
     expect(result.configChanges).toHaveLength(2);
@@ -160,6 +159,27 @@ describe("retired Phone Control doctor migration", () => {
     const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
 
     expect(result.config.gateway?.nodes?.commands).toBeUndefined();
+    expect(result.configChanges).toEqual(["Removed the retired Phone Control setup deny seed."]);
+  });
+
+  it("keeps exact-seed entries that currently shadow explicit allows", async () => {
+    const cfg = {
+      gateway: {
+        nodes: {
+          commands: {
+            allow: ["sms.send"],
+            deny: [...RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+
+    expect(result.config.gateway?.nodes?.commands).toEqual({
+      allow: ["sms.send"],
+      deny: ["sms.send"],
+    });
     expect(result.configChanges).toEqual(["Removed the retired Phone Control setup deny seed."]);
   });
 

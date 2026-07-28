@@ -301,6 +301,9 @@ export async function prepareRetiredPhoneControlCleanup(params: {
   const nextAllow = currentAllow?.filter(
     (command) => !leaseAddedAllows.has(command.trim()) && !leaseShadowedAllows?.has(command.trim()),
   );
+  const nextDeny = removeSeededDeny
+    ? reconstructedDeny.filter((command) => nextAllow?.includes(command))
+    : reconstructedDeny;
   const allowChanged = Boolean(currentAllow && nextAllow?.length !== currentAllow.length);
   const denyChanged = reconstructedDeny.length !== (currentDeny?.length ?? 0);
   if (!allowChanged && !denyChanged && !removeSeededDeny) {
@@ -326,7 +329,7 @@ export async function prepareRetiredPhoneControlCleanup(params: {
   return {
     config: withCommandLists(params.cfg, {
       allow: nextAllow,
-      deny: removeSeededDeny ? undefined : reconstructedDeny,
+      deny: nextDeny,
     }),
     configChanges,
     cleanupPending: residue.cleanupPending,
