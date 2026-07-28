@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   createPluginStateKeyedStoreForTests,
@@ -13,6 +13,22 @@ import {
   prepareRetiredPhoneControlCleanup,
   RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS,
 } from "./doctor-retired-phone-control.js";
+
+function createV3State(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 3,
+    generation: "generation-1",
+    phase: "active",
+    armedAtMs: 1,
+    expiresAtMs: 2,
+    group: "writes",
+    armedCommands: ["sms.send"],
+    addedToAllow: [],
+    removedFromDeny: [],
+    persistentAllows: [],
+    ...overrides,
+  };
+}
 
 describe("retired Phone Control doctor migration", () => {
   let stateDir = "";
@@ -36,13 +52,14 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", {
-      version: 3,
-      generation: "generation-1",
-      addedToAllow: ["sms.send"],
-      removedFromDeny: ["sms.send"],
-      persistentAllows: ["health.summary"],
-    });
+    await store.register(
+      "generation-1",
+      createV3State({
+        addedToAllow: ["sms.send"],
+        removedFromDeny: ["sms.send"],
+        persistentAllows: ["health.summary"],
+      }),
+    );
     const cfg = {
       gateway: {
         nodes: {
@@ -71,12 +88,14 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", {
-      version: 3,
-      addedToAllow: [],
-      removedFromDeny: ["sms.send"],
-      persistentAllows: [],
-    });
+    await store.register(
+      "generation-1",
+      createV3State({
+        addedToAllow: [],
+        removedFromDeny: ["sms.send"],
+        persistentAllows: [],
+      }),
+    );
     const cfg = {
       gateway: {
         nodes: {
@@ -106,11 +125,13 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", {
-      version: 3,
-      addedToAllow: ["sms.send"],
-      persistentAllows: ["health.summary"],
-    });
+    await store.register(
+      "generation-1",
+      createV3State({
+        addedToAllow: ["sms.send"],
+        persistentAllows: ["health.summary"],
+      }),
+    );
     const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
     await fs.writeFile(
@@ -142,10 +163,10 @@ describe("retired Phone Control doctor migration", () => {
     expect(result.configChanges).toEqual(["Removed the retired Phone Control setup deny seed."]);
   });
 
-  it("leaves policy untouched when the retired lease journal is unreadable", async () => {
+  it("leaves policy untouched when the retired lease journal is malformed", async () => {
     const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
-    await fs.writeFile(legacyPath, "{not-json");
+    await fs.writeFile(legacyPath, JSON.stringify({ version: 3 }));
     const cfg = {
       gateway: {
         nodes: {
@@ -163,6 +184,50 @@ describe("retired Phone Control doctor migration", () => {
     expect(result.cleanupSafe).toBe(false);
     expect(result.configChanges).toEqual([]);
     expect(result.warnings).toHaveLength(1);
+  });
+
+  it("rejects a malformed canonical lease journal record", async () => {
+    const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
+      namespace: "armed",
+      maxEntries: 1,
+      overflowPolicy: "reject-new",
+      env,
+    });
+    await store.register("generation-1", { version: 3 });
+    const cfg = {
+      gateway: {
+        nodes: { commands: { deny: [...RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS] } },
+      },
+    } as OpenClawConfig;
+
+    const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+
+    expect(result.config).toBe(cfg);
+    expect(result.cleanupSafe).toBe(false);
+    expect(result.cleanupPending).toBe(true);
+    expect(result.warnings).toEqual([
+      "Retired Phone Control lease journal contains a malformed record.",
+    ]);
+  });
+
+  it("fails closed when a retired state path cannot be inspected", async () => {
+    const error = Object.assign(new Error("denied"), { code: "EACCES" });
+    const statSpy = vi.spyOn(fs, "stat").mockRejectedValueOnce(error);
+    const cfg = {
+      gateway: {
+        nodes: { commands: { deny: [...RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS] } },
+      },
+    } as OpenClawConfig;
+
+    try {
+      const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+      expect(result.config).toBe(cfg);
+      expect(result.cleanupSafe).toBe(false);
+      expect(result.cleanupPending).toBe(true);
+      expect(result.warnings[0]).toContain("Could not inspect retired Phone Control lease state");
+    } finally {
+      statSpy.mockRestore();
+    }
   });
 
   it("does not touch operator-authored command entries that differ from the old seed", async () => {
@@ -185,10 +250,12 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", {
-      version: 3,
-      removedFromDeny: ["computer.act"],
-    });
+    await store.register(
+      "generation-1",
+      createV3State({
+        removedFromDeny: ["computer.act"],
+      }),
+    );
     const deny = ["camera.snap", "custom.command"];
     const cfg = {
       gateway: { nodes: { commands: { deny } } },
@@ -213,7 +280,7 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", { version: 3, addedToAllow: ["sms.send"] });
+    await store.register("generation-1", createV3State({ addedToAllow: ["sms.send"] }));
     const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
     await fs.writeFile(legacyPath, JSON.stringify({ version: 2, addedToAllow: ["camera.snap"] }));
@@ -234,7 +301,7 @@ describe("retired Phone Control doctor migration", () => {
       overflowPolicy: "reject-new",
       env,
     });
-    await store.register("generation-1", { version: 3, addedToAllow: ["sms.send"] });
+    await store.register("generation-1", createV3State({ addedToAllow: ["sms.send"] }));
     const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
     await fs.writeFile(legacyPath, JSON.stringify({ version: 2, addedToAllow: ["camera.snap"] }));

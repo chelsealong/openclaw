@@ -8,6 +8,7 @@ import { archiveLegacyStateSource } from "../plugins/doctor-state-migration-fs.j
 
 const PHONE_CONTROL_PLUGIN_ID = "phone-control";
 const ARM_STATE_NAMESPACE = "armed";
+const RETIRED_ARM_GROUPS = new Set(["camera", "screen", "computer", "mobile-ui", "writes", "all"]);
 
 // This is the exact pre-retirement setup seed. Keep it independent of the
 // current dangerous-command set so future policy changes cannot widen cleanup.
@@ -48,12 +49,79 @@ function resolveStateDatabasePath(env: NodeJS.ProcessEnv): string {
   return path.join(resolveStateDir(env), "state", "openclaw.sqlite");
 }
 
-async function isFile(filePath: string): Promise<boolean> {
-  try {
-    return (await fs.stat(filePath)).isFile();
-  } catch {
+type StatePathInspection =
+  | { status: "file" }
+  | { status: "missing" }
+  | { status: "unsafe"; warning: string };
+
+function isMissingPathError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) {
     return false;
   }
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
+}
+
+async function inspectStatePath(filePath: string, label: string): Promise<StatePathInspection> {
+  try {
+    return (await fs.stat(filePath)).isFile()
+      ? { status: "file" }
+      : { status: "unsafe", warning: `${label} at ${filePath} is not a regular file.` };
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { status: "missing" };
+    }
+    return {
+      status: "unsafe",
+      warning: `Could not inspect ${label} at ${filePath}: ${String(error)}`,
+    };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.trim() !== "")
+  );
+}
+
+function isTimestamp(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isRetiredArmState(value: unknown): value is RetiredArmState {
+  if (!isRecord(value) || !isTimestamp(value.armedAtMs)) {
+    return false;
+  }
+  if (value.expiresAtMs !== null && !isTimestamp(value.expiresAtMs)) {
+    return false;
+  }
+  if (value.version === 1) {
+    return isStringArray(value.removedFromDeny);
+  }
+  if (value.version !== 2 && value.version !== 3) {
+    return false;
+  }
+  if (
+    typeof value.group !== "string" ||
+    !RETIRED_ARM_GROUPS.has(value.group) ||
+    !isStringArray(value.armedCommands) ||
+    !isStringArray(value.addedToAllow) ||
+    !isStringArray(value.removedFromDeny)
+  ) {
+    return false;
+  }
+  if (value.version === 2) {
+    return true;
+  }
+  return (
+    typeof value.generation === "string" &&
+    value.generation.trim() !== "" &&
+    (value.phase === "preparing" || value.phase === "active") &&
+    isStringArray(value.persistentAllows)
+  );
 }
 
 function readStringArrayField(value: unknown, field: keyof RetiredArmState): string[] {
@@ -64,14 +132,6 @@ function readStringArrayField(value: unknown, field: keyof RetiredArmState): str
   return Array.isArray(entries)
     ? entries.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
     : [];
-}
-
-async function readLegacyArmState(filePath: string): Promise<unknown> {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 function openRetiredArmStateStore(env: NodeJS.ProcessEnv) {
@@ -90,45 +150,75 @@ async function readRetiredArmStates(env: NodeJS.ProcessEnv): Promise<{
   warnings: string[];
 }> {
   const legacyPath = resolveLegacyArmStatePath(env);
-  const legacyExists = await isFile(legacyPath);
+  const databasePath = resolveStateDatabasePath(env);
+  const [legacyInspection, databaseInspection] = await Promise.all([
+    inspectStatePath(legacyPath, "retired Phone Control lease state"),
+    inspectStatePath(databasePath, "OpenClaw state database"),
+  ]);
   const warnings: string[] = [];
-  let sqliteReadFailed = false;
-  let legacyState: unknown = null;
-  if (legacyExists) {
-    legacyState = await readLegacyArmState(legacyPath);
-    if (legacyState === null) {
-      warnings.push(`Could not read retired Phone Control lease state at ${legacyPath}.`);
-    }
+  const inspectionUnsafe =
+    legacyInspection.status === "unsafe" || databaseInspection.status === "unsafe";
+  if (legacyInspection.status === "unsafe") {
+    warnings.push(legacyInspection.warning);
+  }
+  if (databaseInspection.status === "unsafe") {
+    warnings.push(databaseInspection.warning);
   }
 
+  let legacyState: unknown;
+  let legacyStateValid = false;
+  if (legacyInspection.status === "file") {
+    try {
+      legacyState = JSON.parse(await fs.readFile(legacyPath, "utf8")) as unknown;
+      legacyStateValid = isRetiredArmState(legacyState);
+      if (!legacyStateValid) {
+        warnings.push(`Retired Phone Control lease state at ${legacyPath} is malformed.`);
+      }
+    } catch (error) {
+      warnings.push(
+        `Could not read retired Phone Control lease state at ${legacyPath}: ${String(error)}`,
+      );
+    }
+  }
+  let sqliteReadFailed = false;
   let sqliteEntries: Array<{ value: unknown }> = [];
-  if (await isFile(resolveStateDatabasePath(env))) {
+  if (databaseInspection.status === "file") {
     try {
       sqliteEntries = await openRetiredArmStateStore(env).entries();
       if (sqliteEntries.length > 1) {
         sqliteReadFailed = true;
         warnings.push("Retired Phone Control lease journal contains multiple records.");
+      } else if (sqliteEntries.length === 1 && !isRetiredArmState(sqliteEntries[0]?.value)) {
+        sqliteReadFailed = true;
+        warnings.push("Retired Phone Control lease journal contains a malformed record.");
       }
     } catch (error) {
       sqliteReadFailed = true;
       warnings.push(`Could not read retired Phone Control lease journal: ${String(error)}`);
     }
   }
+  const hasCanonicalState = sqliteEntries.length === 1 && !sqliteReadFailed;
   const cleanupSafe =
-    !sqliteReadFailed && (sqliteEntries.length === 1 || !legacyExists || legacyState !== null);
+    !inspectionUnsafe &&
+    !sqliteReadFailed &&
+    (hasCanonicalState || legacyInspection.status !== "file" || legacyStateValid);
   // SQLite became the canonical journal before retirement. A legacy source may
   // coexist after an interrupted older migration, but it must not contribute
   // cleanup deltas when the authoritative SQLite record exists.
-  const states = sqliteReadFailed
-    ? []
-    : sqliteEntries.length === 1
+  const states = cleanupSafe
+    ? hasCanonicalState
       ? sqliteEntries.map((entry) => entry.value)
-      : legacyState === null
-        ? []
-        : [legacyState];
+      : legacyStateValid
+        ? [legacyState]
+        : []
+    : [];
   return {
     states,
-    cleanupPending: legacyExists || sqliteEntries.length > 0 || sqliteReadFailed,
+    cleanupPending:
+      inspectionUnsafe ||
+      legacyInspection.status !== "missing" ||
+      sqliteEntries.length > 0 ||
+      sqliteReadFailed,
     cleanupSafe,
     warnings,
   };
@@ -253,7 +343,12 @@ export async function finalizeRetiredPhoneControlCleanup(params: {
   const changes: string[] = [];
   const warnings: string[] = [];
   const legacyPath = resolveLegacyArmStatePath(env);
-  if (await isFile(legacyPath)) {
+  const legacyInspection = await inspectStatePath(legacyPath, "retired Phone Control lease state");
+  if (legacyInspection.status === "unsafe") {
+    warnings.push(legacyInspection.warning);
+    return { changes, warnings };
+  }
+  if (legacyInspection.status === "file") {
     await archiveLegacyStateSource({
       filePath: legacyPath,
       label: "retired Phone Control lease state",
@@ -262,12 +357,27 @@ export async function finalizeRetiredPhoneControlCleanup(params: {
     });
     // SQLite is authoritative while both sources exist. Keep that record until
     // the stale fallback source is gone, or a later retry could replay it.
-    if (await isFile(legacyPath)) {
+    const postArchiveInspection = await inspectStatePath(
+      legacyPath,
+      "retired Phone Control lease state",
+    );
+    if (postArchiveInspection.status === "unsafe") {
+      warnings.push(postArchiveInspection.warning);
+    }
+    if (postArchiveInspection.status !== "missing") {
       return { changes, warnings };
     }
   }
 
-  if (await isFile(resolveStateDatabasePath(env))) {
+  const databaseInspection = await inspectStatePath(
+    resolveStateDatabasePath(env),
+    "OpenClaw state database",
+  );
+  if (databaseInspection.status === "unsafe") {
+    warnings.push(databaseInspection.warning);
+    return { changes, warnings };
+  }
+  if (databaseInspection.status === "file") {
     try {
       const store = openRetiredArmStateStore(env);
       if ((await store.entries()).length > 0) {
