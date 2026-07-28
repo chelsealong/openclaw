@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
@@ -12,11 +12,14 @@ const describePosix = process.platform === "win32" ? describe.skip : describe;
 
 type MergeScenario = {
   auto?: boolean;
+  autoError?: string;
   autoResult?: "enabled" | "inconclusive" | "unavailable";
-  checks?: "fail" | "green";
+  checks?: "fail" | "green" | "pending";
   existingAutoMethod?: "" | "MERGE" | "REBASE" | "SQUASH";
   mergeStateStatus?: string;
   mergeable?: string;
+  recommendation?: "ready" | "needs_work";
+  reviewArtifacts?: "valid" | "invalid";
 };
 
 function runMerge(scenario: MergeScenario = {}) {
@@ -25,7 +28,23 @@ function runMerge(scenario: MergeScenario = {}) {
   const calls = join(root, "gh-calls.log");
   const autoCalled = join(root, "auto-called");
   const autoState = join(root, "auto-state");
+  const bin = join(root, "bin");
+  const rgCalls = join(root, "rg-calls.log");
+  mkdirSync(bin, { recursive: true });
   mkdirSync(localDir, { recursive: true });
+  writeFileSync(
+    join(bin, "rg"),
+    `#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+appendFileSync(process.env.OPENCLAW_TEST_RG_CALLS, JSON.stringify(args) + "\\n");
+const pattern = args.at(-2);
+const file = args.at(-1);
+const flags = args.includes("-i") ? "i" : "";
+process.exit(new RegExp(pattern, flags).test(readFileSync(file, "utf8")) ? 0 : 1);
+`,
+  );
+  chmodSync(join(bin, "rg"), 0o755);
   writeFileSync(
     join(localDir, "prep.env"),
     `PREP_HEAD_SHA=${headSha}\nLOCAL_PREP_HEAD_SHA=${headSha}\n`,
@@ -59,13 +78,27 @@ function runMerge(scenario: MergeScenario = {}) {
   const checks =
     scenario.checks === "fail"
       ? [{ name: "CI", bucket: "fail", state: "FAILURE" }]
-      : [{ name: "CI", bucket: "pass", state: "SUCCESS" }];
+      : scenario.checks === "pending"
+        ? [{ name: "CI", bucket: "pending", state: "IN_PROGRESS" }]
+        : [{ name: "CI", bucket: "pass", state: "SUCCESS" }];
 
   const shell = `
 set -euo pipefail
 source "$OPENCLAW_TEST_MERGE_SCRIPT"
 enter_worktree() { :; }
 require_artifact() { :; }
+validate_review_artifact_data() {
+  if [ "$OPENCLAW_TEST_REVIEW_ARTIFACTS" != "valid" ]; then
+    echo 'review artifact validation failed' >&2
+    return 1
+  fi
+}
+require_ready_review_recommendation() {
+  if [ "$OPENCLAW_TEST_REVIEW_RECOMMENDATION" != "ready" ]; then
+    echo 'review recommendation is not ready' >&2
+    return 1
+  fi
+}
 verify_prep_branch_matches_prepared_head() { :; }
 mark_pr_operation_side_effects_started() { :; }
 mainline_drift_requires_sync() { return 1; }
@@ -90,7 +123,10 @@ gh() {
   case "$1 $2" in
     "pr checks")
       case " $* " in
-        *" --json "*) printf '%s\\n' "$OPENCLAW_TEST_CHECKS_JSON" ;;
+        *" --json "*)
+          printf '%s\\n' "$OPENCLAW_TEST_CHECKS_JSON"
+          return "$OPENCLAW_TEST_CHECKS_EXIT_STATUS"
+          ;;
       esac
       ;;
     "pr view")
@@ -133,7 +169,7 @@ gh() {
           : > "$OPENCLAW_TEST_AUTO_CALLED"
           printf 'enabled\\n' > "$OPENCLAW_TEST_AUTO_STATE"
           if [ "$OPENCLAW_TEST_AUTO_RESULT" = "unavailable" ]; then
-            echo 'GraphQL: Pull request auto merge is not allowed for this repository' >&2
+            echo "$OPENCLAW_TEST_AUTO_ERROR" >&2
             return 1
           fi
           if [ "$OPENCLAW_TEST_AUTO_RESULT" = "inconclusive" ]; then
@@ -158,9 +194,12 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
     env: {
       ...process.env,
       OPENCLAW_TEST_AUTO_CALLED: autoCalled,
+      OPENCLAW_TEST_AUTO_ERROR:
+        scenario.autoError ?? "GraphQL: Pull request auto merge is not allowed for this repository",
       OPENCLAW_TEST_AUTO_REQUESTED: scenario.auto ? "true" : "false",
       OPENCLAW_TEST_AUTO_RESULT: scenario.autoResult ?? "enabled",
       OPENCLAW_TEST_AUTO_STATE: autoState,
+      OPENCLAW_TEST_CHECKS_EXIT_STATUS: scenario.checks === "pending" ? "8" : "0",
       OPENCLAW_TEST_CHECKS_JSON: JSON.stringify(checks),
       OPENCLAW_TEST_DISABLED_AUTO_META: disabledAutoMeta,
       OPENCLAW_TEST_GH_CALLS: calls,
@@ -169,21 +208,51 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       OPENCLAW_TEST_MERGE_STATE_STATUS: scenario.mergeStateStatus ?? "BEHIND",
       OPENCLAW_TEST_POST_AUTO_META: postAutoMeta,
       OPENCLAW_TEST_PRE_AUTO_META: preAutoMeta,
+      OPENCLAW_TEST_REVIEW_ARTIFACTS: scenario.reviewArtifacts ?? "valid",
+      OPENCLAW_TEST_REVIEW_RECOMMENDATION: scenario.recommendation ?? "ready",
+      OPENCLAW_TEST_RG_CALLS: rgCalls,
       OPENCLAW_TEST_ROOT: root,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     },
   });
   return {
     ...result,
     calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
+    rgCalls: existsSync(rgCalls) ? readFileSync(rgCalls, "utf8") : "",
   };
 }
 
 describePosix("scripts/pr merge-run", () => {
+  it("refuses to merge when review artifact validation fails", () => {
+    const result = runMerge({ reviewArtifacts: "invalid" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("review artifact validation failed");
+    expect(result.calls).not.toContain("pr merge");
+  });
+
+  it("refuses to merge when the review recommendation is not ready", () => {
+    const result = runMerge({ recommendation: "needs_work" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("review recommendation is not ready");
+    expect(result.calls).not.toContain("pr merge");
+  });
+
   it("does not enable auto-merge when exact-head required CI is failing", () => {
     const result = runMerge({ auto: true, checks: "fail" });
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("Required checks are failing.");
+    expect(result.calls).not.toContain("pr merge");
+  });
+
+  it("does not mistake pending required checks for a GitHub API failure", () => {
+    const result = runMerge({ auto: true, checks: "pending" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Required checks are still pending.");
+    expect(result.stderr).not.toContain("unable to verify the required GitHub checks");
     expect(result.calls).not.toContain("pr merge");
   });
 
@@ -254,7 +323,20 @@ describePosix("scripts/pr merge-run", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.calls).toContain(`pr merge 123 --auto --squash --match-head-commit ${headSha}`);
     expect(result.calls).toContain(`pr merge 123 --squash --match-head-commit ${headSha}`);
+    expect(result.rgCalls).toContain('"-q","-i","--"');
     expect(result.stdout).toContain("auto-merge is unavailable");
     expect(result.stdout).toContain("falling back");
+  });
+
+  it("recognizes unavailable auto-merge wording in reverse order", () => {
+    const result = runMerge({
+      auto: true,
+      autoError: "GraphQL: Branch protection must be enabled before using auto-merge",
+      autoResult: "unavailable",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.calls).toContain(`pr merge 123 --squash --match-head-commit ${headSha}`);
+    expect(result.stdout).toContain("auto-merge is unavailable");
   });
 });
