@@ -21,9 +21,16 @@ const INCREMENTAL_VACUUM_MAX_PAGES_PER_PASS = 512;
 // databases on local filesystems. Network-backed databases take the rollback
 // branch and never reach it: mmap over NFS/SMB is what produced the SIGBUS
 // crashes behind #60349, and an I/O error on a mapped page raises a signal
-// SQLite cannot catch. mmap_size is a ceiling, not an allocation - SQLite maps
-// only the pages it touches.
-const DEFAULT_SQLITE_MMAP_SIZE_BYTES = 256 * 1024 * 1024;
+// SQLite cannot catch.
+//
+// 64 MiB is a deliberate bound rather than a generous one. mmap_size is a
+// ceiling, not an allocation - SQLite maps only the pages it touches - so
+// resident memory tracks the working set and is identical at 64, 128 and
+// 256 MiB. The ceiling only binds for databases larger than itself, so
+// keeping it low bounds per-connection mapping across the
+// OPENCLAW_AGENT_DB_OPEN_HANDLE_CAP handles without costing throughput:
+// measured read latency is the same at 64 MiB as at 256 MiB.
+const DEFAULT_SQLITE_MMAP_SIZE_BYTES = 64 * 1024 * 1024;
 const LINUX_NFS_SUPER_MAGIC = 0x6969;
 const LINUX_SMB_SUPER_MAGIC = 0x517b;
 const LINUX_CIFS_SUPER_MAGIC = 0xff534d42;

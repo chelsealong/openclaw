@@ -781,10 +781,10 @@ describe("sqlite WAL maintenance", () => {
     configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
 
     const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-    expect(sql).toContain("PRAGMA mmap_size = 268435456;");
+    expect(sql).toContain("PRAGMA mmap_size = 67108864;");
     // Strictly after the journal-mode sequence: reordering that is what the
     // surrounding lock-retry logic exists to prevent.
-    expect(sql.indexOf("PRAGMA mmap_size = 268435456;")).toBeGreaterThan(
+    expect(sql.indexOf("PRAGMA mmap_size = 67108864;")).toBeGreaterThan(
       sql.indexOf("PRAGMA journal_mode = WAL;"),
     );
   });
