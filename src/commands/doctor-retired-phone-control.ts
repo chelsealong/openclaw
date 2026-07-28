@@ -179,6 +179,15 @@ export async function prepareRetiredPhoneControlCleanup(params: {
 }): Promise<RetiredPhoneControlCleanupPlan> {
   const env = params.env ?? process.env;
   const residue = await readRetiredArmStates(env);
+  if (!residue.cleanupSafe) {
+    return {
+      config: params.cfg,
+      configChanges: [],
+      cleanupPending: residue.cleanupPending,
+      cleanupSafe: false,
+      warnings: residue.warnings,
+    };
+  }
   const leaseAddedAllows = new Set(
     residue.states.flatMap((state) => readStringArrayField(state, "addedToAllow")),
   );

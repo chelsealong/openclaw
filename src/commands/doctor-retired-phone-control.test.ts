@@ -142,6 +142,29 @@ describe("retired Phone Control doctor migration", () => {
     expect(result.configChanges).toEqual(["Removed the retired Phone Control setup deny seed."]);
   });
 
+  it("leaves policy untouched when the retired lease journal is unreadable", async () => {
+    const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, "{not-json");
+    const cfg = {
+      gateway: {
+        nodes: {
+          commands: {
+            allow: ["sms.send"],
+            deny: [...RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+
+    expect(result.config).toBe(cfg);
+    expect(result.cleanupSafe).toBe(false);
+    expect(result.configChanges).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+  });
+
   it("does not touch operator-authored command entries that differ from the old seed", async () => {
     const deny = [...RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS, "custom.command"];
     const cfg = {
