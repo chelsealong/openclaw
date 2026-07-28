@@ -187,11 +187,24 @@ export async function prepareRetiredPhoneControlCleanup(params: {
   );
   const currentAllow = params.cfg.gateway?.nodes?.commands?.allow;
   const currentDeny = params.cfg.gateway?.nodes?.commands?.deny;
-  const nextAllow = currentAllow?.filter((command) => !leaseAddedAllows.has(command.trim()));
-  const reconstructedDeny = [...(currentDeny ?? []), ...leaseRemovedDenies];
+  const reconstructedDeny = [...(currentDeny ?? [])];
+  const reconstructedDenySet = new Set(reconstructedDeny);
+  for (const command of leaseRemovedDenies) {
+    if (!reconstructedDenySet.has(command)) {
+      reconstructedDeny.push(command);
+      reconstructedDenySet.add(command);
+    }
+  }
   const removeSeededDeny = currentDeny !== undefined && isExactSeededDenyList(reconstructedDeny);
+  // The lease journal snapshots persistentAllows through deny-wins policy before
+  // activation, so commands in removedFromDeny are lease-only even if also allowed.
+  const leaseShadowedAllows = removeSeededDeny ? new Set(leaseRemovedDenies) : undefined;
+  const nextAllow = currentAllow?.filter(
+    (command) => !leaseAddedAllows.has(command.trim()) && !leaseShadowedAllows?.has(command.trim()),
+  );
   const allowChanged = Boolean(currentAllow && nextAllow?.length !== currentAllow.length);
-  if (!allowChanged && !removeSeededDeny) {
+  const denyChanged = reconstructedDeny.length !== (currentDeny?.length ?? 0);
+  if (!allowChanged && !denyChanged && !removeSeededDeny) {
     return {
       config: params.cfg,
       configChanges: [],
@@ -203,7 +216,10 @@ export async function prepareRetiredPhoneControlCleanup(params: {
 
   const configChanges: string[] = [];
   if (allowChanged) {
-    configChanges.push("Removed stale Phone Control lease-created command allow entries.");
+    configChanges.push("Removed stale Phone Control lease-only command allow entries.");
+  }
+  if (denyChanged && !removeSeededDeny) {
+    configChanges.push("Restored command deny entries removed by Phone Control leases.");
   }
   if (removeSeededDeny) {
     configChanges.push("Removed the retired Phone Control setup deny seed.");
@@ -211,7 +227,7 @@ export async function prepareRetiredPhoneControlCleanup(params: {
   return {
     config: withCommandLists(params.cfg, {
       allow: nextAllow,
-      deny: removeSeededDeny ? undefined : currentDeny,
+      deny: removeSeededDeny ? undefined : reconstructedDeny,
     }),
     configChanges,
     cleanupPending: residue.cleanupPending,
@@ -227,6 +243,21 @@ export async function finalizeRetiredPhoneControlCleanup(params: {
   const env = params.env ?? process.env;
   const changes: string[] = [];
   const warnings: string[] = [];
+  const legacyPath = resolveLegacyArmStatePath(env);
+  if (await isFile(legacyPath)) {
+    await archiveLegacyStateSource({
+      filePath: legacyPath,
+      label: "retired Phone Control lease state",
+      changes,
+      warnings,
+    });
+    // SQLite is authoritative while both sources exist. Keep that record until
+    // the stale fallback source is gone, or a later retry could replay it.
+    if (await isFile(legacyPath)) {
+      return { changes, warnings };
+    }
+  }
+
   if (await isFile(resolveStateDatabasePath(env))) {
     try {
       const store = openRetiredArmStateStore(env);
@@ -237,16 +268,6 @@ export async function finalizeRetiredPhoneControlCleanup(params: {
     } catch (error) {
       warnings.push(`Failed to drop the retired Phone Control lease journal: ${String(error)}`);
     }
-  }
-
-  const legacyPath = resolveLegacyArmStatePath(env);
-  if (await isFile(legacyPath)) {
-    await archiveLegacyStateSource({
-      filePath: legacyPath,
-      label: "retired Phone Control lease state",
-      changes,
-      warnings,
-    });
   }
   return { changes, warnings };
 }

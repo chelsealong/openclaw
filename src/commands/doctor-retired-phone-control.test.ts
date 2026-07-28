@@ -64,6 +64,41 @@ describe("retired Phone Control doctor migration", () => {
     expect(result.configChanges).toHaveLength(2);
   });
 
+  it("does not expose an allow that was effective only because a lease removed the seed deny", async () => {
+    const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
+      namespace: "armed",
+      maxEntries: 1,
+      overflowPolicy: "reject-new",
+      env,
+    });
+    await store.register("generation-1", {
+      version: 3,
+      addedToAllow: [],
+      removedFromDeny: ["sms.send"],
+      persistentAllows: [],
+    });
+    const cfg = {
+      gateway: {
+        nodes: {
+          commands: {
+            allow: ["sms.send"],
+            deny: RETIRED_PHONE_CONTROL_SEEDED_DENY_COMMANDS.filter(
+              (command) => command !== "sms.send",
+            ),
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+
+    expect(result.config.gateway?.nodes?.commands).toBeUndefined();
+    expect(result.configChanges).toEqual([
+      "Removed stale Phone Control lease-only command allow entries.",
+      "Removed the retired Phone Control setup deny seed.",
+    ]);
+  });
+
   it("prefers the authoritative SQLite journal over a stale legacy source", async () => {
     const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
       namespace: "armed",
@@ -120,6 +155,34 @@ describe("retired Phone Control doctor migration", () => {
     expect(result.configChanges).toEqual([]);
   });
 
+  it("restores journal-owned deny entries without removing customized operator policy", async () => {
+    const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
+      namespace: "armed",
+      maxEntries: 1,
+      overflowPolicy: "reject-new",
+      env,
+    });
+    await store.register("generation-1", {
+      version: 3,
+      removedFromDeny: ["computer.act"],
+    });
+    const deny = ["camera.snap", "custom.command"];
+    const cfg = {
+      gateway: { nodes: { commands: { deny } } },
+    } as OpenClawConfig;
+
+    const result = await prepareRetiredPhoneControlCleanup({ cfg, env });
+
+    expect(result.config.gateway?.nodes?.commands?.deny).toEqual([
+      "camera.snap",
+      "custom.command",
+      "computer.act",
+    ]);
+    expect(result.configChanges).toEqual([
+      "Restored command deny entries removed by Phone Control leases.",
+    ]);
+  });
+
   it("drops the SQLite journal and archives the legacy lease source", async () => {
     const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
       namespace: "armed",
@@ -139,5 +202,25 @@ describe("retired Phone Control doctor migration", () => {
     await expect(store.entries()).resolves.toEqual([]);
     await expect(fs.access(legacyPath)).rejects.toThrow();
     await expect(fs.access(`${legacyPath}.migrated`)).resolves.toBeUndefined();
+  });
+
+  it("keeps the canonical journal when the stale legacy source cannot be archived", async () => {
+    const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>("phone-control", {
+      namespace: "armed",
+      maxEntries: 1,
+      overflowPolicy: "reject-new",
+      env,
+    });
+    await store.register("generation-1", { version: 3, addedToAllow: ["sms.send"] });
+    const legacyPath = path.join(stateDir, "plugins", "phone-control", "armed.json");
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, JSON.stringify({ version: 2, addedToAllow: ["camera.snap"] }));
+    await fs.mkdir(`${legacyPath}.migrated`);
+
+    const result = await finalizeRetiredPhoneControlCleanup({ env });
+
+    expect(result.warnings).toHaveLength(1);
+    await expect(store.entries()).resolves.toHaveLength(1);
+    await expect(fs.access(legacyPath)).resolves.toBeUndefined();
   });
 });
