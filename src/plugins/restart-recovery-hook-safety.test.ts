@@ -5,7 +5,7 @@ import {
 } from "./restart-recovery-hook-safety.js";
 
 const hookMocks = vi.hoisted(() => ({
-  hasGlobalHooks: vi.fn<(hookName: string) => boolean>(),
+  hasGlobalHooks: vi.fn<(hookName: string, ctx?: { trigger?: string }) => boolean>(),
 }));
 
 vi.mock("./hook-runner-global.js", () => ({
@@ -23,7 +23,10 @@ describe("findRestartRecoveryUnsafeReplyHook", () => {
       (hookName) => hookName === "before_agent_reply" || hookName === "before_message_write",
     );
 
-    expect(findRestartRecoveryUnsafeReplyHook()).toBe("before_agent_reply");
+    expect(findRestartRecoveryUnsafeReplyHook({ trigger: "user" })).toBe("before_agent_reply");
+    expect(hookMocks.hasGlobalHooks).toHaveBeenCalledWith("before_agent_reply", {
+      trigger: "user",
+    });
   });
 
   it("does not exempt a checkpointed hook without a cross-process implementation digest", () => {
@@ -31,7 +34,15 @@ describe("findRestartRecoveryUnsafeReplyHook", () => {
       (hookName) => hookName === "before_agent_reply" || hookName === "before_message_write",
     );
 
-    expect(findRestartRecoveryUnsafeReplyHook()).toBe("before_agent_reply");
+    expect(findRestartRecoveryUnsafeReplyHook({ trigger: "user" })).toBe("before_agent_reply");
+  });
+
+  it("does not block a user recovery for a trigger-scoped reply hook", () => {
+    hookMocks.hasGlobalHooks.mockImplementation(
+      (hookName, ctx) => hookName === "before_agent_reply" && ctx?.trigger === "heartbeat",
+    );
+
+    expect(findRestartRecoveryUnsafeReplyHook({ trigger: "user" })).toBeUndefined();
   });
 
   it("allows deferred before_agent_reply at initial durable chat admission", () => {

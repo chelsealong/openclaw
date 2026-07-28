@@ -53,7 +53,7 @@ export function runBeforeAgentReplyForTurn(params: {
   }
   return runOncePerAgentRun(params.runId, "before_agent_reply", async () => {
     const hookRunner = getGlobalHookRunner();
-    if (!hookRunner?.hasHooks("before_agent_reply")) {
+    if (!hookRunner?.hasHooks("before_agent_reply", params.context)) {
       return undefined;
     }
     const observerScope = beforeAgentReplyObserver.getStore();

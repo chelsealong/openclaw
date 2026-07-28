@@ -214,6 +214,33 @@ describe("global hook runner composition (#91918, #107933)", () => {
     expect(runner().hasHooks("message_sent")).toBe(true);
   });
 
+  it("queries trigger eligibility across the composed live registries", () => {
+    const heartbeatRegistry = createMockPluginRegistry([
+      {
+        hookName: "before_agent_reply",
+        handler: vi.fn(),
+        pluginId: "heartbeat-hook",
+        eligibleTriggers: ["heartbeat"],
+      },
+    ]);
+    const cronRegistry = createMockPluginRegistry([
+      {
+        hookName: "before_agent_reply",
+        handler: vi.fn(),
+        pluginId: "cron-hook",
+        eligibleTriggers: ["cron"],
+      },
+    ]);
+
+    pinActivePluginChannelRegistry(heartbeatRegistry);
+    setActivePluginRegistry(cronRegistry);
+    initializeGlobalHookRunner(cronRegistry);
+
+    expect(runner().hasHooks("before_agent_reply", { trigger: "heartbeat" })).toBe(true);
+    expect(runner().hasHooks("before_agent_reply", { trigger: "cron" })).toBe(true);
+    expect(runner().hasHooks("before_agent_reply", { trigger: "user" })).toBe(false);
+  });
+
   it("keeps bundled trusted policies before installed policies across live registries", () => {
     const pinnedBundled = createMockPluginRegistry([
       { hookName: "before_tool_call", handler: vi.fn(), pluginId: "bundled-policy" },

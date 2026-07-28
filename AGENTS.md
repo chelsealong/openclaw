@@ -319,6 +319,14 @@ Skills own workflows; root owns hard policy and routing.
 - Realistic data: copy the state/DB into your dev state dir and test the copy. In-place migration of a live gateway's state needs explicit operator approval.
 - Guide: `docs/reference/test.md`.
 
+## Documentation Maintenance
+
+PINCHY_LOOP_AUTO: enabled
+
+- Before non-trivial implementation, repair, refactor, test, or review-with-remediation work that may mutate the repository, invoke `$pinchy-loop`. This does not apply to read-only questions, trivial edits, documentation-only maintenance, Pinchy installation or configuration maintenance, or work already running under Pinchy Loop.
+- After any repository mutation and before committing or reporting completion, invoke `$pinchy-docs` for one final maintenance pass over the integrated change. When already running under `$pinchy-docs`, perform the pass directly and do not invoke it recursively.
+- The final pass must update durable documentation or return an evidence-backed `docs_not_required`, run documentation validation, and block commit or completion on `docs_blocked`.
+
 ## Docs / Changelog
 
 - Use `$technical-documentation` for docs writing/review. Docs change with behavior/API.

@@ -22,9 +22,11 @@ scenario:
         timeoutMs: 60000
   objective: Verify one substantive live OpenAI task automatically resumes through three Gateway replacements and delivers exactly once.
   successCriteria:
+    - The default memory-core plugin is loaded while the recovery turn remains eligible to resume.
     - The live model reaches three distinct replay-safe Code Mode wait checkpoints in one user turn.
     - The Gateway child and qa-channel recover after every replacement without a user follow-up.
     - Restart-safe policy remains active, the unsafe probe stays unavailable, and the completed audit is delivered exactly once.
+    - Recovery ownership and pending-delivery residue clear before one subsequent sentinel turn completes exactly once.
   docsRefs:
     - docs/tools/code-mode.md
     - docs/channels/qa-channel.md
@@ -42,6 +44,7 @@ scenario:
       requiredProvider: openai
       requiredModel: gpt-5.4
       finalMarker: LIVE-MULTI-RESTART-OK
+      sentinelMarker: LIVE-MULTI-RESTART-SENTINEL-OK
       restartNoticeNeedle: "couldn't safely resume"
       prompt: |-
         Perform a restart-resilience release audit. This is one task; do not ask me to follow up.
@@ -81,7 +84,22 @@ flow:
         - assert:
             expr: "Boolean(env.gateway.runtimeEnv.OPENAI_API_KEY?.trim() || env.gateway.runtimeEnv.OPENCLAW_LIVE_OPENAI_KEY?.trim())"
             message: live OpenAI API key did not reach the Gateway child
-      detailsExpr: "`provider=${selected?.provider} model=${selected?.model} auth=env-api-key`"
+        - call: runQaCli
+          saveAs: memoryCore
+          args:
+            - ref: env
+            - - plugins
+              - inspect
+              - memory-core
+              - --runtime
+              - --json
+            - json: true
+              timeoutMs: 60000
+        - assert:
+            expr: "memoryCore.plugin?.enabled === true && memoryCore.plugin?.status === 'loaded'"
+            message:
+              expr: "`default memory-core plugin was not enabled and loaded: ${JSON.stringify(memoryCore.plugin ?? null)}`"
+      detailsExpr: "`provider=${selected?.provider} model=${selected?.model} auth=env-api-key memoryCore=${memoryCore.plugin?.status}`"
 
     - name: resumes one substantive task through three restarts
       actions:
@@ -230,6 +248,18 @@ flow:
             expr: "finalTranscript.lastAssistantStopReason !== 'error' && finalTranscript.lastAssistantStopReason !== 'aborted'"
             message:
               expr: "`restart recovery left a terminal artifact: ${JSON.stringify(finalTranscript)}`"
+        - assert:
+            expr: "finalTranscript.finalText.includes(config.finalMarker)"
+            message:
+              expr: "`recovered final marker was absent from the transcript: ${JSON.stringify(finalTranscript)}`"
+        - call: waitForCondition
+          saveAs: completedEntry
+          args:
+            - lambda:
+                async: true
+                expr: "readRawQaSessionStore(env).then((store) => { const entry = store[sessionKey]; return entry?.status === 'done' && entry.abortedLastRun === false && entry.restartRecoveryDeliveryRunId === undefined && entry.restartRecoveryDeliverySourceRunId === undefined && entry.restartRecoveryDeliveryContext === undefined && entry.restartRecoveryBeforeAgentReplyState === undefined && entry.pendingFinalDelivery === undefined && entry.pendingFinalDeliveryText === undefined && entry.pendingFinalDeliveryIntentId === undefined ? entry : undefined; }).catch(() => undefined)"
+            - expr: liveTurnTimeoutMs(env, 120000)
+            - 50
         - set: recoveryLogs
           value:
             expr: readGatewayLogs().slice(gatewayLogCursor)
@@ -249,8 +279,41 @@ flow:
         - assert:
             expr: "!recoveryLogs.split(String.fromCharCode(10)).some((line) => line.includes('tool policy removed') && line.includes('qa_restart_wait'))"
             message: replay-safe QA checkpoint tool was removed before Code Mode catalog construction
+        - set: sentinelStartIndex
+          value:
+            expr: state.getSnapshot().messages.length
+        - call: startAgentRun
+          saveAs: sentinelStarted
+          args:
+            - ref: env
+            - sessionKey:
+                ref: sessionKey
+              message:
+                expr: "`Reply exactly: ${config.sentinelMarker}`"
+              to:
+                expr: "`dm:${conversationId}`"
+              taskTracking: false
+              timeoutMs:
+                expr: liveTurnTimeoutMs(env, 120000)
+        - call: waitForOutboundMessage
+          saveAs: sentinelOutbound
+          args:
+            - ref: state
+            - lambda:
+                params: [candidate]
+                expr: "candidate.conversation.id === conversationId && candidate.text.includes(config.sentinelMarker)"
+            - expr: liveTurnTimeoutMs(env, 180000)
+            - sinceIndex:
+                ref: sentinelStartIndex
+        - set: sentinelMatches
+          value:
+            expr: "state.getSnapshot().messages.slice(sentinelStartIndex).filter((candidate) => candidate.direction === 'outbound' && candidate.conversation.id === conversationId && candidate.text.includes(config.sentinelMarker))"
+        - assert:
+            expr: "sentinelMatches.length === 1"
+            message:
+              expr: "`expected one sentinel reply after recovery, got ${sentinelMatches.length}; outbound=${recentOutboundSummary(state)}`"
         - call: assertNoGatewayLogSentinels
           args:
             - sinceIndex:
                 ref: gatewayLogCursor
-      detailsExpr: "`runId=${started.runId} session=${sessionKey} restarts=3 execs=${finalTranscript.assistantToolCallCounts.exec ?? 0} waits=${finalTranscript.assistantToolCallCounts.wait ?? 0} recoveryDispatches=${recoveryDispatches} retainedPolicies=${retainedPolicies} finalDeliveries=${finalMatches.length} resendNotices=${restartNotices.length}\n${outbound.text}`"
+      detailsExpr: "`runId=${started.runId} session=${sessionKey} restarts=3 execs=${finalTranscript.assistantToolCallCounts.exec ?? 0} waits=${finalTranscript.assistantToolCallCounts.wait ?? 0} recoveryDispatches=${recoveryDispatches} retainedPolicies=${retainedPolicies} finalDeliveries=${finalMatches.length} resendNotices=${restartNotices.length} recoveryResidue=cleared sentinelRun=${sentinelStarted.runId} sentinelDeliveries=${sentinelMatches.length}\n${outbound.text}\n${sentinelOutbound.text}`"

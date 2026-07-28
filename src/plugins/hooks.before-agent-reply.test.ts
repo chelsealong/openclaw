@@ -120,4 +120,60 @@ describe("before_agent_reply hook runner (claiming pattern)", () => {
 
     expect(runner.hasHooks("before_agent_reply")).toBe(true);
   });
+
+  it("enforces trigger eligibility before invoking handlers", async () => {
+    const scoped = vi.fn().mockResolvedValue({ handled: true, reply: { text: "scoped" } });
+    const unrestricted = vi
+      .fn()
+      .mockResolvedValue({ handled: true, reply: { text: "unrestricted" } });
+    const registry = createMockPluginRegistry([
+      {
+        hookName: "before_agent_reply",
+        handler: scoped,
+        eligibleTriggers: ["heartbeat", "cron"],
+      },
+      { hookName: "before_agent_reply", handler: unrestricted },
+    ]);
+    const runner = createHookRunner(registry);
+
+    await expect(
+      runner.runBeforeAgentReply(EVENT, { ...TEST_PLUGIN_AGENT_CTX, trigger: "user" }),
+    ).resolves.toEqual({ handled: true, reply: { text: "unrestricted" } });
+    expect(scoped).not.toHaveBeenCalled();
+    expect(unrestricted).toHaveBeenCalledOnce();
+
+    expect(runner.hasHooks("before_agent_reply", { trigger: "user" })).toBe(true);
+    expect(runner.hasHooks("before_agent_reply", { trigger: "heartbeat" })).toBe(true);
+  });
+
+  it.each(["heartbeat", "cron"] as const)("runs a handler eligible for %s", async (trigger) => {
+    const handler = vi.fn().mockResolvedValue({ handled: true, reply: { text: trigger } });
+    const registry = createMockPluginRegistry([
+      {
+        hookName: "before_agent_reply",
+        handler,
+        eligibleTriggers: ["heartbeat", "cron"],
+      },
+    ]);
+    const runner = createHookRunner(registry);
+
+    await expect(
+      runner.runBeforeAgentReply(EVENT, { ...TEST_PLUGIN_AGENT_CTX, trigger }),
+    ).resolves.toEqual({ handled: true, reply: { text: trigger } });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("keeps context-free checks fail-closed but filters a known unmatched trigger", () => {
+    const registry = createMockPluginRegistry([
+      {
+        hookName: "before_agent_reply",
+        handler: vi.fn(),
+        eligibleTriggers: ["heartbeat", "cron"],
+      },
+    ]);
+    const runner = createHookRunner(registry);
+
+    expect(runner.hasHooks("before_agent_reply")).toBe(true);
+    expect(runner.hasHooks("before_agent_reply", { trigger: "user" })).toBe(false);
+  });
 });

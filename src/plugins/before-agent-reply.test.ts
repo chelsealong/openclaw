@@ -40,6 +40,15 @@ describe("before_agent_reply runner boundary", () => {
     expect(buildHandledBeforeAgentReplyPayloads(reply)).toEqual([reply]);
   });
 
+  it("checks trigger eligibility with the host turn context", async () => {
+    await runHook("eligible");
+
+    expect(hookRunner.hasHooks).toHaveBeenCalledWith("before_agent_reply", {
+      runId: "eligible",
+      trigger: "user",
+    });
+  });
+
   it("keeps a nested run from checkpointing its parent admission", async () => {
     const beforeDispatch = vi.fn(async () => undefined);
     const afterDispatch = vi.fn(async (result) => result);

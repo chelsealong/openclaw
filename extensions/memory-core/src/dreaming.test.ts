@@ -259,6 +259,10 @@ function getBeforeAgentReplyHandler(
   ) => Promise<unknown>;
 }
 
+function getBeforeAgentReplyOptions(onMock: ReturnType<typeof vi.fn>): unknown {
+  return onMock.mock.calls.find(([eventName]) => eventName === "before_agent_reply")?.[2];
+}
+
 function getGatewayStartHandler(
   onMock: ReturnType<typeof vi.fn>,
 ): (
@@ -548,6 +552,21 @@ describe("gateway startup reconciliation", () => {
     runtimeConfigCalled: boolean;
     warnCalls: unknown[][];
   };
+
+  it("limits the reply hook registration to heartbeat and cron turns", () => {
+    const onMock = vi.fn();
+    registerShortTermPromotionDreamingForTest({
+      config: {},
+      pluginConfig: {},
+      logger: createLogger(),
+      runtime: {},
+      on: onMock,
+    });
+
+    expect(getBeforeAgentReplyOptions(onMock)).toEqual({
+      eligibleTriggers: ["heartbeat", "cron"],
+    });
+  });
 
   beforeAll(async () => {
     clearInternalHooks();
