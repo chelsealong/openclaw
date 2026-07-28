@@ -19,6 +19,8 @@ type ToolProfilePolicy = {
 const TOOL_NAME_ALIASES: Record<string, string> = {
   bash: "exec",
   "apply-patch": "apply_patch",
+  // Pre-rename scheduler tool name in persisted allow/deny lists (RFC 0026).
+  cron: "automations",
 };
 
 /** Core tool groups exposed to allow/deny policy config. */
