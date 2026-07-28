@@ -34,6 +34,14 @@ describe("applySharedChannelFieldHelp", () => {
     expect(next["channels.whatsapp.dmPolicy"]?.help).toBe(declared);
   });
 
+  it("treats empty help as a deliberate suppression, not a missing value", () => {
+    const next = applySharedChannelFieldHelp({
+      "channels.irc.enabled": { advanced: false, help: "" },
+    });
+
+    expect(next["channels.irc.enabled"]?.help).toBe("");
+  });
+
   it("leaves deeper channel paths and non-channel paths alone", () => {
     const hints = {
       // A guild channel's `enabled` is narrower than the channel's own.

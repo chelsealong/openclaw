@@ -78,7 +78,9 @@ const SHARED_CHANNEL_FIELD_PATH = /^channels\.[^.]+(?:\.accounts\.[^.]+)?\.([^.]
 export function applySharedChannelFieldHelp(hints: ConfigUiHints): ConfigUiHints {
   const next: ConfigUiHints = { ...hints };
   for (const [path, hint] of Object.entries(hints)) {
-    if (hint?.help) {
+    // Any declared help wins, including "" — that is how a channel suppresses
+    // shared wording that does not fit its provider.
+    if (hint?.help !== undefined) {
       continue;
     }
     const field = SHARED_CHANNEL_FIELD_PATH.exec(path)?.[1];
