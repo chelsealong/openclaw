@@ -118,7 +118,9 @@ export function prepareEmbeddedRunTerminal(input: {
     // false so config-enabled-but-unengaged code mode is visible to consumers.
     codeModeEngaged: attempt.codeModeEngaged === true,
     ...(runAssistantTurns > 0 ? { assistantTurns: runAssistantTurns } : {}),
-    ...(attempt.bridgeCalls ? { bridgeCalls: attempt.bridgeCalls } : {}),
+    ...(input.usageAccumulator.bridgeCalls
+      ? { bridgeCalls: { ...input.usageAccumulator.bridgeCalls } }
+      : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
   };
   const attemptFinalText = attempt.assistantTexts

@@ -114,6 +114,7 @@ describe("prepareEmbeddedRunTerminal run stats", () => {
   type StatsInput = {
     attempt?: Partial<EmbeddedRunAttemptResult>;
     assistantTurns?: number;
+    bridgeCalls?: { search: number; describe: number; call: number };
     config?: unknown;
     provider?: string;
     model?: string;
@@ -137,6 +138,7 @@ describe("prepareEmbeddedRunTerminal run stats", () => {
     const usageAccumulator = createUsageAccumulator();
     Object.assign(usageAccumulator, statsInput.usage);
     usageAccumulator.assistantTurns = statsInput.assistantTurns ?? 0;
+    usageAccumulator.bridgeCalls = statsInput.bridgeCalls;
     return prepareEmbeddedRunTerminal({
       runParams: {
         sessionId: "session-1",
@@ -202,9 +204,9 @@ describe("prepareEmbeddedRunTerminal run stats", () => {
     expect(empty.agentMeta).not.toHaveProperty("assistantTurns");
   });
 
-  it("passes through bridge call counts and omits them when absent", async () => {
+  it("stamps run-accumulated bridge call counts and omits them when absent", async () => {
     const withBridge = await prepareStats({
-      attempt: { bridgeCalls: { search: 2, describe: 1, call: 5 } },
+      bridgeCalls: { search: 2, describe: 1, call: 5 },
     });
     expect(withBridge.agentMeta.bridgeCalls).toEqual({ search: 2, describe: 1, call: 5 });
 
