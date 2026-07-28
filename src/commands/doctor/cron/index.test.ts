@@ -406,7 +406,7 @@ describe("maybeRepairLegacyCronStore", () => {
     });
 
     expect(prompter.confirm).not.toHaveBeenCalled();
-    expectNoteContaining("Cron model overrides detected", "Cron");
+    expectNoteContaining("Automation model overrides detected", "Cron");
     expectNoteContaining("2 jobs set `payload.model`", "Cron");
     expectNoteContaining("Provider namespaces: anthropic=1, openai=1", "Cron");
     expectNoteContaining("2 jobs use a different model than `agents.defaults.model`", "Cron");
@@ -444,7 +444,7 @@ describe("maybeRepairLegacyCronStore", () => {
       prompter: makePrompter(true),
     });
 
-    expectNoNoteContaining("Cron model overrides detected", "Cron");
+    expectNoNoteContaining("Automation model overrides detected", "Cron");
   });
 
   it("counts alias model pins as default mismatches", async () => {
@@ -503,10 +503,10 @@ describe("maybeRepairLegacyCronStore", () => {
         prompter,
       });
 
-      expectNoteContaining("1 cron job is still marked in-flight", "Cron");
+      expectNoteContaining("1 automation is still marked in-flight", "Cron");
       expectNoteContaining("shows it as `running`", "Cron");
       expectNoteContaining("marks such runs interrupted the next time it starts", "Cron");
-      expectNoteContaining("openclaw cron show <id>", "Cron");
+      expectNoteContaining("openclaw automations show <id>", "Cron");
 
       // Observer-only: no repair prompt and the running marker is left untouched.
       expect(prompter.confirm).not.toHaveBeenCalled();
@@ -529,7 +529,7 @@ describe("maybeRepairLegacyCronStore", () => {
         prompter: makePrompter(true),
       });
 
-      expectNoteContaining("2 cron jobs are still marked in-flight", "Cron");
+      expectNoteContaining("2 automations are still marked in-flight", "Cron");
       expectNoteContaining("shows them as `running`", "Cron");
     });
 
@@ -564,11 +564,11 @@ describe("maybeRepairLegacyCronStore", () => {
         prompter,
       });
 
-      expectNoteContaining("1 cron job has failed 3+ runs in a row", "Cron");
+      expectNoteContaining("1 automation has failed 3+ runs in a row", "Cron");
       expectNoteContaining("re-fires it on error backoff", "Cron");
       expectNoteContaining("resets on the next successful run", "Cron");
       expectNoteContaining("interrupted by a gateway restart", "Cron");
-      expectNoteContaining("openclaw cron show <id>", "Cron");
+      expectNoteContaining("openclaw automations show <id>", "Cron");
 
       // Observer-only: no repair prompt and the failure counters stay untouched.
       expect(prompter.confirm).not.toHaveBeenCalled();
@@ -607,7 +607,7 @@ describe("maybeRepairLegacyCronStore", () => {
         prompter: makePrompter(true),
       });
 
-      expectNoteContaining("2 cron jobs have failed 3+ runs in a row", "Cron");
+      expectNoteContaining("2 automations have failed 3+ runs in a row", "Cron");
     });
 
     it("stays silent when failure streaks are below the threshold", async () => {
