@@ -57,7 +57,7 @@ export function resolveOpenClawToolsForMcp(
     if (!agentSessionKey) {
       throw new Error(`${OPENCLAW_TOOLS_MCP_AGENT_SESSION_KEY_ENV} is required`);
     }
-    return createCronTool({ agentSessionKey, creatorToolAllowlist: [{ name: "cron" }] });
+    return createCronTool({ agentSessionKey, creatorToolAllowlist: [{ name: "automations" }] });
   });
 }
 

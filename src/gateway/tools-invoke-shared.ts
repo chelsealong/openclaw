@@ -8,6 +8,10 @@ import { runBeforeToolCallHook } from "../agents/agent-tools.before-tool-call.js
 import { resolveToolLoopDetectionConfig } from "../agents/agent-tools.js";
 import { getChannelAgentToolMeta } from "../agents/channel-tools.js";
 import { isKnownCoreToolId } from "../agents/tool-catalog.js";
+import {
+  AUTOMATIONS_TOOL_NAME,
+  isAutomationsToolName,
+} from "../agents/tools/automations-tool-name.js";
 import { ToolInputError, type AnyAgentTool } from "../agents/tools/common.js";
 import {
   normalizeConversationReadInvocationOrigin,
@@ -173,7 +177,13 @@ export async function invokeGatewayTool(params: {
   const conversationReadOrigin = normalizeConversationReadInvocationOrigin(
     params.conversationReadOrigin,
   );
-  const toolName = normalizeOptionalString(params.input.name ?? params.input.tool) ?? "";
+  const requestedToolName = normalizeOptionalString(params.input.name ?? params.input.tool) ?? "";
+  // Pre-rename clients still invoke the scheduler tool as "cron"; canonicalize
+  // legacy names before core-id checks and exact-name dispatch below. Remove
+  // with the RFC 0026 legacy-alias window.
+  const toolName = isAutomationsToolName(requestedToolName)
+    ? AUTOMATIONS_TOOL_NAME
+    : requestedToolName;
   if (!toolName) {
     return {
       ok: false,

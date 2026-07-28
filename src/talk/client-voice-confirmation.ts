@@ -72,7 +72,7 @@ function requiresHighImpactVoiceConfirmation(toolName: string, params: unknown):
       "computer",
       "mobile_ui",
       "canvas",
-      "cron",
+      "automations",
       "process",
     ].includes(normalizedTool)
   ) {

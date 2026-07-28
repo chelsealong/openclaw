@@ -9,6 +9,7 @@ import {
   resolveToolExecutionErrorKind,
   resolveToolResultFailureKind,
 } from "../agents/tool-result-error.js";
+import { isAutomationsToolName } from "../agents/tools/automations-tool-name.js";
 import type { McpLoopbackToolCallOutcome } from "./mcp-http.loopback-runtime.js";
 import {
   MCP_LOOPBACK_SERVER_NAME,
@@ -97,7 +98,17 @@ export async function handleMcpJsonRpc(params: {
     case "tools/list":
       return jsonRpcResult(id, { tools: params.toolSchema });
     case "tools/call": {
-      const toolName = typeof methodParams?.name === "string" ? methodParams.name.trim() : "";
+      const requestedToolName =
+        typeof methodParams?.name === "string" ? methodParams.name.trim() : "";
+      // Pre-rename MCP clients still call the scheduler tool as "cron"; resolve
+      // legacy names to the published canonical tool without re-advertising the
+      // old name in tools/list. Remove with the RFC 0026 legacy-alias window.
+      const toolName =
+        !params.toolSchema.some((tool) => tool.name === requestedToolName) &&
+        isAutomationsToolName(requestedToolName)
+          ? (params.toolSchema.find((tool) => isAutomationsToolName(tool.name))?.name ??
+            requestedToolName)
+          : requestedToolName;
       const rawToolArgs = methodParams?.arguments;
       if (rawToolArgs !== undefined && !isRecord(rawToolArgs)) {
         return jsonRpcError(id, -32602, "Invalid params: tools/call arguments must be an object");
