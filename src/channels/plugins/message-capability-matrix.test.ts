@@ -35,6 +35,12 @@ const slackPlugin: Pick<ChannelPlugin, "actions"> = {
       if (enabled) {
         capabilities.add("presentation");
       }
+      if (
+        account?.capabilities &&
+        (account.capabilities as { interactiveReplies?: unknown }).interactiveReplies === true
+      ) {
+        capabilities.add("presentation");
+      }
       return {
         actions: enabled ? ["send"] : [],
         capabilities: Array.from(capabilities) as Array<"presentation">,
@@ -131,7 +137,18 @@ describe("channel action capability matrix", () => {
         },
       },
     } as OpenClawConfig;
+    const interactiveCfg = {
+      channels: {
+        slack: {
+          botToken: "xoxb-test",
+          appToken: "xapp-test",
+          capabilities: { interactiveReplies: true },
+        },
+      },
+    } as OpenClawConfig;
+
     expect(getCapabilities(slackPlugin, baseCfg)).toEqual(["presentation"]);
+    expect(getCapabilities(slackPlugin, interactiveCfg)).toEqual(["presentation"]);
   });
 
   it("forwards Telegram action capabilities through the channel wrapper", () => {

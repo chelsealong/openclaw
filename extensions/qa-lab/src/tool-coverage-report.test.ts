@@ -892,10 +892,15 @@ describe("qa tool coverage report", () => {
       expect.objectContaining({
         bucket: "codex-native-workspace",
         expectedLayer: "codex-native-workspace",
-        required: true,
+        required: false,
       }),
     );
-    expect(applyPatchRow?.tracking).toBeUndefined();
+    expect(applyPatchRow).toEqual(
+      expect.objectContaining({
+        tracking:
+          "#80320 Codex app-server intentionally owns apply_patch natively; this fixture still needs valid patch-shaped fault injection before it can prove product behavior.",
+      }),
+    );
     expect(report.rows.find((row) => row.tool === "sessions_spawn")).toEqual(
       expect.objectContaining({
         required: true,

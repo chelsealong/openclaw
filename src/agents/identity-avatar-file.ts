@@ -29,13 +29,6 @@ type LocalAgentAvatarFailureReason =
 export type OpenedLocalAgentAvatarFile = {
   path: string;
   fd: number;
-  stat: {
-    ctimeMs: number;
-    dev: number;
-    ino: number;
-    mtimeMs: number;
-    size: number;
-  };
 };
 
 type LocalAgentAvatarPath = {
@@ -104,17 +97,7 @@ function openResolvedLocalAgentAvatarFile(
       fs.closeSync(opened.fd);
       return null;
     }
-    return {
-      path: opened.path,
-      fd: opened.fd,
-      stat: {
-        ctimeMs: opened.stat.ctimeMs,
-        dev: opened.stat.dev,
-        ino: opened.stat.ino,
-        mtimeMs: opened.stat.mtimeMs,
-        size: opened.stat.size,
-      },
-    };
+    return { path: opened.path, fd: opened.fd };
   } catch {
     return null;
   }

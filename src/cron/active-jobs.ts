@@ -16,7 +16,6 @@ export type CronActiveJobMarker = {
   generation: number;
   token: number;
   scheduleMutated?: true;
-  jobRemoved?: true;
   legacy?: boolean;
   preserveAcrossGenerationAdvance?: boolean;
 };
@@ -131,21 +130,6 @@ export function noteActiveCronJobScheduleMutation(jobId: string): void {
     // Keep mutation history on the admitted run: A→B→A has the original
     // schedule value but still belongs to the operator's newer edit.
     marker.scheduleMutated = true;
-  }
-}
-
-/** Retires the admitted job identity after its deletion becomes durable. */
-export function noteActiveCronJobRemoval(jobId: string): void {
-  if (!jobId) {
-    return;
-  }
-  const state = getCronActiveJobState();
-  const marker = state.activeJobs.get(jobId);
-  if (marker && isMarkerActiveInGeneration(marker, state.generation)) {
-    // A reused ID names a new job, not a reschedule of the old invocation.
-    // Keep its marker until completion so duplicate-run guards remain intact.
-    marker.scheduleMutated = true;
-    marker.jobRemoved = true;
   }
 }
 

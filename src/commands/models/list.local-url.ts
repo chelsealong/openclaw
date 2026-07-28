@@ -1,4 +1,3 @@
-import { isCanonicalDottedDecimalIPv4, isLoopbackIpAddress } from "@openclaw/net-policy/ip";
 /** Local URL classifier for model provider status/list output. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
@@ -9,7 +8,7 @@ export const isLocalBaseUrl = (baseUrl: string) => {
     const host = normalizeLowercaseStringOrEmpty(url.hostname).replace(/^\[|\]$/g, "");
     return (
       host === "localhost" ||
-      (isCanonicalDottedDecimalIPv4(host) && isLoopbackIpAddress(host)) ||
+      host === "127.0.0.1" ||
       host === "0.0.0.0" ||
       host === "::" ||
       host === "::1" ||

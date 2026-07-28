@@ -3,10 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { getDeliveryQueueEntryStatus } from "../infra/delivery-queue-sqlite.js";
 import { PlatformMessageNotDispatchedError } from "../infra/outbound/deliver-types.js";
-import {
-  loadPendingDelivery,
-  markDeliveryPlatformSendAttemptStarted,
-} from "../infra/outbound/delivery-queue-storage.js";
+import { loadPendingDelivery } from "../infra/outbound/delivery-queue-storage.js";
+import { markDeliveryPlatformSendAttemptStarted } from "../infra/outbound/delivery-queue.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 

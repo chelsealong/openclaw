@@ -262,12 +262,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           : (durableStorePath ?? storePath);
         const modelCatalog = await measureDiagnosticsTimelineSpan(
           "gateway.sessions.list.model_catalog",
-          () =>
-            loadOptionalServerMethodModelCatalog(
-              context,
-              "sessions.list",
-              p.agentId ? { loadParams: { agentId: p.agentId } } : undefined,
-            ),
+          () => loadOptionalServerMethodModelCatalog(context, "sessions.list"),
           {
             config: cfg,
             phase: "sessions.list",

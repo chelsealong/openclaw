@@ -17,11 +17,8 @@ import type {
 } from "./plugin-metadata-snapshot.types.js";
 import { normalizePluginIdScope, serializePluginIdScope } from "./plugin-scope.js";
 
-type CurrentPluginMetadataSnapshotState = ReturnType<
-  typeof getCurrentPluginMetadataSnapshotState
-> & {
-  configIdentities: WeakSet<OpenClawConfig>;
-};
+type CurrentPluginMetadataSnapshotState = ReturnType<typeof getCurrentPluginMetadataSnapshotState>;
+export { clearCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-state.js";
 
 function resolvePluginMetadataControlPlaneFingerprint(
   config?: OpenClawConfig,
@@ -110,16 +107,13 @@ export function setCurrentPluginMetadataSnapshot(
 }
 
 export function captureCurrentPluginMetadataSnapshotState(): CurrentPluginMetadataSnapshotState {
-  return {
-    ...getCurrentPluginMetadataSnapshotState(),
-    configIdentities: currentPluginMetadataConfigIdentityCache.capture(),
-  };
+  return getCurrentPluginMetadataSnapshotState();
 }
 
 export function restoreCurrentPluginMetadataSnapshotState(
   state: CurrentPluginMetadataSnapshotState,
 ): void {
-  currentPluginMetadataConfigIdentityCache.restore(state.configIdentities);
+  currentPluginMetadataConfigIdentityCache.clear();
   const snapshot = state.snapshot as PluginMetadataSnapshot | undefined;
   const defaultDiscoveryConfigFingerprint = snapshot
     ? resolvePluginMetadataControlPlaneFingerprint(

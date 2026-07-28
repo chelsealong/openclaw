@@ -1782,15 +1782,10 @@ describe("resolveApiKeyForProvider – synthetic local auth for custom providers
   it("recognizes local baseUrl variants for synthetic auth config", () => {
     const localBaseUrls = [
       "http://127.0.0.1:8080/v1",
-      "http://127.0.0.2:8080/v1",
-      "http://127.255.255.254:8080/v1",
-      "http://10.0.0.1:11434/v1",
-      "http://172.16.0.1:11434/v1",
       "http://192.168.0.222:11434/v1",
       "http://localhost:11434/v1",
       "http://[::1]:8080/v1",
       "http://0.0.0.0:11434/v1",
-      "http://[::ffff:7f00:1]:8080/v1",
       "http://[::ffff:127.0.0.1]:8080/v1",
     ];
 
@@ -1809,21 +1804,6 @@ describe("resolveApiKeyForProvider – synthetic local auth for custom providers
         baseUrl,
       ).toBe(true);
     }
-  });
-
-  it("does not recognize addresses outside the IPv4 loopback range as local", () => {
-    expect(
-      hasSyntheticLocalProviderAuthConfig({
-        provider: "custom-remote",
-        cfg: {
-          models: {
-            providers: {
-              "custom-remote": createCustomProviderConfig("http://128.0.0.1:8080/v1"),
-            },
-          },
-        },
-      }),
-    ).toBe(false);
   });
 
   it("synthesizes a local auth marker for custom providers with a local baseUrl and no apiKey", async () => {

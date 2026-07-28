@@ -1,4 +1,3 @@
-import { resolveCronJobEffectiveAgentId } from "../../cron/agent-id.js";
 import type { CronDeliveryStatus, CronJob, CronRunStatus } from "../../cron/types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 
@@ -12,7 +11,7 @@ export function filterCronRunLogJobsByAgent(
   }
   const normalizedAgentId = normalizeAgentId(agentId);
   return jobs.filter(
-    (job) => resolveCronJobEffectiveAgentId(job, defaultAgentId) === normalizedAgentId,
+    (job) => normalizeAgentId(job.agentId ?? defaultAgentId) === normalizedAgentId,
   );
 }
 

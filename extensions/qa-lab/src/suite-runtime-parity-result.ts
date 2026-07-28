@@ -13,9 +13,6 @@ function formatRuntimeParityCellDetails(cell: RuntimeParityCell) {
   return [
     `runtime=${cell.runtime}`,
     `wallMs=${cell.wallClockMs}`,
-    ...(cell.bootstrapWallClockMs === undefined
-      ? []
-      : [`bootstrapMs=${cell.bootstrapWallClockMs}`]),
     `toolCalls=${cell.toolCalls.length}`,
     `finalChars=${cell.finalText.length}`,
     `tokens=${cell.usage.totalTokens}`,

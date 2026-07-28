@@ -20,7 +20,6 @@ export async function loadCronFailingCount(state: CronScopeState) {
     const res = await state.client.request<CronJobsListResult>("cron.list", {
       ...(state.cronAgentId ? { agentId: state.cronAgentId } : {}),
       enabled: "enabled",
-      includeDeliveryPreviews: false,
       lastRunStatus: "error",
       limit: 1,
       offset: 0,
@@ -42,14 +41,12 @@ export async function loadCronScopeStats(state: CronScopeState) {
       state.client.request<CronJobsListResult>("cron.list", {
         agentId: state.cronAgentId,
         includeDisabled: true,
-        includeDeliveryPreviews: false,
         limit: 1,
         offset: 0,
       }),
       state.client.request<CronJobsListResult>("cron.list", {
         agentId: state.cronAgentId,
         enabled: "enabled",
-        includeDeliveryPreviews: false,
         limit: 1,
         offset: 0,
         sortBy: "nextRunAtMs",

@@ -13,7 +13,6 @@ import {
   appendEvent,
   assertCanMutateClaimedCard,
   capText,
-  cardBoardId,
   cardChildIds,
   cardParentIds,
   cardRunId,
@@ -92,15 +91,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         ttlSeconds ? secondsToDurationMs(ttlSeconds) : DEFAULT_CLAIM_TTL_MS,
       );
       const guarded = await this.promoteDependencyReady(id, now);
-      if (guarded.metadata?.archivedAt) {
-        throw new Error("card is archived.");
-      }
       const expectedAuthority = options.expectedAuthority;
       if (
         expectedAuthority &&
-        (guarded.status !== expectedAuthority.status ||
-          cardBoardId(guarded) !== expectedAuthority.boardId ||
-          guarded.agentId !== expectedAuthority.agentId ||
+        (guarded.agentId !== expectedAuthority.agentId ||
           !isDeepStrictEqual(
             guarded.metadata?.automation?.workspace,
             expectedAuthority.workspace,

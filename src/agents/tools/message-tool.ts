@@ -52,10 +52,6 @@ import { resolveMessageActionTurnCapability } from "../../gateway/message-action
 import { createAbortError } from "../../infra/abort-signal.js";
 import { sha256Base64UrlPrefix } from "../../infra/crypto-digest.js";
 import {
-  resolveMessageBroadcastAccountPlan,
-  validateExplicitMessageAccountSelection,
-} from "../../infra/outbound/message-account-selection.js";
-import {
   parseInteractiveParam,
   parseJsonMessageParam,
 } from "../../infra/outbound/message-action-params.js";
@@ -1559,44 +1555,17 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
 
       const gatewayOpts = readGatewayCallOptions(params);
       const rawConfig = options?.config ?? loadConfigForTool();
-      const requestedAccountId = readStringParam(params, "accountId");
-      const requestedScope = resolveMessageSecretScope({
-        channel: params.channel,
-        target: params.target,
-        targets: params.targets,
-        accountId: requestedAccountId,
-      });
       const scope = resolveMessageSecretScope({
         channel: params.channel,
         target: params.target,
         targets: params.targets,
         fallbackChannel: effectiveCurrentChannel.currentChannelProvider,
-        accountId: requestedAccountId,
+        accountId: params.accountId,
         fallbackAccountId: agentAccountId,
       });
-      const unscopedExplicitBroadcast =
-        action === "broadcast" && !requestedScope.channel && requestedAccountId !== undefined;
-      const explicitAccountId = validateExplicitMessageAccountSelection({
-        cfg: rawConfig,
-        channel: unscopedExplicitBroadcast ? undefined : scope.channel,
-        accountId: requestedAccountId,
-        checkResolvedAccount: false,
-      });
-      if (explicitAccountId) {
-        scope.accountId = explicitAccountId;
-        params.accountId = explicitAccountId;
-      }
-      const broadcastAccountPlan =
-        unscopedExplicitBroadcast && explicitAccountId
-          ? resolveMessageBroadcastAccountPlan({
-              cfg: rawConfig,
-              accountId: explicitAccountId,
-            })
-          : undefined;
       const scopedTargets = getScopedSecretTargetsForTool({
         config: rawConfig,
-        channel: broadcastAccountPlan ? undefined : scope.channel,
-        ...(broadcastAccountPlan ? { channels: broadcastAccountPlan.secretChannels } : {}),
+        channel: scope.channel,
         accountId: scope.accountId,
       });
       const cfg = (
@@ -1609,7 +1578,10 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         })
       ).resolvedConfig;
 
-      const accountId = explicitAccountId ?? agentAccountId;
+      const accountId = readStringParam(params, "accountId") ?? agentAccountId;
+      if (accountId) {
+        params.accountId = accountId;
+      }
       const pollVoteEchoRoute = resolvePollVoteEchoRoute({
         action,
         args: params,
@@ -1751,7 +1723,6 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
           },
           senderIsOwner: options?.senderIsOwner,
           conversationReadOrigin: options?.conversationReadOrigin,
-          broadcastAccountPlan,
           gateway,
           toolContext,
           sessionKey: options?.agentSessionKey,

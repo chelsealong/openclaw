@@ -273,6 +273,7 @@ export interface QQBotAccountConfigView {
     uploadDirectFormats?: string[];
     transcodeEnabled?: boolean;
   };
+  voiceDirectUploadFormats?: string[];
 }
 
 // ============ Gateway Account ============
@@ -303,5 +304,6 @@ export interface GatewayAccount {
       uploadDirectFormats?: string[];
       transcodeEnabled?: boolean;
     };
+    voiceDirectUploadFormats?: string[];
   };
 }

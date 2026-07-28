@@ -61,8 +61,6 @@ export type ModelCatalogCompatConfig = {
   supportsLongCacheRetention?: boolean;
   supportsPromptCacheKey?: boolean;
   supportsTools?: boolean;
-  /** Code-mode tier consumed by `tools.codeMode.enabled: "auto"`; absent means "capable". */
-  codeMode?: "preferred" | "capable";
   requiresStringContent?: boolean;
   strictMessageKeys?: boolean;
   toolSchemaProfile?: string;

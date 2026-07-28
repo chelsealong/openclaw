@@ -51,9 +51,7 @@ export class WorkboardNotificationStore extends WorkboardWorkflowStore {
   }
 
   async deleteNotificationSubscription(id: string): Promise<{ deleted: boolean }> {
-    return await this.enqueueMutation(async () => ({
-      deleted: await this.subscriptionStore.delete(id.trim()),
-    }));
+    return { deleted: await this.subscriptionStore.delete(id.trim()) };
   }
 
   private async collectNotificationEvents(input: WorkboardNotificationEventsInput = {}): Promise<{

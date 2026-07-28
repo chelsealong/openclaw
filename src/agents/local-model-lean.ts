@@ -3,7 +3,6 @@
  * Removes high-latency or channel-dependent tools for local models while
  * preserving explicitly required delivery tools.
  */
-import { messageToolOwnsVisibleReply } from "../auto-reply/source-reply-delivery-mode.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveAgentConfig, resolveDefaultAgentId } from "./agent-scope-config.js";
@@ -45,7 +44,7 @@ export function resolveLocalModelLeanPreserveToolNames(params?: {
   sourceReplyDeliveryMode?: string;
 }): string[] {
   const names = [...(params?.toolNames ?? [])];
-  if (params && messageToolOwnsVisibleReply(params)) {
+  if (params?.forceMessageTool || params?.sourceReplyDeliveryMode === "message_tool_only") {
     names.push("message");
   }
   return [...new Set(names)];

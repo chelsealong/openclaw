@@ -69,20 +69,18 @@ function readPtyDimensionEnv(name: string, fallback: number, env: NodeJS.Process
 async function writePtyInput(
   pty: IPty,
   data: string,
-  env: NodeJS.ProcessEnv,
   opts: { delay?: boolean } = {},
 ): Promise<void> {
-  const delayMs = readPositiveIntegerEnv("OPENCLAW_TUI_PTY_TYPE_DELAY_MS", env);
+  const delayMs = readPositiveIntegerEnv("OPENCLAW_TUI_PTY_TYPE_DELAY_MS");
   if (!delayMs || opts.delay === false) {
     pty.write(data);
     return;
   }
-  const chunkSize = readPositiveIntegerEnv("OPENCLAW_TUI_PTY_TYPE_CHUNK_SIZE", env) ?? 1;
-  // Chunk by Unicode characters so stress typing never sends half of a surrogate pair.
-  const characters = Array.from(data);
-  for (let idx = 0; idx < characters.length; idx += chunkSize) {
-    pty.write(characters.slice(idx, idx + chunkSize).join(""));
-    if (idx + chunkSize < characters.length) {
+  const chunkSize = readPositiveIntegerEnv("OPENCLAW_TUI_PTY_TYPE_CHUNK_SIZE") ?? 1;
+  // Chunked writes reproduce paste/type races without making every PTY test slow by default.
+  for (let idx = 0; idx < data.length; idx += chunkSize) {
+    pty.write(data.slice(idx, idx + chunkSize));
+    if (idx + chunkSize < data.length) {
       await sleep(delayMs);
     }
   }
@@ -151,7 +149,7 @@ export function startPty(
   const run: PtyRun = {
     output: () => output,
     visibleOutput: () => visibleOutput,
-    write: async (data, writeOpts) => await writePtyInput(pty, data, ptyEnv, writeOpts),
+    write: async (data, writeOpts) => await writePtyInput(pty, data, writeOpts),
     waitForOutput: async (needle, timeoutMs = opts.outputTimeoutMs) =>
       await waitFor({
         timeoutMs,

@@ -1,4 +1,3 @@
-import { runInitialConfigWriteHealth } from "./doctor-health-contribution-runners.config.js";
 import {
   runClaudeCliHealth,
   runCommandOwnerHealth,
@@ -20,7 +19,6 @@ import {
   runSessionTranscriptsHealth,
   runStateIntegrityHealth,
 } from "./doctor-health-contribution-runners.state.js";
-import { runActiveToolSchemaWarningsHealth } from "./doctor-health-contribution-runners.workspace.js";
 import type {
   DoctorHealthContribution,
   DoctorHealthFlowContext,
@@ -55,16 +53,6 @@ export function resolveInitialDoctorHealthContributions(params: {
   runLegacyStateHealth: (ctx: DoctorHealthFlowContext) => Promise<void>;
 }): DoctorHealthContribution[] {
   return [
-    createDoctorHealthContribution({
-      id: "doctor:write-config-migrations",
-      label: "Write config migrations",
-      run: runInitialConfigWriteHealth,
-    }),
-    createDoctorHealthContribution({
-      id: "doctor:active-tool-schema-warnings",
-      label: "Active tool schema warnings",
-      run: runActiveToolSchemaWarningsHealth,
-    }),
     createDoctorHealthContribution({
       id: "doctor:gateway-config",
       label: "Gateway config",

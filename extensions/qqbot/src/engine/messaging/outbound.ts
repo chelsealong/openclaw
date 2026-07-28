@@ -309,7 +309,9 @@ export async function sendMedia(ctx: MediaOutboundContext): Promise<OutboundResu
   const mediaUrl = resolvedMediaPath.mediaPath;
 
   if (isAudioFile(mediaUrl, mimeType)) {
-    const formats = account.config?.audioFormatPolicy?.uploadDirectFormats;
+    const formats =
+      account.config?.audioFormatPolicy?.uploadDirectFormats ??
+      account.config?.voiceDirectUploadFormats;
     const transcodeEnabled = account.config?.audioFormatPolicy?.transcodeEnabled !== false;
     const result = await sendVoice(target, mediaUrl, formats, transcodeEnabled);
     if (!result.error) {

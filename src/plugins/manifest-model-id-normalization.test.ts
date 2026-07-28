@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
+import { clearCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
 import { writePersistedInstalledPluginIndexSync } from "./installed-plugin-index-store.js";
 import { listOpenClawPluginManifestMetadata } from "./manifest-metadata-scan.js";
 import { normalizeProviderModelIdWithManifest } from "./manifest-model-id-normalization.js";
@@ -100,6 +101,7 @@ describe("manifest model id normalization", () => {
   });
 
   afterEach(() => {
+    clearCurrentPluginMetadataSnapshot();
     resetPluginRuntimeStateForTest();
     clearPluginMetadataLifecycleCaches();
     restoreEnv();

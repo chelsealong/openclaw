@@ -142,7 +142,7 @@ vi.mock("./exec-defaults.js", () => ({
   resolveNodeExecEligibility: () => ({ canExec: false }),
 }));
 
-vi.mock("./model-fallback-runner.js", () => ({
+vi.mock("./model-fallback.js", () => ({
   runWithModelFallback: async (params: {
     provider: string;
     model: string;

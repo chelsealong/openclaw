@@ -21,18 +21,10 @@ const DASHBOARD_SESSION_TITLE_PROMPT =
   "Generate a concise session title (3-6 words, max 60 characters) from the user's first message. Use the same language as the message. No emoji. Return only the title.";
 
 // One title request per first turn. Concurrent sends cannot race duplicate model
-// calls or metadata writes; late callers receive the in-flight promise so they
-// may await the persisted title before proceeding. Stored promises always
-// settle: the label generator aborts internally (TIMEOUT_MS), so a hung model
-// call cannot pin an entry here and block future attempts.
-const sessionTitleRequests = new Map<string, Promise<boolean>>();
+// calls or metadata writes while the initial agent run advances session state.
+const dashboardTitleRequests = new Set<string>();
 
-type SessionTitleAttempt =
-  | { kind: "persisted" }
-  | { kind: "skipped" }
-  | { kind: "in-flight"; settled: Promise<boolean> };
-
-export function hasExplicitSessionName(entry: SessionEntry | undefined): boolean {
+function hasExplicitSessionName(entry: SessionEntry | undefined): boolean {
   return Boolean(
     entry?.label?.trim() ||
     entry?.displayName?.trim() ||
@@ -146,40 +138,20 @@ export async function maybeGenerateDashboardSessionTitle(params: {
     !isDashboardSessionTitleCandidate({
       sessionKey: params.sessionKey,
       userMessage: sourceText,
-    })
-  ) {
-    return false;
-  }
-  // Dashboard sends never wait on a duplicate request: only the owning call
-  // may claim persistence (and emit sessions.changed), duplicates skip fast.
-  const attempt = await maybeGenerateSessionTitle({ ...params, userMessage: sourceText });
-  return attempt.kind === "persisted";
-}
-
-export async function maybeGenerateSessionTitle(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  entry: SessionEntry | undefined;
-  sessionId: string;
-  sessionKey: string;
-  storePath: string;
-  userMessage: string;
-}): Promise<SessionTitleAttempt> {
-  const sourceText = params.userMessage.trim();
-  if (
+    }) ||
     hasExplicitSessionName(params.entry) ||
     params.entry?.systemSent === true ||
     params.entry?.sessionId !== params.sessionId
   ) {
-    return { kind: "skipped" };
+    return false;
   }
 
   const requestKey = `${params.storePath}\0${params.sessionKey}\0${params.sessionId}`;
-  const existing = sessionTitleRequests.get(requestKey);
-  if (existing) {
-    return { kind: "in-flight", settled: existing };
+  if (dashboardTitleRequests.has(requestKey)) {
+    return false;
   }
-  const request = (async () => {
+  dashboardTitleRequests.add(requestKey);
+  try {
     const displayName = await generateDashboardSessionTitle({
       cfg: params.cfg,
       agentId: params.agentId,
@@ -207,11 +179,7 @@ export async function maybeGenerateSessionTitle(params: {
       { requireWriteSuccess: true },
     );
     return persisted;
-  })();
-  sessionTitleRequests.set(requestKey, request);
-  try {
-    return (await request) ? { kind: "persisted" } : { kind: "skipped" };
   } finally {
-    sessionTitleRequests.delete(requestKey);
+    dashboardTitleRequests.delete(requestKey);
   }
 }

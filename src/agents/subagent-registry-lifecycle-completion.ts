@@ -569,18 +569,7 @@ export function createSubagentRegistryLifecycleCompletion(
     }
 
     const suppressedForSteerRestart = params.suppressAnnounceForSteerRestart(entry);
-    // Recovery persists its terminal state before draining this callback, so an
-    // unchanged row still needs its first session-status and progress events.
-    const shouldPublishTerminalStatus =
-      mutated ||
-      (completeParams.recoverInterrupted === true &&
-        !isProvisionalKill &&
-        !progressEndedEntries.has(entry));
-    if (
-      shouldPublishTerminalStatus &&
-      !suppressedForSteerRestart &&
-      !completeParams.suppressSessionEffects
-    ) {
+    if (mutated && !suppressedForSteerRestart && !completeParams.suppressSessionEffects) {
       emitSessionLifecycleEvent({
         sessionKey: entry.childSessionKey,
         reason: "subagent-status",

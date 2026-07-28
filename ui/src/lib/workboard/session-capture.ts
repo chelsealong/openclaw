@@ -5,7 +5,6 @@ import {
   isFailedSessionStatus,
   normalizeString,
   replaceCard,
-  selectedWorkboardBoardParams,
   workboardCardSessionKey,
 } from "./card-state.ts";
 import { loadWorkboard } from "./loading.ts";
@@ -216,7 +215,6 @@ export async function captureSessionToWorkboard(params: {
       priority: "normal",
       agentId: "",
       sessionKey: params.session.key,
-      ...selectedWorkboardBoardParams(state),
     });
     const card = normalizeCardPayload(payload);
     replaceCard(state, card);

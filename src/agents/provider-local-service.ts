@@ -5,7 +5,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { isCanonicalDottedDecimalIPv4, isLoopbackIpAddress } from "@openclaw/net-policy/ip";
 import {
   clampPositiveTimerTimeoutMs,
   resolvePositiveTimerTimeoutMs,
@@ -153,11 +152,7 @@ function isLoopbackProviderBaseUrl(value: string): boolean {
     return false;
   }
   const hostname = new URL(normalized).hostname.toLowerCase();
-  return (
-    hostname === "localhost" ||
-    hostname === "[::1]" ||
-    (isCanonicalDottedDecimalIPv4(hostname) && isLoopbackIpAddress(hostname))
-  );
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
 function isConfiguredProviderBaseUrl(targetBaseUrl: string, configuredBaseUrl?: string): boolean {

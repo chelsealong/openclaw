@@ -80,7 +80,6 @@ class OpenClawBoardView extends OpenClawLightDomElement {
   @property({ attribute: false }) observer?: BoardObserverContext;
   @property({ type: Boolean }) canMutate = true;
   @property({ type: Boolean }) canGrant = true;
-  @property({ type: Boolean }) ticketRefreshEnabled = true;
 
   @state() private previewItems: BoardGridItem[] | null = null;
   @state() private gestureName = "";
@@ -664,7 +663,6 @@ class OpenClawBoardView extends OpenClawLightDomElement {
                 .busy=${this.mutationPending}
                 .canMutate=${this.canMutate}
                 .canGrant=${this.canGrant}
-                .ticketRefreshEnabled=${this.ticketRefreshEnabled}
               ></openclaw-board-widget-cell>
             `;
           },

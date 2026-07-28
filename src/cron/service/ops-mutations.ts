@@ -4,11 +4,7 @@ import {
   AgentDeletionAuthorityRollbackError,
   AgentDeletionCommitUncertainError,
 } from "../../agents/agent-lifecycle-registry.js";
-import {
-  isCronJobActive,
-  noteActiveCronJobRemoval,
-  noteActiveCronJobScheduleMutation,
-} from "../active-jobs.js";
+import { isCronJobActive, noteActiveCronJobScheduleMutation } from "../active-jobs.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { deleteCronJobScratch } from "../scratch-store.js";
 import { createCronStreamSourceIdentity, cronStreamScheduleKey } from "../stream-schedule.js";
@@ -411,7 +407,6 @@ export async function remove(
       suppressScheduledJobId: id,
     });
     if (removed) {
-      noteActiveCronJobRemoval(id);
       try {
         deleteCronJobScratch(state.deps.storePath, id);
       } catch (error) {
@@ -461,7 +456,6 @@ export async function removeAgentJobsTransactional<T>(
       if (error instanceof AgentDeletionCommitUncertainError) {
         armTimer(state);
         for (const job of removedJobs) {
-          noteActiveCronJobRemoval(job.id);
           emit(state, { jobId: job.id, action: "removed", job });
         }
         throw error;
@@ -483,7 +477,6 @@ export async function removeAgentJobsTransactional<T>(
       throw error;
     }
     for (const job of removedJobs) {
-      noteActiveCronJobRemoval(job.id);
       try {
         deleteCronJobScratch(state.deps.storePath, job.id);
       } catch (error) {

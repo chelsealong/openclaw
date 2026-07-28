@@ -4,7 +4,10 @@
  * This artifact keeps the HTTP offer route and the provider fallback on one
  * process-owned runtime without adding a general Plugin SDK registration API.
  */
-import { createCodexRealtimeBrowserSessionBroker } from "./src/realtime-browser-session.js";
+import {
+  createCodexRealtimeBrowserSessionBroker,
+  type CodexRealtimeBrowserSessionFallback,
+} from "./src/realtime-browser-session.js";
 
 type CodexRealtimeBrowserSessionRuntime = ReturnType<
   typeof createCodexRealtimeBrowserSessionBroker
@@ -16,6 +19,7 @@ type CodexRealtimeBrowserSessionParams = Parameters<
 type CodexRealtimeGlobalState = {
   version: 1;
   runtime?: CodexRealtimeBrowserSessionRuntime;
+  fallback?: CodexRealtimeBrowserSessionFallback;
   sources: Map<symbol, CodexRealtimeBrowserSessionParams>;
 };
 
@@ -49,7 +53,14 @@ export function configureCodexRealtimeBrowserSession(
     getPluginConfig: () => resolveCurrentSource()?.getPluginConfig(),
   });
   state.runtime = created;
+  state.fallback = created.broker;
   return createRuntimeLease(state, created, leaseId);
+}
+
+export function getCodexRealtimeBrowserSessionFallback():
+  | CodexRealtimeBrowserSessionFallback
+  | undefined {
+  return getGlobalState().fallback;
 }
 
 function createRuntimeLease(
@@ -70,6 +81,7 @@ function createRuntimeLease(
         return;
       }
       state.runtime = undefined;
+      state.fallback = undefined;
       await runtime.cleanup();
     },
   };

@@ -238,6 +238,7 @@ describe("server-context hot-reload profiles", () => {
               profile,
               running: { pid: 123 } as never,
               lastTargetId: "tab-1",
+              reconcile: null,
             },
           ],
         ]),

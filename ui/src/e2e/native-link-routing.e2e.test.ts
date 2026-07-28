@@ -162,7 +162,7 @@ describeControlUiE2e("native link routing", () => {
     expect(bubbleBox).not.toBeNull();
     await bubble.click({
       button: "right",
-      position: { x: bubbleBox!.width - 8, y: bubbleBox!.height - 2 },
+      position: { x: bubbleBox!.width - 8, y: bubbleBox!.height - 8 },
     });
     const replyMenu = page.getByRole("menu", { name: "Message actions" });
     await expect.poll(() => replyMenu.isVisible()).toBe(true);
@@ -202,39 +202,12 @@ describeControlUiE2e("native link routing", () => {
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
       .toBe("https://example.com/report");
 
-    await page.evaluate(() => {
-      const host = window as Window & {
-        openclawModifiedLinkClick?: { defaultPrevented: boolean; metaKey: boolean };
-      };
-      document.addEventListener(
-        "click",
-        (event) => {
-          host.openclawModifiedLinkClick = {
-            defaultPrevented: event.defaultPrevented,
-            metaKey: event.metaKey,
-          };
-        },
-        { once: true },
-      );
-    });
+    const popupPromise = page.waitForEvent("popup");
     await link.click({ modifiers: ["Meta"] });
-    expect(
-      await page.evaluate(
-        () =>
-          (
-            window as Window & {
-              openclawModifiedLinkClick?: { defaultPrevented: boolean; metaKey: boolean };
-            }
-          ).openclawModifiedLinkClick,
-      ),
-    ).toEqual({ defaultPrevented: false, metaKey: true });
-    expect(
-      await page.evaluate(
-        () =>
-          (window as Window & { openclawNativeLinkMessages?: unknown[] })
-            .openclawNativeLinkMessages,
-      ),
-    ).toHaveLength(3);
+    const popup = await popupPromise;
+    await popup.waitForLoadState("domcontentloaded");
+    expect(popup.url()).toBe("https://example.com/report");
+    await popup.close();
 
     await page.evaluate(async () => {
       await customElements.whenDefined("openclaw-modal-dialog");
@@ -289,7 +262,7 @@ describeControlUiE2e("native link routing", () => {
       .click({ button: "right" });
     expect(await page.locator("openclaw-native-link-menu").count()).toBe(0);
     const messageMenu = page.getByRole("menu", { name: "Message actions" });
-    await expect.poll(() => messageMenu.isVisible()).toBe(false);
+    await expect.poll(() => messageMenu.isVisible()).toBe(true);
     await page.evaluate(() => new Promise(requestAnimationFrame));
     await page.keyboard.press("Escape");
     await expect.poll(() => messageMenu.count()).toBe(0);

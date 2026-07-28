@@ -22,7 +22,6 @@ import type {
   PluginToolMetadataRegistration,
   PluginTrustedToolPolicyRegistration,
 } from "./host-hooks.js";
-import type { PluginManifestRecord } from "./manifest-registry.js";
 import type {
   PluginBundleFormat,
   PluginConfigUiHint,
@@ -256,11 +255,6 @@ export type PluginAgentToolResultMiddlewareRegistration = {
   runtimes: AgentToolResultMiddlewareRuntime[];
   source: string;
   rootDir?: string;
-};
-export type PluginAgentToolResultMiddlewareOwner = {
-  pluginId: string;
-  runtimes: AgentToolResultMiddlewareRuntime[];
-  manifest: PluginManifestRecord;
 };
 type PluginAgentHarnessRegistration = {
   pluginId: string;
@@ -508,7 +502,6 @@ export type PluginRegistry = {
   workerProviders: Map<string, PluginWorkerProviderRegistration>;
   migrationProviders: PluginMigrationProviderRegistration[];
   codexAppServerExtensionFactories: PluginCodexAppServerExtensionFactoryRegistration[];
-  agentToolResultMiddlewareOwners: PluginAgentToolResultMiddlewareOwner[];
   agentToolResultMiddlewares: PluginAgentToolResultMiddlewareRegistration[];
   memoryEmbeddingProviders: PluginMemoryEmbeddingProviderRegistration[];
   agentHarnesses: PluginAgentHarnessRegistration[];

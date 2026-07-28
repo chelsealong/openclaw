@@ -6,6 +6,7 @@ export {
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
+  USER_BOOTSTRAP_MAX_CHARS,
 } from "./embedded-agent-helpers/bootstrap.js";
 export {
   BILLING_ERROR_USER_MESSAGE,

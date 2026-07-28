@@ -5,9 +5,9 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("OpenAI Code Mode direct tools", () => {
-  it("keeps policy-required direct tools model-visible", () => {
+  it("keeps the native image loader model-visible", () => {
     const payload = {
-      tools: ["exec", "wait", "computer", "image", "message", "web_fetch"].map((name) => ({
+      tools: ["exec", "wait", "computer", "image", "web_fetch"].map((name) => ({
         type: "function",
         name,
       })),
@@ -15,13 +15,7 @@ describe("OpenAI Code Mode direct tools", () => {
 
     enforceCodeModeResponsesToolSurface(payload);
 
-    expect(payload.tools.map((tool) => tool.name)).toEqual([
-      "exec",
-      "wait",
-      "computer",
-      "image",
-      "message",
-    ]);
+    expect(payload.tools.map((tool) => tool.name)).toEqual(["exec", "wait", "computer", "image"]);
     expect(() => assertCodeModeResponsesToolSurface(payload)).not.toThrow();
   });
 });

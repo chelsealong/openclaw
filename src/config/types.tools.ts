@@ -179,10 +179,9 @@ export type ToolSearchConfig =
 
 export type CodeModeConfig =
   | boolean
-  | "auto"
   | {
-      /** Enable generic OpenClaw code mode. Default: false. "auto" engages it only for models whose catalog compat flags `codeMode: "preferred"`. */
-      enabled?: boolean | "auto";
+      /** Enable generic OpenClaw code mode. Default: false. */
+      enabled?: boolean;
       /** Guest runtime. Only quickjs-wasi is supported. */
       runtime?: "quickjs-wasi";
       /** Model-facing mode. Only "only" is supported: expose exec/wait and hide normal tools. */

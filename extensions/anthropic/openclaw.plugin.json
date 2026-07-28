@@ -86,8 +86,7 @@
               "minimal": "low",
               "xhigh": "xhigh",
               "max": "max"
-            },
-            "compat": { "codeMode": "preferred" }
+            }
           },
           {
             "id": "claude-opus-5",
@@ -103,8 +102,7 @@
             "thinkingLevelMap": {
               "xhigh": "xhigh",
               "max": "max"
-            },
-            "compat": { "codeMode": "preferred" }
+            }
           },
           {
             "id": "claude-sonnet-5",
@@ -120,8 +118,7 @@
             "thinkingLevelMap": {
               "xhigh": "xhigh",
               "max": "max"
-            },
-            "compat": { "codeMode": "preferred" }
+            }
           },
           {
             "id": "claude-mythos-5",
@@ -139,8 +136,7 @@
               "minimal": "low",
               "xhigh": "xhigh",
               "max": "max"
-            },
-            "compat": { "codeMode": "preferred" }
+            }
           },
           {
             "id": "claude-opus-4-8",
@@ -153,8 +149,7 @@
               "image": { "maxSidePx": 2576, "preferredSidePx": 2576, "tokenMode": "provider" }
             },
             "contextWindow": 1000000,
-            "maxTokens": 128000,
-            "compat": { "codeMode": "preferred" }
+            "maxTokens": 128000
           },
           {
             "id": "claude-haiku-4-5",
@@ -165,8 +160,7 @@
               "image": { "maxSidePx": 1568, "preferredSidePx": 1568, "tokenMode": "provider" }
             },
             "contextWindow": 200000,
-            "maxTokens": 64000,
-            "compat": { "codeMode": "preferred" }
+            "maxTokens": 64000
           }
         ]
       }

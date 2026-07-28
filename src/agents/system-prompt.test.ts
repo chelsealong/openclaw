@@ -949,11 +949,22 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "MEMORY.md: durable preferences/behavior; follow all session unless higher priority overrides.",
+      "MEMORY.md: durable non-profile facts and decisions; use when relevant unless higher-priority instructions override.",
     );
     expect(prompt.indexOf("NEVER use [[tts:...]]")).toBeGreaterThan(-1);
     expect(prompt.lastIndexOf("## Voice (TTS)")).toBeGreaterThan(
       prompt.indexOf("NEVER use [[tts:...]]"),
+    );
+  });
+
+  it("adds USER guidance when a user-model file is present", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      contextFiles: [{ path: "USER.md", content: "- Prefer concise answers." }],
+    });
+
+    expect(prompt).toContain(
+      "USER.md: durable user preferences and profile directives; follow unless higher-priority instructions override.",
     );
   });
 
@@ -1210,7 +1221,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("### message tool");
   });
 
-  it("uses Slack typed presentation hints instead of generic inline button config guidance", () => {
+  it("uses Slack interactive reply hints instead of generic inline button config guidance", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["message"],
@@ -1218,11 +1229,13 @@ describe("buildAgentSystemPrompt", () => {
         channel: "slack",
       },
       messageToolHints: [
-        "- Use `presentation` buttons/selects for discrete choices or parameter picks instead of asking the user to type one.",
+        "- Prefer Slack buttons/selects for 2-5 discrete choices or parameter picks instead of asking the user to type one.",
+        "- Slack interactive replies: use `[[slack_buttons: Label:value, Other:other]]` to add action buttons that route clicks back as Slack interaction system events.",
       ],
     });
 
-    expect(prompt).toContain("`presentation` buttons/selects");
+    expect(prompt).toContain("Slack interactive replies");
+    expect(prompt).toContain("[[slack_buttons: Label:value, Other:other]]");
     expect(prompt).not.toContain("Inline buttons not enabled for slack");
     expect(prompt).not.toContain("slack.capabilities.inlineButtons");
     expect(prompt).not.toContain("buttons=[[{text,callback_data,style?}]]");

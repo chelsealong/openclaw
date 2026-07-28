@@ -50,7 +50,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
   {
     id: "gemini-3.6-flash",
@@ -60,7 +59,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
   {
     id: "gemini-3.5-flash-lite",
@@ -70,7 +68,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
   {
     id: "gemini-3.1-pro-preview",
@@ -80,7 +77,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
   {
     id: "gemini-3.1-flash-lite",
@@ -90,7 +86,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
   {
     id: "gemini-3-flash-preview",
@@ -100,7 +95,6 @@ const GOOGLE_GEMINI_TEXT_MODELS: ModelDefinitionConfig[] = [
     cost: GOOGLE_GEMINI_COST,
     contextWindow: 1_048_576,
     maxTokens: 65_536,
-    compat: { codeMode: "preferred" },
   },
 ];
 
@@ -161,7 +155,6 @@ function buildGoogleLiveModel(row: unknown): ModelDefinitionConfig | undefined {
   ) {
     return undefined;
   }
-  const staticModel = GOOGLE_GEMINI_TEXT_MODELS.find((model) => model.id === id);
   return {
     id,
     name: readString(record, "displayName") ?? id,
@@ -172,7 +165,6 @@ function buildGoogleLiveModel(row: unknown): ModelDefinitionConfig | undefined {
     cost: GOOGLE_GEMINI_COST,
     contextWindow,
     maxTokens,
-    ...(staticModel?.compat ? { compat: { ...staticModel.compat } } : {}),
   };
 }
 

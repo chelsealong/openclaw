@@ -322,7 +322,9 @@ async function trySendViaHostRead(
       return { channel: "qqbot", error: `File is empty: ${hostReadMediaPath}` };
     }
     if (mediaKind === "media" && loaded.kind === "audio") {
-      const directUploadFormats = ctx.account.config?.audioFormatPolicy?.uploadDirectFormats;
+      const directUploadFormats =
+        ctx.account.config?.audioFormatPolicy?.uploadDirectFormats ??
+        ctx.account.config?.voiceDirectUploadFormats;
       const transcodeEnabled = ctx.account.config?.audioFormatPolicy?.transcodeEnabled !== false;
       const stagedPath = await stageLoadedHostReadVoice(mediaPath, loaded);
       return await sendVoiceFromLocal(ctx, stagedPath, directUploadFormats, transcodeEnabled);

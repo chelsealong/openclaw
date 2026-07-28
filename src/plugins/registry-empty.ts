@@ -28,7 +28,6 @@ export function createEmptyPluginRegistry(): PluginRegistry {
     workerProviders: new Map(),
     migrationProviders: [],
     codexAppServerExtensionFactories: [],
-    agentToolResultMiddlewareOwners: [],
     agentToolResultMiddlewares: [],
     memoryEmbeddingProviders: [],
     agentHarnesses: [],

@@ -14,55 +14,6 @@ export type MessagePresentationTone = "info" | "success" | "warning" | "danger" 
 /** Button style hint for renderers that support styled actions. */
 export type MessagePresentationButtonStyle = InteractiveButtonStyle;
 
-/** Core-owned model-picker action; channels serialize it only inside private envelopes. */
-export type ModelPickerAction = (
-  | {
-      type: "model-picker";
-      version: 1;
-      snapshotToken: string;
-      intent: "show-providers";
-      cursor?: string;
-    }
-  | {
-      type: "model-picker";
-      version: 1;
-      snapshotToken: string;
-      intent: "show-models";
-      providerToken: string;
-      cursor?: string;
-    }
-  | {
-      type: "model-picker";
-      version: 1;
-      snapshotToken: string;
-      intent: "show-recents";
-      cursor?: string;
-    }
-  | {
-      type: "model-picker";
-      version: 1;
-      snapshotToken: string;
-      intent: "choose-model";
-      providerToken: string;
-      modelToken: string;
-    }
-  | {
-      type: "model-picker";
-      version: 1;
-      snapshotToken: string;
-      intent: "choose-runtime";
-      providerToken: string;
-      modelToken: string;
-      runtimeToken: string;
-    }
-  | { type: "model-picker"; version: 1; snapshotToken: string; intent: "reset" }
-  | { type: "model-picker"; version: 1; snapshotToken: string; intent: "cancel" }
-) & {
-  /** Legacy command/callback payload fields are deliberately unavailable on picker actions. */
-  readonly command?: never;
-  readonly value?: never;
-};
-
 /** Portable typed action behind a button or select option. */
 export type MessagePresentationAction =
   | {
@@ -75,7 +26,6 @@ export type MessagePresentationAction =
       type: "callback";
       value: string;
     }
-  | ModelPickerAction
   | {
       /** Resolve one durable operator approval without exposing transport callback data. */
       type: "approval";
@@ -110,8 +60,6 @@ export type MessagePresentationAction =
       /** OpenClaw hosted-widget ID whose launch mechanics are owned by the channel. */
       widgetId: string;
     };
-
-type LegacyMessagePresentationAction = Exclude<MessagePresentationAction, ModelPickerAction>;
 
 /** Portable action control rendered as a button or link by channel adapters. */
 export type MessagePresentationButton = {
@@ -152,7 +100,7 @@ export type MessagePresentationOption = {
   /** User-visible option label. */
   label: string;
   /** Typed action sent when the option is selected. */
-  action?: Extract<MessagePresentationAction, { type: "command" | "callback" | "model-picker" }>;
+  action?: Extract<MessagePresentationAction, { type: "command" | "callback" }>;
   /** @deprecated Use action. */
   value?: string;
 };
@@ -183,18 +131,9 @@ export function resolveMessagePresentationControlValue(control: {
 /** Resolve a canonical button action, including deprecated boundary inputs. */
 export function resolveMessagePresentationButtonAction(
   button: Pick<MessagePresentationButton, "action" | "url" | "value" | "webApp" | "web_app">,
-  options: { modelPicker: true },
-): MessagePresentationAction | undefined;
-export function resolveMessagePresentationButtonAction(
-  button: Pick<MessagePresentationButton, "action" | "url" | "value" | "webApp" | "web_app">,
-): LegacyMessagePresentationAction | undefined;
-export function resolveMessagePresentationButtonAction(
-  button: Pick<MessagePresentationButton, "action" | "url" | "value" | "webApp" | "web_app">,
-  options?: { modelPicker?: boolean },
 ): MessagePresentationAction | undefined {
   if (button.action !== undefined) {
-    const action = normalizePresentationAction(button.action);
-    return action?.type === "model-picker" && options?.modelPicker !== true ? undefined : action;
+    return normalizePresentationAction(button.action);
   }
   if (button.url) {
     return { type: "url", url: button.url };
@@ -209,29 +148,10 @@ export function resolveMessagePresentationButtonAction(
 /** Resolve a canonical select action, including the deprecated value input. */
 export function resolveMessagePresentationOptionAction(
   option: Pick<MessagePresentationOption, "action" | "value">,
-  options: { modelPicker: true },
-):
-  | Extract<MessagePresentationAction, { type: "command" | "callback" | "model-picker" }>
-  | undefined;
-export function resolveMessagePresentationOptionAction(
-  option: Pick<MessagePresentationOption, "action" | "value">,
-): Extract<LegacyMessagePresentationAction, { type: "command" | "callback" }> | undefined;
-export function resolveMessagePresentationOptionAction(
-  option: Pick<MessagePresentationOption, "action" | "value">,
-  options?: { modelPicker?: boolean },
-):
-  | Extract<MessagePresentationAction, { type: "command" | "callback" | "model-picker" }>
-  | undefined {
+): Extract<MessagePresentationAction, { type: "command" | "callback" }> | undefined {
   if (option.action !== undefined) {
     const action = normalizePresentationAction(option.action);
-    if (action?.type === "model-picker" && options?.modelPicker !== true) {
-      return undefined;
-    }
-    return action?.type === "command" ||
-      action?.type === "callback" ||
-      action?.type === "model-picker"
-      ? action
-      : undefined;
+    return action?.type === "command" || action?.type === "callback" ? action : undefined;
   }
   return option.value ? { type: "callback", value: option.value } : undefined;
 }
@@ -414,93 +334,6 @@ function normalizePresentationTone(value: unknown): MessagePresentationTone | un
     : undefined;
 }
 
-const MODEL_PICKER_TOKEN_MAX_LENGTH = 128;
-const MODEL_PICKER_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/u;
-
-function normalizeModelPickerToken(value: unknown): string | undefined {
-  const token = normalizeOptionalString(value);
-  return token &&
-    token.length <= MODEL_PICKER_TOKEN_MAX_LENGTH &&
-    MODEL_PICKER_TOKEN_PATTERN.test(token)
-    ? token
-    : undefined;
-}
-
-function normalizeOptionalModelPickerCursor(
-  record: Record<string, unknown>,
-): { valid: true; cursor?: string } | { valid: false } {
-  if (record.cursor === undefined) {
-    return { valid: true };
-  }
-  const cursor = normalizeModelPickerToken(record.cursor);
-  return cursor ? { valid: true, cursor } : { valid: false };
-}
-
-function normalizeModelPickerAction(
-  record: Record<string, unknown>,
-): ModelPickerAction | undefined {
-  if (record.type !== "model-picker" || record.version !== 1) {
-    return undefined;
-  }
-  const snapshotToken = normalizeModelPickerToken(record.snapshotToken);
-  if (!snapshotToken) {
-    return undefined;
-  }
-  const intent = record.intent;
-  if (intent === "show-providers" || intent === "show-recents") {
-    const cursor = normalizeOptionalModelPickerCursor(record);
-    return cursor.valid
-      ? {
-          type: "model-picker",
-          version: 1,
-          snapshotToken,
-          intent,
-          ...(cursor.cursor ? { cursor: cursor.cursor } : {}),
-        }
-      : undefined;
-  }
-  if (intent === "show-models") {
-    const providerToken = normalizeModelPickerToken(record.providerToken);
-    const cursor = normalizeOptionalModelPickerCursor(record);
-    return providerToken && cursor.valid
-      ? {
-          type: "model-picker",
-          version: 1,
-          snapshotToken,
-          intent,
-          providerToken,
-          ...(cursor.cursor ? { cursor: cursor.cursor } : {}),
-        }
-      : undefined;
-  }
-  if (intent === "choose-model") {
-    const providerToken = normalizeModelPickerToken(record.providerToken);
-    const modelToken = normalizeModelPickerToken(record.modelToken);
-    return providerToken && modelToken
-      ? { type: "model-picker", version: 1, snapshotToken, intent, providerToken, modelToken }
-      : undefined;
-  }
-  if (intent === "choose-runtime") {
-    const providerToken = normalizeModelPickerToken(record.providerToken);
-    const modelToken = normalizeModelPickerToken(record.modelToken);
-    const runtimeToken = normalizeModelPickerToken(record.runtimeToken);
-    return providerToken && modelToken && runtimeToken
-      ? {
-          type: "model-picker",
-          version: 1,
-          snapshotToken,
-          intent,
-          providerToken,
-          modelToken,
-          runtimeToken,
-        }
-      : undefined;
-  }
-  return intent === "reset" || intent === "cancel"
-    ? { type: "model-picker", version: 1, snapshotToken, intent }
-    : undefined;
-}
-
 function normalizePresentationAction(raw: unknown): MessagePresentationAction | undefined {
   const record = toRecord(raw);
   if (!record) {
@@ -514,9 +347,6 @@ function normalizePresentationAction(raw: unknown): MessagePresentationAction | 
   if (type === "callback") {
     const value = normalizeOptionalString(record.value);
     return value ? { type: "callback", value } : undefined;
-  }
-  if (type === "model-picker") {
-    return normalizeModelPickerAction(record);
   }
   if (type === "approval") {
     if (record.type !== "approval") {
@@ -615,9 +445,7 @@ function normalizeOption(raw: unknown): InteractiveReplyOption | undefined {
   const normalizedAction =
     record.action !== undefined ? normalizePresentationAction(record.action) : undefined;
   const action =
-    normalizedAction?.type === "command" ||
-    normalizedAction?.type === "callback" ||
-    normalizedAction?.type === "model-picker"
+    normalizedAction?.type === "command" || normalizedAction?.type === "callback"
       ? normalizedAction
       : undefined;
   if (!label || (record.action !== undefined && !action) || (!action && !value)) {
@@ -903,7 +731,7 @@ export function presentationToInteractiveReply(
     }
     if (block.type === "buttons") {
       const buttons = block.buttons
-        .filter((button) => resolveMessagePresentationButtonAction(button, { modelPicker: true }))
+        .filter((button) => resolveMessagePresentationButtonAction(button))
         .map((button) => {
           const interactiveButton: InteractiveReplyButton = {
             label: button.label,
@@ -964,7 +792,7 @@ export function presentationToInteractiveReply(
             label: option.label,
           };
           if (option.action !== undefined) {
-            const action = resolveMessagePresentationOptionAction(option, { modelPicker: true });
+            const action = resolveMessagePresentationOptionAction(option);
             if (action) {
               interactiveOption.action = action;
               const actionValue = resolveMessagePresentationActionValue(action);

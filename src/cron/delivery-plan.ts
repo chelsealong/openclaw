@@ -170,11 +170,8 @@ export function resolveFailureDestination(
   }
 
   if (hasJobFailureDest) {
+    const jobChannel = normalizeChannel(jobFailureDest.channel);
     const jobTo = normalizeOptionalString(jobFailureDest.to);
-    const explicitJobChannel = normalizeChannel(jobFailureDest.channel);
-    const jobChannel =
-      explicitJobChannel ??
-      (jobTo ? (resolveTargetPrefixedChannel(jobTo) as CronMessageChannel | undefined) : undefined);
     const jobAccountId = normalizeOptionalString(jobFailureDest.accountId);
     const jobMode = normalizeFailureMode(jobFailureDest.mode);
     const hasJobChannelField = "channel" in jobFailureDest;
@@ -185,7 +182,7 @@ export function resolveFailureDestination(
     const jobToExplicitValue = hasJobToField && jobTo !== undefined;
     const globalChannel = resolveAnnounceChannel({ channel, to });
 
-    if (hasJobChannelField || (jobChannel && jobTo)) {
+    if (hasJobChannelField) {
       channel = jobChannel;
       if (jobChannel && jobChannel !== globalChannel) {
         // Targets and accounts belong to the channel that supplied them.

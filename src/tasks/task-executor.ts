@@ -1,5 +1,6 @@
 // Executes task records through configured runtimes and updates registry state.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type {
   DetachedRunningTaskCreateParams,
@@ -8,7 +9,10 @@ import type {
   DetachedTaskFailParams,
   DetachedTaskFinalizeParams,
 } from "./detached-task-runtime-contract.js";
+import { getRegisteredDetachedTaskLifecycleRuntime } from "./detached-task-runtime-state.js";
 import {
+  assertTaskCancellationReadyById,
+  cancelTaskById,
   createTaskRecord,
   findTaskByRunId as findTaskByRunIdInRegistry,
   getTaskById,
@@ -594,6 +598,32 @@ export async function cancelDetachedTaskRunById(params: {
   taskId: string;
   reason?: string;
 }) {
-  const runtime = await import("./task-executor-cancel.runtime.js");
-  return runtime.cancelDetachedTaskRunById(params);
+  const task = getTaskById(params.taskId);
+  const registeredRuntime = getRegisteredDetachedTaskLifecycleRuntime();
+  if (!task) {
+    if (registeredRuntime) {
+      const cancelled = await registeredRuntime.cancelDetachedTaskRunById(params);
+      if (cancelled.found) {
+        return cancelled;
+      }
+    }
+    return cancelTaskById(params);
+  }
+  try {
+    assertTaskCancellationReadyById(task.taskId);
+  } catch (error) {
+    return {
+      found: true,
+      cancelled: false,
+      reason: formatErrorMessage(error),
+      task,
+    };
+  }
+  if (registeredRuntime) {
+    const cancelled = await registeredRuntime.cancelDetachedTaskRunById(params);
+    if (cancelled.found) {
+      return cancelled;
+    }
+  }
+  return cancelTaskById(params);
 }

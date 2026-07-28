@@ -158,7 +158,6 @@ describe("runGatewayConversationSend", () => {
     });
     expect(deps.runMessageAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        defaultAccountId: conversation.accountId,
         gatewayOwnedDelivery: true,
         forceCoreDelivery: true,
         requireQueuePersistence: true,
@@ -166,7 +165,6 @@ describe("runGatewayConversationSend", () => {
         sessionKey: "agent:main:telegram:direct:operator",
       }),
     );
-    expect(deps.runMessageActionMock.mock.calls[0]?.[0]?.params).not.toHaveProperty("accountId");
     expect(result).toEqual({
       status: "sent",
       conversationRef: conversation.conversationRef,

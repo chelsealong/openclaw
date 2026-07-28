@@ -107,13 +107,11 @@ export async function reportPreMutationUpdateFailure(params: {
     steps: [],
     durationMs: 0,
   };
-  if (params.opts.dryRun !== true) {
-    await writeControlPlaneUpdateRestartSentinelBestEffort({
-      meta: params.controlPlaneUpdateSentinelMeta,
-      result,
-      jsonMode: Boolean(params.opts.json),
-    });
-  }
+  await writeControlPlaneUpdateRestartSentinelBestEffort({
+    meta: params.controlPlaneUpdateSentinelMeta,
+    result,
+    jsonMode: Boolean(params.opts.json),
+  });
   printResult(result, params.opts);
   defaultRuntime.exit(1);
 }
@@ -138,15 +136,6 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
   if (timeoutMs === null) {
     return;
   }
-  const requestedChannel = normalizeUpdateChannel(opts.channel);
-  if (opts.channel !== undefined && !requestedChannel) {
-    defaultRuntime.error(
-      `--channel must be "stable", "extended-stable", "beta", or "dev" (got "${opts.channel}")`,
-    );
-    defaultRuntime.exit(1);
-    return;
-  }
-
   assertConfigWriteAllowedInCurrentMode();
 
   const root = await resolveUpdateRoot();
@@ -164,6 +153,14 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
             : configSnapshot.sourceConfig,
         }
       : undefined);
+  const requestedChannel = normalizeUpdateChannel(opts.channel);
+  if (opts.channel && !requestedChannel) {
+    defaultRuntime.error(
+      `--channel must be "stable", "extended-stable", "beta", or "dev" (got "${opts.channel}")`,
+    );
+    defaultRuntime.exit(1);
+    return;
+  }
   if (requestedChannel === "extended-stable") {
     const updateStatus = await checkUpdateStatus({
       root,

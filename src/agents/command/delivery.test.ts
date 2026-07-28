@@ -60,6 +60,11 @@ const emptyRegistry = createTestRegistry([]);
 const slackPluginForTest = createOutboundTestPlugin({
   id: "slack",
   outbound: slackOutboundForTest,
+  messaging: {
+    enableInteractiveReplies: ({ cfg }) =>
+      (cfg.channels?.slack as { capabilities?: { interactiveReplies?: boolean } } | undefined)
+        ?.capabilities?.interactiveReplies === true,
+  },
 });
 const slackRegistry = createTestRegistry([
   {
@@ -232,6 +237,30 @@ describe("deliverAgentCommandResult payload normalization", () => {
     setActivePluginRegistry(emptyRegistry);
   });
 
+  it("keeps Slack directives in text for direct agent deliveries", async () => {
+    // Direct CLI deliveries preserve Slack directive markup because no channel
+    // adapter has consumed it yet.
+    const delivered = await deliverAgentCommandResult({
+      cfg: {
+        channels: {
+          slack: {
+            capabilities: { interactiveReplies: true },
+          },
+        },
+      } as OpenClawConfig,
+      deps: {} as CliDeps,
+      runtime: { log: vi.fn() } as never,
+      opts: { message: "test", channel: "slack" } as AgentCommandOpts,
+      outboundSession: undefined,
+      sessionEntry: undefined,
+      payloads: [{ text: "Choose [[slack_buttons: Retry:retry]]" }],
+      result: createResult(),
+    });
+
+    expect(delivered.payloads).toHaveLength(1);
+    expectTextPayload(delivered.payloads[0], "Choose [[slack_buttons: Retry:retry]]");
+  });
+
   it("rechecks delivery ownership after asynchronous payload preparation", async () => {
     let deliveryCurrent = true;
     createReplyMediaPathNormalizerMock.mockImplementationOnce(
@@ -381,6 +410,37 @@ describe("deliverAgentCommandResult payload normalization", () => {
 
     expect(delivered.payloads).toHaveLength(1);
     expectTextPayload(delivered.payloads[0], "[openai/gpt-5.4] Ready.");
+  });
+
+  it("keeps Slack options text intact for local preview when delivery is disabled", async () => {
+    const runtime = {
+      log: vi.fn(),
+    };
+
+    const delivered = await deliverAgentCommandResult({
+      cfg: {
+        channels: {
+          slack: {
+            capabilities: { interactiveReplies: true },
+          },
+        },
+      } as OpenClawConfig,
+      deps: {} as CliDeps,
+      runtime: runtime as never,
+      opts: {
+        message: "test",
+        channel: "slack",
+      } as AgentCommandOpts,
+      outboundSession: undefined,
+      sessionEntry: undefined,
+      payloads: [{ text: "Options: on, off." }],
+      result: createResult(),
+    });
+
+    expect(runtime.log).toHaveBeenCalledTimes(1);
+    expect(runtime.log).toHaveBeenCalledWith("Options: on, off.");
+    expect(delivered.payloads).toHaveLength(1);
+    expectTextPayload(delivered.payloads[0], "Options: on, off.");
   });
 
   it("normalizes reply-media paths before outbound delivery", async () => {

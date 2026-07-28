@@ -3,7 +3,6 @@ import { html } from "lit";
 import type { ConfigUiHints } from "../../api/types.ts";
 import {
   analyzeConfigSchema,
-  renderConfigTierGroups,
   renderNode,
   schemaType,
   type JsonSchema,
@@ -18,8 +17,6 @@ type ChannelConfigFormProps = {
   schema: unknown;
   uiHints: ConfigUiHints;
   disabled: boolean;
-  showAdvanced: boolean;
-  onShowAdvanced: (enabled: boolean) => void;
   onPatch: (path: Array<string | number>, value: unknown) => void;
 };
 
@@ -103,28 +100,17 @@ function renderChannelConfigForm(props: ChannelConfigFormProps) {
   }
   const configValue = props.configValue ?? {};
   const value = resolveChannelValue(configValue, props.channelId);
-  const path = ["channels", props.channelId];
-  const unsupported = new Set(analysis.unsupportedPaths);
   return html`
     <div class="config-form">
-      ${renderConfigTierGroups({
+      ${renderNode({
         schema: node,
-        path,
+        value,
+        path: ["channels", props.channelId],
         hints: props.uiHints,
-        revealAdvanced: props.showAdvanced,
-        onShowAdvanced: () => props.onShowAdvanced(true),
-        onHideAdvanced: () => props.onShowAdvanced(false),
-        renderTier: (tier) =>
-          renderNode({
-            schema: tier,
-            value,
-            path,
-            hints: props.uiHints,
-            unsupported,
-            disabled: props.disabled,
-            showLabel: false,
-            onPatch: props.onPatch,
-          }),
+        unsupported: new Set(analysis.unsupportedPaths),
+        disabled: props.disabled,
+        showLabel: false,
+        onPatch: props.onPatch,
       })}
     </div>
     ${renderExtraChannelFields(value)}
@@ -144,8 +130,6 @@ export function renderChannelConfigSection(params: { channelId: string; props: C
             schema: props.configSchema,
             uiHints: props.configUiHints,
             disabled,
-            showAdvanced: props.showAdvancedSettings,
-            onShowAdvanced: props.onShowAdvancedSettings,
             onPatch: props.onConfigPatch,
           })}
       <div class="settings-row__control">

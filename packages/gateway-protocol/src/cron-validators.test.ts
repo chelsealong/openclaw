@@ -440,7 +440,6 @@ describe("cron protocol validators", () => {
         sortDir: "asc",
         agentId: "ops",
         compact: true,
-        includeDeliveryPreviews: false,
       }),
     ).toBe(true);
     expect(validateCronListParams({ offset: -1 })).toBe(false);

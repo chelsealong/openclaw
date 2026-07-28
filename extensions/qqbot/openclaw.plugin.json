@@ -99,6 +99,10 @@
           "contextVisibility": { "$ref": "#/$defs/contextVisibility" },
           "systemPrompt": { "type": "string" },
           "markdownSupport": { "type": "boolean" },
+          "voiceDirectUploadFormats": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "audioFormatPolicy": { "$ref": "#/$defs/audioFormatPolicy" },
           "urlDirectUpload": { "type": "boolean" },
           "upgradeUrl": { "type": "string" },
@@ -138,6 +142,10 @@
       "contextVisibility": { "$ref": "#/$defs/contextVisibility" },
       "systemPrompt": { "type": "string" },
       "markdownSupport": { "type": "boolean" },
+      "voiceDirectUploadFormats": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
       "audioFormatPolicy": { "$ref": "#/$defs/audioFormatPolicy" },
       "stt": { "$ref": "#/$defs/stt" },
       "urlDirectUpload": { "type": "boolean" },

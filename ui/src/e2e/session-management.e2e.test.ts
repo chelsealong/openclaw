@@ -835,9 +835,7 @@ describeControlUiE2e("Control UI session management mocked Gateway E2E", () => {
     });
 
     const assertSelectedRoute = async () => {
-      await expect
-        .poll(() => new URL(page.url()).pathname)
-        .toBe(controlUiSessionPath(selected.key));
+      await expect.poll(() => page.url()).toContain(`session=${encodeURIComponent(selected.key)}`);
       const row = page.locator(`.sidebar-recent-session[data-session-key="${selected.key}"]`);
       await row.waitFor({ state: "visible", timeout: 10_000 });
       await expect
@@ -1467,9 +1465,8 @@ describeControlUiE2e("Control UI session management mocked Gateway E2E", () => {
       await alphaToggle.click();
       await expect.poll(() => alpha.locator(".sidebar-recent-session").count()).toBe(0);
 
-      // Header buttons intentionally keep their click behavior; reorder from
-      // the dedicated grip beside them.
-      await gamma.locator(".sidebar-session-group-drag-handle").dragTo(alpha, {
+      // Reorder by dragging the whole group header (not just the dot handle).
+      await gamma.locator(".sidebar-recent-sessions__head").dragTo(alpha, {
         targetPosition: { x: 4, y: 2 },
       });
       const customGroupOrder = () =>

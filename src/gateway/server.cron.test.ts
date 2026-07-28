@@ -568,15 +568,6 @@ describe("gateway server cron", () => {
         detail: "webhook",
       });
 
-      const noPreviewListRes = await directCronReq(cronState, "cron.list", {
-        includeDeliveryPreviews: false,
-        includeDisabled: true,
-      });
-      expect(noPreviewListRes.ok).toBe(true);
-      expect(
-        (noPreviewListRes.payload as { deliveryPreviews?: unknown } | null)?.deliveryPreviews,
-      ).toBeUndefined();
-
       const compactListRes = await directCronReq(cronState, "cron.list", {
         compact: true,
         includeDisabled: true,

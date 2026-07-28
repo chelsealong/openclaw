@@ -917,9 +917,6 @@ export class WorkboardCoreStore {
     if (!card) {
       throw new Error(`card not found: ${id}`);
     }
-    if (card.metadata?.archivedAt) {
-      return card;
-    }
     const target = await this.dependencyTargetStatus(card, now);
     if (target === card.status) {
       return card;

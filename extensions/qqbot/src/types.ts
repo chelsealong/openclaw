@@ -95,6 +95,11 @@ export interface QQBotAccountConfig {
   /** QQBot-native exec approval delivery + approver authorization. */
   execApprovals?: QQBotExecApprovalConfig;
   /**
+   * @deprecated Use audioFormatPolicy.uploadDirectFormats instead.
+   * Legacy list of formats that can upload directly without SILK conversion.
+   */
+  voiceDirectUploadFormats?: string[];
+  /**
    * Audio format policy covering inbound STT and outbound upload behavior.
    */
   audioFormatPolicy?: AudioFormatPolicy;

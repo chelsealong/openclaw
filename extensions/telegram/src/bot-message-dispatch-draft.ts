@@ -458,15 +458,6 @@ export function createTelegramDraftController(params: {
     answerLane,
     reasoningLane,
     lanes,
-    beginQueuedFollowup: () => {
-      for (const lane of [answerLane, reasoningLane]) {
-        if (!lane.stream) {
-          continue;
-        }
-        lane.stream.forceNewMessage();
-        resetLaneState(lane);
-      }
-    },
     canPushAnswerDraft: () => Boolean(answerLane.stream),
     cleanup: async (superseded: boolean) => {
       for (const lane of [answerLane, reasoningLane]) {

@@ -76,6 +76,11 @@ export type {
   SlackInteractiveHandlerContext,
   SlackInteractiveHandlerRegistration,
 } from "./src/interactive-dispatch.js";
+export {
+  compileSlackInteractiveReplies,
+  isSlackInteractiveRepliesEnabled,
+  parseSlackOptionsLine,
+} from "./src/interactive-replies.js";
 export { extractSlackToolSend, listSlackMessageActions } from "./src/message-actions.js";
 export {
   resolveSlackGroupRequireMention,

@@ -168,17 +168,6 @@ function validateReviewArtifacts({ review, reviewMarkdown, prMeta }) {
   const nitFindingsCount = findings.filter(
     (finding) => isObject(finding) && finding.severity === "NIT",
   ).length;
-  if (
-    value.recommendation === "READY FOR /prepare-pr" &&
-    findings.some(
-      (finding) =>
-        isObject(finding) && (finding.severity === "BLOCKER" || finding.severity === "IMPORTANT"),
-    )
-  ) {
-    add(
-      "Invalid recommendation in .local/review.json: READY FOR /prepare-pr cannot include BLOCKER or IMPORTANT findings",
-    );
-  }
 
   const nitSweep = nitSweepIsObject ? value.nitSweep : {};
   const nitSweepPerformedIsBoolean = requireType(
@@ -269,7 +258,7 @@ function validateReviewArtifacts({ review, reviewMarkdown, prMeta }) {
   const runtimeFileCount = prMetaIsValid
     ? prMeta.files.filter(
         ({ path }) =>
-          /^(src|extensions|apps|packages|ui)\//u.test(path) &&
+          /^(src|extensions|apps)\//u.test(path) &&
           !/(^|\/)__tests__\/|\.test\.|\.spec\./u.test(path) &&
           !/\.(md|mdx)$/u.test(path),
       ).length
@@ -417,20 +406,6 @@ function validateReviewArtifacts({ review, reviewMarkdown, prMeta }) {
   );
   if (testsResultIsString) {
     requireEnum(tests.result, "testsResult", "Invalid tests result in .local/review.json");
-  }
-  if (value.recommendation === "READY FOR /prepare-pr" && tests.result === "fail") {
-    add(
-      "Invalid recommendation in .local/review.json: READY FOR /prepare-pr cannot include failing tests",
-    );
-  }
-  if (
-    value.recommendation === "READY FOR /prepare-pr" &&
-    runtimeReviewRequired &&
-    tests.result !== "pass"
-  ) {
-    add(
-      "Invalid recommendation in .local/review.json: READY FOR /prepare-pr on runtime changes requires passing tests",
-    );
   }
 
   const docsIsString = requireType(

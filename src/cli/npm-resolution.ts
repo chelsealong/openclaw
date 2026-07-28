@@ -5,7 +5,7 @@ import {
 } from "../infra/install-source-utils.js";
 
 /** Build the npm section of a plugin install record. */
-function buildNpmInstallRecordFields(params: {
+export function buildNpmInstallRecordFields(params: {
   spec: string;
   installPath: string;
   version?: string;

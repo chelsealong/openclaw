@@ -871,7 +871,13 @@ describe("processGatewayAllowlist", () => {
   it("does not execute after cancellation wins during auto-review", async () => {
     const command = "echo ok";
     await configurePlanBackedCommand({ command });
-    const autoReviewer = vi.fn<ExecAutoReviewer>(() => new Promise(() => {}));
+    let resolveReview: ((decision: Awaited<ReturnType<ExecAutoReviewer>>) => void) | undefined;
+    const autoReviewer = vi.fn<ExecAutoReviewer>(
+      () =>
+        new Promise((resolve) => {
+          resolveReview = resolve;
+        }),
+    );
     const abortController = new AbortController();
     const result = runGatewayAllowlist({
       command,
@@ -883,6 +889,7 @@ describe("processGatewayAllowlist", () => {
     await vi.waitFor(() => expect(autoReviewer).toHaveBeenCalledTimes(1));
 
     abortController.abort(new Error("cancelled during review"));
+    resolveReview?.({ decision: "allow-once", risk: "low", rationale: "allowed" });
 
     await expect(result).rejects.toThrow("cancelled during review");
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();

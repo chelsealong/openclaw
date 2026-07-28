@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { configureCodexRealtimeBrowserSession } from "./realtime-voice-api.js";
+import {
+  configureCodexRealtimeBrowserSession,
+  getCodexRealtimeBrowserSessionFallback,
+} from "./realtime-voice-api.js";
 
 const leases: Array<ReturnType<typeof configureCodexRealtimeBrowserSession>> = [];
 
@@ -17,15 +20,29 @@ describe("Codex realtime voice runtime artifact", () => {
     await Promise.all(leases.splice(0).map((runtime) => runtime.cleanup()));
   });
 
-  it("shares one owner runtime across registration leases", async () => {
+  it("keeps the owner runtime until every registration lease is released", async () => {
+    // Extension shards are non-isolated, so another plugin registration may
+    // already own the process-global runtime when this test starts.
+    const initialFallback = getCodexRealtimeBrowserSessionFallback();
     const first = createRuntime();
     const second = createRuntime();
 
     expect(second).not.toBe(first);
     expect(second.broker).toBe(first.broker);
+    expect(getCodexRealtimeBrowserSessionFallback()).toBe(first.broker);
 
     await first.cleanup();
+
+    expect(getCodexRealtimeBrowserSessionFallback()).toBe(first.broker);
+
     await second.cleanup();
+
+    expect(getCodexRealtimeBrowserSessionFallback()).toBe(initialFallback);
+    if (initialFallback) {
+      return;
+    }
+    const replacement = createRuntime();
+    expect(replacement.broker).not.toBe(first.broker);
   });
 
   it("reads config from the newest active registration", () => {

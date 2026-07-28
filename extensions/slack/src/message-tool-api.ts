@@ -6,6 +6,7 @@ import type {
   ChannelMessageToolSchemaContribution,
 } from "openclaw/plugin-sdk/channel-contract";
 import { Type, type TSchema } from "typebox";
+import { isSlackInteractiveRepliesEnabled } from "./interactive-replies.js";
 import { listSlackMessageActions } from "./message-actions.js";
 
 const SLACK_MESSAGE_ID_ACTIONS = ["react", "reactions", "edit", "delete", "pin", "unpin"] as const;
@@ -79,6 +80,9 @@ export function describeSlackMessageTool({
   const capabilities = new Set<"presentation">();
   const schema: ChannelMessageToolSchemaContribution[] = [];
   if (actions.includes("send")) {
+    capabilities.add("presentation");
+  }
+  if (isSlackInteractiveRepliesEnabled({ cfg, accountId })) {
     capabilities.add("presentation");
   }
   if (actions.includes("download-file")) {

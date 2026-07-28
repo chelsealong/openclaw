@@ -412,11 +412,6 @@ function normalizeModelCatalogCompat(value: unknown): ModelCatalogCompatConfig |
     }
   }
 
-  const codeMode = normalizeOptionalString(value.codeMode) ?? "";
-  if (codeMode === "preferred" || codeMode === "capable") {
-    compat.codeMode = codeMode;
-  }
-
   const maxTokensField = normalizeOptionalString(value.maxTokensField) ?? "";
   if (maxTokensField === "max_completion_tokens" || maxTokensField === "max_tokens") {
     compat.maxTokensField = maxTokensField;

@@ -20,6 +20,8 @@ export type BrowserTabTargetOptions = BrowserOperationOptions & {
 export type ProfileRuntimeState = {
   profile: ResolvedBrowserProfile;
   running: RunningChrome | null;
+  /** @deprecated Lifecycle starts are owned by the profile actor. */
+  ensureBrowserAvailable?: { key: string; promise: Promise<void> } | null;
   managedLaunchFailure?: {
     consecutiveFailures: number;
     lastFailureAt: number;
@@ -33,6 +35,11 @@ export type ProfileRuntimeState = {
     nextTabNumber: number;
     byTargetId: Record<string, { tabId: string; label?: string; url?: string }>;
   };
+  /** @deprecated Lifecycle reconciliation is owned by the profile actor. */
+  reconcile?: {
+    previousProfile: ResolvedBrowserProfile;
+    reason: string;
+  } | null;
 };
 
 /** Runtime state for the Browser control server. */

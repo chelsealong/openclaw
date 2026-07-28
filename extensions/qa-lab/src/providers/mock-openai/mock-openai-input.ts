@@ -100,19 +100,15 @@ function stringifyFunctionCallOutput(output: unknown): string {
   return "";
 }
 
-function isResponsesToolCallOutput(item: ResponsesInputItem) {
-  return item.type === "function_call_output" || item.type === "custom_tool_call_output";
-}
-
 function extractFunctionCallOutputText(item: ResponsesInputItem) {
-  if (!isResponsesToolCallOutput(item)) {
+  if (item.type !== "function_call_output") {
     return "";
   }
   return stringifyFunctionCallOutput(item.output);
 }
 
 function extractFunctionCallOutputCallId(item: ResponsesInputItem) {
-  if (!isResponsesToolCallOutput(item)) {
+  if (item.type !== "function_call_output") {
     return "";
   }
   const record = item as {
@@ -128,7 +124,7 @@ function extractFunctionCallOutputCallId(item: ResponsesInputItem) {
 }
 
 function functionCallOutputIsStructuredError(item: ResponsesInputItem) {
-  if (!isResponsesToolCallOutput(item)) {
+  if (item.type !== "function_call_output") {
     return false;
   }
   return item.is_error === true || item.isError === true;

@@ -15,7 +15,6 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import type { GatewayBootLifecycleCompletion } from "../../infra/gateway-boot-lifecycle.js";
 import { acquireGatewayLock } from "../../infra/gateway-lock.js";
 import type { GatewayRestartEmitter } from "../../infra/restart.js";
-import { flushLogger } from "../../logging/logger.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
@@ -27,7 +26,6 @@ const RESTART_DRAIN_STILL_PENDING_WARN_MS = 30_000;
 const RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS = 10_000;
 const UPDATE_RESPAWN_HEALTH_TIMEOUT_MS = 10_000;
 const UPDATE_RESPAWN_HEALTH_POLL_MS = 200;
-const LOG_FLUSH_EXIT_TIMEOUT_MS = 4_000;
 
 type GatewayRunSignalAction = "stop" | "restart";
 type RestartDrainTimeoutMs = number | undefined;
@@ -164,25 +162,6 @@ export async function runGatewayLoop(params: {
     cleanupSignals();
     params.runtime.exit(code);
   };
-  const exitProcessAfterLogFlush = async (code: number) => {
-    // Graceful signal/restart paths call process.exit(), which skips beforeExit.
-    let flushTimer: ReturnType<typeof setTimeout> | undefined;
-    const flushed = await Promise.race([
-      flushLogger().then(() => true),
-      new Promise<false>((resolve) => {
-        flushTimer = setTimeout(() => resolve(false), LOG_FLUSH_EXIT_TIMEOUT_MS);
-      }),
-    ]);
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-    }
-    if (!flushed) {
-      gatewayLog.warn(
-        `log flush did not settle within ${LOG_FLUSH_EXIT_TIMEOUT_MS}ms; continuing shutdown`,
-      );
-    }
-    exitProcess(code);
-  };
   const completeForcedStop = (reason: string) => {
     params.completeBoot?.({ outcome: "forced_stop", reason });
   };
@@ -259,7 +238,7 @@ export async function runGatewayLoop(params: {
           gatewayLog.info(
             `restart mode: update process respawn (spawned pid ${respawn.pid ?? "unknown"})`,
           );
-          await exitProcessAfterLogFlush(0);
+          exitProcess(0);
           return;
         }
         gatewayLog.warn(
@@ -330,7 +309,7 @@ export async function runGatewayLoop(params: {
           return;
         }
         activeRestartRequest = null;
-        await exitProcessAfterLogFlush(0);
+        exitProcess(0);
         return;
       }
       if (respawn.mode === "failed") {
@@ -410,7 +389,7 @@ export async function runGatewayLoop(params: {
         return;
       }
       activeRestartRequest = null;
-      await exitProcessAfterLogFlush(0);
+      exitProcess(0);
       return;
     }
     if (respawn.mode === "failed") {
@@ -441,7 +420,7 @@ export async function runGatewayLoop(params: {
   const handleStopAfterServerClose = async () => {
     params.completeBoot?.({ outcome: "clean_stop", reason: "gateway.stop" });
     await releaseLockIfHeld();
-    await exitProcessAfterLogFlush(0);
+    exitProcess(0);
   };
 
   const SUPERVISOR_STOP_TIMEOUT_MS = 30_000;

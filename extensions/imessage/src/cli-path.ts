@@ -15,26 +15,23 @@ const MACH_O_MAGICS = new Set([
   "bfbafeca",
 ]);
 
-export function resolveIMessageHomeDir(): string | undefined {
-  const configuredHome = process.env.HOME;
-  const home = configuredHome?.trim();
+function safeHomeDir(): string | undefined {
+  const home = process.env.HOME?.trim();
   if (home) {
     return home;
   }
   try {
-    // On POSIX, os.homedir() echoes a defined blank HOME instead of querying the account.
-    const systemHome = configuredHome === undefined ? os.homedir() : os.userInfo().homedir;
-    return systemHome.trim() || undefined;
+    return os.homedir().trim() || undefined;
   } catch {
     return undefined;
   }
 }
 
-export function expandIMessageUserPath(value: string): string {
+function expandIMessageUserPath(value: string): string {
   if (!value.startsWith("~")) {
     return value;
   }
-  const home = resolveIMessageHomeDir();
+  const home = safeHomeDir();
   return home ? value.replace(/^~(?=$|[\\/])/, home) : value;
 }
 
@@ -114,7 +111,7 @@ function isLikelyLocalIMessageCliPath(params: { cliPath: string; remoteHost?: st
 }
 
 function defaultMessagesDbPath(): string | undefined {
-  const home = resolveIMessageHomeDir();
+  const home = safeHomeDir();
   return home ? path.join(home, "Library", "Messages", "chat.db") : undefined;
 }
 

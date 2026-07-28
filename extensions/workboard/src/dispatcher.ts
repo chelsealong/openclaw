@@ -15,7 +15,6 @@ import {
   resolveDispatchWorkspaceAccess,
   type ResolveAgentWorkspaceRuntime,
 } from "./dispatcher-workspace.js";
-import { cardBoardId } from "./store-card-helpers.js";
 import { isWorkboardClaimReclaimable } from "./store-constants.js";
 import { WorkboardStore, type WorkboardDispatchResult } from "./store.js";
 import {
@@ -75,6 +74,10 @@ function normalizePositiveInteger(value: number | undefined, fallback: number): 
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, Math.trunc(value))
     : fallback;
+}
+
+function cardBoardId(card: WorkboardCard): string {
+  return card.metadata?.automation?.boardId ?? "default";
 }
 
 function sanitizeSessionSegment(value: string | undefined, fallback: string): string {
@@ -447,8 +450,6 @@ async function runWorkboardDispatch(
         { ownerId, ttlSeconds: card.metadata?.automation?.maxRuntimeSeconds },
         {
           expectedAuthority: {
-            boardId: cardBoardId(card),
-            status: card.status,
             agentId: card.agentId,
             workspace: card.metadata?.automation?.workspace,
             workspaceAccess: card.metadata?.automation?.workspaceAccess,

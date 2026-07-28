@@ -49,9 +49,7 @@ export const LAB_FEATURES = [
     configPath: ["tools", "codeMode", "enabled"],
     onValue: true,
     offValue: false,
-    // "auto" engages code mode per model catalog flag; it must read as on so
-    // the toggle does not silently narrow an operator's deliberate auto tier.
-    activeValues: [true, "auto"],
+    activeValues: [true],
     readEnabled: null,
     enableAlso: null,
     restartHint: null,

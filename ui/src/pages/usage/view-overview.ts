@@ -592,9 +592,8 @@ function renderPeakErrorList(
 }
 
 function focusSummaryHint(event: MouseEvent) {
-  const target = event.currentTarget;
-  if (target instanceof HTMLElement) {
-    target.focus();
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.focus();
   }
 }
 
@@ -629,7 +628,7 @@ function renderSummaryStat(params: {
     <div class=${classes}>
       <div class="usage-summary-title">
         ${params.title}
-        <openclaw-tooltip open-on-click>
+        <openclaw-tooltip>
           <button
             id=${hintId}
             type="button"
@@ -639,10 +638,8 @@ function renderSummaryStat(params: {
           >
             ?
           </button>
-          <!-- Shared tooltips dismiss pointer activation so action buttons never
-               strand one open. This hint exists only to be read, so it opts in to
-               click-to-open; the click handler still normalizes browsers that do
-               not focus buttons on pointer activation. -->
+          <!-- Some browsers do not focus buttons on pointer activation; the
+               click handler normalizes that path without adding a second toggle. -->
           <span slot="content">${params.hint}</span>
         </openclaw-tooltip>
       </div>

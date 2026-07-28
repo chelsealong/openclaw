@@ -81,7 +81,6 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
   @property({ type: Boolean }) busy = false;
   @property({ type: Boolean }) canMutate = true;
   @property({ type: Boolean }) canGrant = true;
-  @property({ type: Boolean }) ticketRefreshEnabled = true;
 
   @state() private actionError = "";
   @state() private actionPending = false;
@@ -104,7 +103,6 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
     requestUpdate: () => this.requestUpdate(),
     resolveFrameUrl: () => this.widgetFrameUrl,
     root: () => this,
-    ticketRefreshEnabled: () => this.ticketRefreshEnabled,
     widget: () => this.widget,
   });
 

@@ -90,7 +90,7 @@ export function isMattermostSenderAllowed(params: {
   return match.allowed;
 }
 
-function mapMattermostChannelTypeToChatType(channelType?: string | null): ChatType {
+export function mapMattermostChannelTypeToChatType(channelType?: string | null): ChatType {
   const normalized = channelType?.trim().toUpperCase();
   if (!normalized) {
     return "direct";

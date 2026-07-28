@@ -7,7 +7,7 @@ const taskTracking = vi.hoisted(() => ({
 
 vi.mock("./bash-tools.exec-task-tracking.js", () => taskTracking);
 
-import { createExecTool } from "./bash-tools.exec-run.js";
+import { createExecTool } from "./bash-tools.exec.js";
 
 describe("exec background task wiring", () => {
   beforeEach(() => {

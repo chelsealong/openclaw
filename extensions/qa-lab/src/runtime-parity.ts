@@ -57,7 +57,6 @@ export type RuntimeParityCell = {
   finalText: string;
   usage: RuntimeParityUsage;
   wallClockMs: number;
-  bootstrapWallClockMs?: number;
   transportErrorClass?: string;
   runtimeErrorClass?: string;
   bootStateLines: string[];
@@ -161,7 +160,6 @@ type RuntimeParityCaptureParams = {
   gateway: QaGatewayLike;
   scenarioResult: QaSuiteScenarioLike;
   wallClockMs: number;
-  bootstrapWallClockMs?: number;
   agentId?: string;
   mockBaseUrl?: string;
 };
@@ -1472,9 +1470,6 @@ export async function captureRuntimeParityCell(
     finalText: extractFinalAssistantText(transcriptRecords),
     usage: aggregateUsage(transcriptRecords),
     wallClockMs: params.wallClockMs,
-    ...(params.bootstrapWallClockMs === undefined
-      ? {}
-      : { bootstrapWallClockMs: params.bootstrapWallClockMs }),
     ...(scenarioErrorClass || sentinelErrorClass
       ? { runtimeErrorClass: scenarioErrorClass ?? sentinelErrorClass }
       : {}),

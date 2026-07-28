@@ -1,4 +1,4 @@
-import type { CodexAppServerConnectionClass } from "./config-contracts.js";
+import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { normalizeCodexDynamicToolName } from "./dynamic-tool-profile.js";
 import type { CodexAppServerThreadBinding } from "./session-binding.js";
 import type {
@@ -7,7 +7,7 @@ import type {
 } from "./thread-lifecycle-types.js";
 
 export function shouldRotateCodexAppServerBindingForRuntime(params: {
-  connectionClass: CodexAppServerConnectionClass;
+  connectionClass: CodexAppServerRuntimeOptions["connectionClass"];
   current?: string;
   binding?: string;
 }): boolean {

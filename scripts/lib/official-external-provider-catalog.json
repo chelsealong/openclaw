@@ -468,7 +468,7 @@
           "mediaUnderstandingProviders": [
             "deepinfra"
           ],
-          "embeddingProviders": [
+          "memoryEmbeddingProviders": [
             "deepinfra"
           ],
           "imageGenerationProviders": [

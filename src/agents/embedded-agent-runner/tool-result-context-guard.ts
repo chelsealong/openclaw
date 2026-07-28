@@ -22,12 +22,9 @@ import {
   invalidateMessageCharsCacheEntry,
   isToolResultMessage,
 } from "./tool-result-char-estimator.js";
-import {
-  estimateToolResultTextChars,
-  sliceToolResultTextToBudget,
-} from "./tool-result-text-budget.js";
 
 const SINGLE_TOOL_RESULT_CONTEXT_SHARE = 0.5;
+const TOOL_RESULT_ESTIMATE_TO_TEXT_RATIO = 4 / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE;
 const TRANSCRIPT_PROMPT_TEXT_KEY = "__openclawTranscriptPromptText";
 
 type GuardableTransformContext = (
@@ -136,8 +133,7 @@ function stripTranscriptPromptMarkers(messages: AgentMessage[]): AgentMessage[] 
 }
 
 function truncateTextToBudget(text: string, maxChars: number): string {
-  const budgetOptions = { minimumRawWeight: TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE };
-  if (estimateToolResultTextChars(text, budgetOptions) <= maxChars) {
+  if (text.length <= maxChars) {
     return text;
   }
 
@@ -145,33 +141,21 @@ function truncateTextToBudget(text: string, maxChars: number): string {
     return formatContextLimitTruncationNotice(text.length);
   }
 
-  let prefix = sliceToolResultTextToBudget(text, maxChars, budgetOptions);
+  let bodyBudget = maxChars;
   for (let i = 0; i < 4; i += 1) {
-    const suffix = formatContextLimitTruncationNotice(Math.max(1, text.length - prefix.length));
-    prefix = sliceToolResultTextToBudget(
-      text,
-      Math.max(0, maxChars - estimateToolResultTextChars(suffix, budgetOptions)),
-      budgetOptions,
+    const estimatedSuffix = formatContextLimitTruncationNotice(
+      Math.max(1, text.length - bodyBudget),
     );
+    bodyBudget = Math.max(0, maxChars - estimatedSuffix.length);
   }
 
-  const newline = prefix.lastIndexOf("\n");
-  if (newline > prefix.length * 0.7) {
-    prefix = truncateUtf16Safe(prefix, newline);
+  let cutPoint = bodyBudget;
+  const newline = text.lastIndexOf("\n", cutPoint);
+  if (newline > bodyBudget * 0.7) {
+    cutPoint = newline;
   }
 
-  for (let i = 0; i < 4; i += 1) {
-    const suffix = formatContextLimitTruncationNotice(text.length - prefix.length);
-    const nextPrefix = sliceToolResultTextToBudget(
-      prefix,
-      Math.max(0, maxChars - estimateToolResultTextChars(suffix, budgetOptions)),
-      budgetOptions,
-    );
-    if (nextPrefix.length === prefix.length) {
-      return prefix + suffix;
-    }
-    prefix = nextPrefix;
-  }
+  const prefix = truncateUtf16Safe(text, cutPoint);
   return prefix + formatContextLimitTruncationNotice(text.length - prefix.length);
 }
 
@@ -188,8 +172,8 @@ function replaceToolResultText(msg: AgentMessage, text: string): AgentMessage {
   } as AgentMessage;
 }
 
-function estimateBudgetToRawChars(maxChars: number): number {
-  return Math.max(0, Math.floor(maxChars / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE));
+function estimateBudgetToTextBudget(maxChars: number): number {
+  return Math.max(0, Math.floor(maxChars / TOOL_RESULT_ESTIMATE_TO_TEXT_RATIO));
 }
 
 function truncateToolResultToChars(
@@ -210,16 +194,21 @@ function truncateToolResultToChars(
   if (!rawText) {
     const omittedChars = Math.max(
       1,
-      estimateBudgetToRawChars(Math.max(estimatedChars - maxChars, 1)),
+      estimateBudgetToTextBudget(Math.max(estimatedChars - maxChars, 1)),
     );
     return replaceToolResultText(msg, formatContextLimitTruncationNotice(omittedChars));
   }
 
-  if (maxChars <= 0) {
+  const textBudget = estimateBudgetToTextBudget(maxChars);
+  if (textBudget <= 0) {
     return replaceToolResultText(msg, formatContextLimitTruncationNotice(rawText.length));
   }
 
-  const truncatedText = truncateTextToBudget(rawText, maxChars);
+  if (rawText.length <= textBudget) {
+    return replaceToolResultText(msg, rawText);
+  }
+
+  const truncatedText = truncateTextToBudget(rawText, textBudget);
   return replaceToolResultText(msg, truncatedText);
 }
 

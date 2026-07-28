@@ -1268,7 +1268,13 @@ describe("executeNodeHostCommand", () => {
   });
 
   it("does not invoke the node after cancellation wins during auto-review", async () => {
-    const autoReviewer = vi.fn<ExecAutoReviewer>(() => new Promise(() => {}));
+    let resolveReview: ((decision: Awaited<ReturnType<ExecAutoReviewer>>) => void) | undefined;
+    const autoReviewer = vi.fn<ExecAutoReviewer>(
+      () =>
+        new Promise((resolve) => {
+          resolveReview = resolve;
+        }),
+    );
     resolveExecHostApprovalContextMock.mockReturnValue({
       approvals: { allowlist: [], file: { version: 1, agents: {} } },
       hostSecurity: "allowlist",
@@ -1299,6 +1305,7 @@ describe("executeNodeHostCommand", () => {
     const gatewayCallsBeforeResolution = callGatewayToolMock.mock.calls.length;
 
     abortController.abort(new Error("cancelled during review"));
+    resolveReview?.({ decision: "allow-once", risk: "low", rationale: "allowed" });
 
     await expect(result).rejects.toThrow("cancelled during review");
     expect(callGatewayToolMock.mock.calls).toHaveLength(gatewayCallsBeforeResolution);

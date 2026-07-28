@@ -18,11 +18,6 @@ const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
 const SPAN_ID = "00f067aa0ba902b7";
 const logPathTracker = createSuiteLogPathTracker("openclaw-log-redaction-");
 
-async function readLogFile(logPath: string): Promise<string> {
-  await loggerTest.flushFileLogQueueForTests();
-  return fs.readFileSync(logPath, "utf8");
-}
-
 beforeAll(async () => {
   await logPathTracker.setup();
 });
@@ -42,30 +37,30 @@ afterAll(async () => {
 });
 
 describe("file log redaction", () => {
-  it("redacts credential fields before writing JSONL file logs", async () => {
+  it("redacts credential fields before writing JSONL file logs", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
 
     getLogger().info({ apiKey: secret, message: "provider configured" });
 
-    const content = await readLogFile(logPath);
+    const content = fs.readFileSync(logPath, "utf8");
     expect(content).toContain("provider configured");
     expect(content).toContain('"apiKey"');
     expect(content).not.toContain(secret);
   });
 
-  it("redacts bearer tokens in file log message strings", async () => {
+  it("redacts bearer tokens in file log message strings", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
 
     getLogger().warn({ message: `Authorization: Bearer ${secret}` });
 
-    const content = await readLogFile(logPath);
+    const content = fs.readFileSync(logPath, "utf8");
     expect(content).toContain("Authorization: Bearer");
     expect(content).not.toContain(secret);
   });
 
-  it("redacts structured authorization fields before writing JSONL file logs", async () => {
+  it("redacts structured authorization fields before writing JSONL file logs", () => {
     const logPath = logPathTracker.nextPath();
     const digestResponse = ["runtime", "digest", "response", "1234567890abcdef"].join("-");
     const awsScopeField = ["Cred", "ential", "=test-fixture-scope"].join("");
@@ -79,7 +74,7 @@ describe("file log redaction", () => {
       ].join("\n"),
     });
 
-    const content = await readLogFile(logPath);
+    const content = fs.readFileSync(logPath, "utf8");
     expect(() => JSON.parse(content.trim())).not.toThrow();
     expect(content).toContain("Authorization: Digest");
     expect(content).toContain("Authorization: AWS4-HMAC-SHA256");
@@ -113,7 +108,7 @@ describe("file log redaction", () => {
     }
   });
 
-  it("keeps structured file log fields redacted when the retired opt-out is present", async () => {
+  it("keeps structured file log fields redacted when the retired opt-out is present", () => {
     const logPath = logPathTracker.nextPath();
     const configPath = logPathTracker.nextPath();
     fs.writeFileSync(
@@ -135,14 +130,14 @@ describe("file log redaction", () => {
       });
     });
 
-    const content = await readLogFile(logPath);
+    const content = fs.readFileSync(logPath, "utf8");
     expect(content).not.toContain("token-value-1234567890");
     expect(content).not.toContain("ya29.fake-access-token-with-enough-length");
     expect(content).not.toContain("abcd-efgh-ijkl-mnop");
     expect(content).not.toContain(secret);
   });
 
-  it("uses logging.file from the active config path", async () => {
+  it("uses logging.file from the active config path", () => {
     const logPath = logPathTracker.nextPath();
     const configPath = logPathTracker.nextPath();
     fs.writeFileSync(
@@ -158,7 +153,7 @@ describe("file log redaction", () => {
       getLogger().info({ message: "configured log path works" });
     });
 
-    const content = await readLogFile(logPath);
+    const content = fs.readFileSync(logPath, "utf8");
     expect(content).toContain("configured log path works");
   });
 
@@ -172,7 +167,7 @@ describe("file log redaction", () => {
     });
   });
 
-  it("writes trace context as top-level JSONL fields", async () => {
+  it("writes trace context as top-level JSONL fields", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
     const logger = getChildLogger({
@@ -182,13 +177,13 @@ describe("file log redaction", () => {
 
     logger.info({ route: "/api/health" }, "request completed");
 
-    const [line] = (await readLogFile(logPath)).trim().split("\n");
+    const [line] = fs.readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(line ?? "{}") as Record<string, unknown>;
     expect(record.traceId).toBe(TRACE_ID);
     expect(record.spanId).toBe(SPAN_ID);
   });
 
-  it("writes active request trace context as top-level JSONL fields", async () => {
+  it("writes active request trace context as top-level JSONL fields", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
     const trace = createDiagnosticTraceContext({
@@ -200,38 +195,38 @@ describe("file log redaction", () => {
       getLogger().info({ route: "/api/health" }, "request completed");
     });
 
-    const [line] = (await readLogFile(logPath)).trim().split("\n");
+    const [line] = fs.readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(line ?? "{}") as Record<string, unknown>;
     expect(record.traceId).toBe(TRACE_ID);
     expect(record.spanId).toBe(SPAN_ID);
   });
 
-  it("writes hostname and flattened message as top-level JSONL fields", async () => {
+  it("writes hostname and flattened message as top-level JSONL fields", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
 
     getLogger().info({ route: "/api/health" }, "request completed");
 
-    const [line] = (await readLogFile(logPath)).trim().split("\n");
+    const [line] = fs.readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(line ?? "{}") as Record<string, unknown>;
     expect(record.hostname).toBeTypeOf("string");
     expect(record.hostname).not.toBe("");
     expect(record.message).toBe("request completed");
   });
 
-  it("keeps bounded file-log messages UTF-16 safe", async () => {
+  it("keeps bounded file-log messages UTF-16 safe", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
     const prefix = "x".repeat(4_095);
 
     getLogger().info(`${prefix}😀tail`);
 
-    const [line] = (await readLogFile(logPath)).trim().split("\n");
+    const [line] = fs.readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(line ?? "{}") as Record<string, unknown>;
     expect(record.message).toBe(`${prefix}...(truncated)`);
   });
 
-  it("retries hostname resolution after an empty value and caches the first real value", async () => {
+  it("retries hostname resolution after an empty value and caches the first real value", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
     const hostnames = ["", "lr-macbook", "changed-host"];
@@ -246,7 +241,8 @@ describe("file log redaction", () => {
     getLogger().info({ route: "/api/health" }, "second request");
     getLogger().info({ route: "/api/health" }, "third request");
 
-    const records = (await readLogFile(logPath))
+    const records = fs
+      .readFileSync(logPath, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -263,7 +259,7 @@ describe("file log redaction", () => {
     );
   });
 
-  it("promotes agent, session, and channel context to top-level JSONL fields", async () => {
+  it("promotes agent, session, and channel context to top-level JSONL fields", () => {
     const logPath = logPathTracker.nextPath();
     setLoggerOverride({ level: "info", file: logPath });
     const logger = getChildLogger({
@@ -273,7 +269,7 @@ describe("file log redaction", () => {
 
     logger.info({ sessionKey: "agent:main:discord:channel:c1" }, "session routed");
 
-    const [line] = (await readLogFile(logPath)).trim().split("\n");
+    const [line] = fs.readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(line ?? "{}") as Record<string, unknown>;
     expect(record.agent_id).toBe("agent-main");
     expect(record.session_id).toBe("agent:main:discord:channel:c1");

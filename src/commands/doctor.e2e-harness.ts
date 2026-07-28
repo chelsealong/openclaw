@@ -266,7 +266,6 @@ function createLegacyStateMigrationDetectionResult(params?: {
       hasLegacy: false,
       preview: [],
     },
-    worktrees: { hasLegacy: false },
     taskStateSidecars: {
       taskRunsPath: "/tmp/state/tasks/runs.sqlite",
       flowRunsPath: "/tmp/state/flows/registry.sqlite",

@@ -140,6 +140,14 @@ export function createExecTool(
     agentId,
     resolveHostForParams,
   });
+  const autoReviewer =
+    defaults?.autoReviewer ??
+    createModelExecAutoReviewer({
+      cfg: defaults?.config,
+      agentId,
+      reviewer: resolveExecReviewerDefaults({ defaults, agentId }),
+    });
+
   return {
     name: "exec",
     label: "exec",
@@ -152,15 +160,6 @@ export function createExecTool(
     finalizeBeforeToolCallParams: requestPreparation.finalizeBeforeToolCallParams,
     execute: async (toolCallId, args, signal, onUpdate) => {
       signal?.throwIfAborted();
-      // Review cancellation belongs to this execution, never another call on the shared tool.
-      const autoReviewer =
-        defaults?.autoReviewer ??
-        createModelExecAutoReviewer({
-          cfg: defaults?.config,
-          agentId,
-          reviewer: resolveExecReviewerDefaults({ defaults, agentId }),
-          signal,
-        });
       let params = requestPreparation.normalizeParams(args);
       const resolveExecEnvPrepared = requestPreparation.isResolveExecEnvPrepared(
         args as ExecToolArgs,
@@ -669,6 +668,3 @@ export function createExecTool(
     },
   };
 }
-
-/** Default exec tool instance used by agent tool registries. */
-export const execTool = createExecTool();

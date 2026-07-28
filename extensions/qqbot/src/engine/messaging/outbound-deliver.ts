@@ -372,7 +372,9 @@ async function sendVoiceWithTimeout(
   mediaSender: MediaSender,
   log: DeliverAccountContext["log"],
 ): Promise<boolean> {
-  const uploadFormats = account.config?.audioFormatPolicy?.uploadDirectFormats;
+  const uploadFormats =
+    account.config?.audioFormatPolicy?.uploadDirectFormats ??
+    account.config?.voiceDirectUploadFormats;
   const transcodeEnabled = account.config?.audioFormatPolicy?.transcodeEnabled !== false;
   const voiceTimeout = 45_000;
   try {

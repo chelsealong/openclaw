@@ -40,6 +40,11 @@ async function main() {
       memory: {
         search: {
           enabled: false,
+          sync: {
+            onSearch: false,
+            onSessionStart: false,
+            watch: false,
+          },
         },
       },
       plugins: {

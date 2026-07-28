@@ -1,4 +1,7 @@
 // Mattermost plugin module owns native model-picker interactions.
+import { finalizeInboundContext } from "openclaw/plugin-sdk/reply-runtime";
+import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
+import { resolveMattermostReplyToMode } from "./accounts.js";
 import type { MattermostPost } from "./client.js";
 import type { MattermostInteractionResponse } from "./interactions.js";
 import {
@@ -12,23 +15,34 @@ import { authorizeMattermostCommandInvocation } from "./monitor-auth.js";
 import {
   buildMattermostModelPickerSelectMessageSid,
   resolveMattermostReplyRootId,
+  resolveMattermostThreadSessionContext,
 } from "./monitor-context.js";
-import { buildMattermostEventPlan, type MattermostEventPlan } from "./monitor-event-plan.js";
 import type { MattermostMonitorContext } from "./monitor-types.js";
 import {
+  createMattermostReplyDeliveryBarrier,
   deliverMattermostReplyPayload,
   toMattermostChannelDeliveryResult,
 } from "./reply-delivery.js";
-import type { ReplyPayload } from "./runtime-api.js";
-import { buildModelsProviderData } from "./runtime-api.js";
+import type { ChatType, ReplyPayload } from "./runtime-api.js";
+import { buildModelsProviderData, logTypingFailure } from "./runtime-api.js";
 import { sendMessageMattermost } from "./send.js";
 
 type RunModelPickerCommandParams = {
   commandText: string;
   commandAuthorized: boolean;
-  eventPlan: MattermostEventPlan;
+  route: ResolvedAgentRoute;
+  sessionKey: string;
+  parentSessionKey?: string;
+  channelId: string;
+  senderId: string;
   senderName: string;
+  kind: ChatType;
+  channelName?: string;
+  channelDisplay?: string;
+  roomLabel: string;
+  teamId?: string;
   messageSid: string;
+  effectiveReplyToId?: string;
 };
 
 export type MattermostModelPickerInteractionHandler = (params: {
@@ -47,38 +61,74 @@ export function createMattermostModelPickerInteractionHandler(
   monitor: MattermostMonitorContext,
 ): MattermostModelPickerInteractionHandler {
   const { account, cfg, core, pairing, resources, runtime } = monitor;
-  const { resolveChannelInfo, updateModelPickerPost } = resources;
+  const { resolveChannelInfo, sendTypingIndicator, updateModelPickerPost } = resources;
 
   const runModelPickerCommand = async (params: RunModelPickerCommandParams): Promise<void> => {
-    const { channelDisplay, kind, roomLabel, route, thread, to } = params.eventPlan;
+    const to = params.kind === "direct" ? `user:${params.senderId}` : `channel:${params.channelId}`;
     const fromLabel =
-      kind === "direct"
+      params.kind === "direct"
         ? `Mattermost DM from ${params.senderName}`
-        : `Mattermost message in ${roomLabel} from ${params.senderName}`;
-    const ctxPayload = params.eventPlan.finalizeContext({
+        : `Mattermost message in ${params.roomLabel} from ${params.senderName}`;
+    const ctxPayload = finalizeInboundContext({
       Body: params.commandText,
       BodyForAgent: params.commandText,
       RawBody: params.commandText,
       CommandBody: params.commandText,
+      From:
+        params.kind === "direct"
+          ? `mattermost:${params.senderId}`
+          : params.kind === "group"
+            ? `mattermost:group:${params.channelId}`
+            : `mattermost:channel:${params.channelId}`,
+      To: to,
+      SessionKey: params.sessionKey,
+      DmScope: params.route.dmScope,
+      ParentSessionKey: params.parentSessionKey,
+      AccountId: params.route.accountId,
+      ChatType: params.kind,
       ConversationLabel: fromLabel,
-      GroupSubject: kind !== "direct" ? channelDisplay || roomLabel : undefined,
+      GroupSubject:
+        params.kind !== "direct" ? params.channelDisplay || params.roomLabel : undefined,
+      GroupChannel: params.channelName ? `#${params.channelName}` : undefined,
+      GroupSpace: params.teamId,
       SenderName: params.senderName,
+      SenderId: params.senderId,
+      Provider: "mattermost" as const,
+      Surface: "mattermost" as const,
       MessageSid: params.messageSid,
+      ReplyToId: params.effectiveReplyToId,
+      MessageThreadId: params.effectiveReplyToId,
       Timestamp: Date.now(),
       WasMentioned: true,
       CommandAuthorized: params.commandAuthorized,
       CommandSource: "native" as const,
+      OriginatingChannel: "mattermost" as const,
+      OriginatingTo: to,
     });
-    const { deliveryBarrier, replyOptions, replyPipeline, tableMode, textLimit } =
-      params.eventPlan.createReplyPlan();
+
+    const tableMode = core.channel.text.resolveMarkdownTableMode({
+      cfg,
+      channel: "mattermost",
+      accountId: account.accountId,
+    });
+    const textLimit = core.channel.text.resolveTextChunkLimit(
+      cfg,
+      "mattermost",
+      account.accountId,
+      { fallbackLimit: account.textChunkLimit ?? 4000 },
+    );
+    const deliveryBarrier = createMattermostReplyDeliveryBarrier({
+      isDirect: params.kind === "direct",
+      dmRetryOptions: account.config.dmChannelRetry,
+    });
     await core.channel.inbound.dispatch({
       cfg,
       channel: "mattermost",
       accountId: account.accountId,
       route: {
-        agentId: route.agentId,
-        dmScope: route.dmScope,
-        sessionKey: thread.sessionKey,
+        agentId: params.route.agentId,
+        dmScope: params.route.dmScope,
+        sessionKey: params.sessionKey,
       },
       ctxPayload,
       delivery: {
@@ -95,10 +145,10 @@ export function createMattermostModelPickerInteractionHandler(
               payload: trimmedPayload,
               to,
               accountId: account.accountId,
-              agentId: route.agentId,
+              agentId: params.route.agentId,
               replyToId: resolveMattermostReplyRootId({
-                kind,
-                threadRootId: thread.effectiveReplyToId,
+                kind: params.kind,
+                threadRootId: params.effectiveReplyToId,
                 replyToId: trimmedPayload.replyToId,
               }),
               textLimit,
@@ -113,12 +163,27 @@ export function createMattermostModelPickerInteractionHandler(
           runtime.error?.(`mattermost model picker ${info.kind} reply failed: ${String(err)}`);
         },
       },
-      replyPipeline,
+      replyPipeline: {
+        typing: {
+          start: () => sendTypingIndicator(params.channelId, params.effectiveReplyToId),
+          onStartError: (err) => {
+            logTypingFailure({
+              log: monitor.logDebugMessage,
+              channel: "mattermost",
+              target: params.channelId,
+              error: err,
+            });
+          },
+        },
+      },
       dispatcherOptions: {
         resolveFollowupAdmissionBarrierTimeoutPolicy: deliveryBarrier.resolveTimeoutPolicy,
         onDeliverySettled: deliveryBarrier.markDeliverySettled,
       },
-      replyOptions,
+      replyOptions: {
+        disableBlockStreaming:
+          typeof account.blockStreaming === "boolean" ? !account.blockStreaming : undefined,
+      },
     });
   };
 
@@ -187,28 +252,27 @@ export function createMattermostModelPickerInteractionHandler(
       return { ephemeral_text: denyText };
     }
 
+    const { channelDisplay, channelName, kind, roomLabel } = auth;
     const teamId = auth.channelInfo.team_id ?? params.payload.team_id ?? undefined;
-    const eventPlan = await buildMattermostEventPlan(monitor, {
-      channelId: params.payload.channel_id,
-      senderId: params.payload.user_id,
-      postId: params.post.id || params.payload.post_id,
-      threadRootId: params.post.root_id,
-      channelInfo: auth.channelInfo,
+    const route = core.channel.routing.resolveAgentRoute({
+      cfg,
+      channel: "mattermost",
+      accountId: account.accountId,
       teamId,
-      channelName: auth.channelName,
-      channelDisplay: auth.channelDisplay,
-      dropLabel: "model picker event",
+      peer: {
+        kind,
+        id: kind === "direct" ? params.payload.user_id : params.payload.channel_id,
+      },
     });
-    if (!eventPlan) {
-      return {
-        ephemeral_text: "Temporary error: unable to determine channel type. Please try again.",
-      };
-    }
-    const modelSessionRoute = {
-      agentId: eventPlan.route.agentId,
-      sessionKey: eventPlan.thread.sessionKey,
-    };
-    const data = await buildModelsProviderData(cfg, eventPlan.route.agentId);
+    const threadContext = resolveMattermostThreadSessionContext({
+      baseSessionKey: route.sessionKey,
+      kind,
+      postId: params.post.id || params.payload.post_id,
+      replyToMode: resolveMattermostReplyToMode(account, kind),
+      threadRootId: params.post.root_id,
+    });
+    const modelSessionRoute = { agentId: route.agentId, sessionKey: threadContext.sessionKey };
+    const data = await buildModelsProviderData(cfg, route.agentId);
     if (data.providers.length === 0) {
       return await updatePickerPost("No models available.");
     }
@@ -253,13 +317,23 @@ export function createMattermostModelPickerInteractionHandler(
         await runModelPickerCommand({
           commandText: `/model ${targetModelRef}`,
           commandAuthorized: auth.commandAuthorized,
-          eventPlan,
+          route,
+          sessionKey: threadContext.sessionKey,
+          parentSessionKey: threadContext.parentSessionKey,
+          channelId: params.payload.channel_id,
+          senderId: params.payload.user_id,
           senderName: params.userName,
+          kind,
+          channelName: channelName || undefined,
+          channelDisplay: channelDisplay || channelName || params.payload.channel_id,
+          roomLabel,
+          teamId,
           messageSid: buildMattermostModelPickerSelectMessageSid({
             postId: params.payload.post_id,
             provider: pickerState.provider,
             model: pickerState.model,
           }),
+          effectiveReplyToId: threadContext.effectiveReplyToId,
         });
         const currentModel = resolveMattermostModelPickerCurrentModel({
           cfg,

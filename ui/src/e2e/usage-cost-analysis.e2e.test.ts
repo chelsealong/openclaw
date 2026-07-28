@@ -334,8 +334,7 @@ describeControlUiE2e("Control UI usage cost analysis mocked Gateway E2E", () => 
         .poll(() => page.locator(".usage-insight-card", { hasText: "Top Providers" }).textContent())
         .toContain("openai");
       const messagesHint = page.locator("#usage-summary-hint-messages");
-      const messagesTooltipHost = messagesHint.locator("xpath=..");
-      const messagesTooltip = messagesTooltipHost.locator("wa-tooltip");
+      const messagesTooltip = page.locator("#usage-summary-hint-messages-tooltip");
       await messagesHint.hover();
       await expect.poll(() => messagesTooltip.getAttribute("open")).toBe("");
       await page.mouse.move(1, 1);
@@ -349,7 +348,7 @@ describeControlUiE2e("Control UI usage cost analysis mocked Gateway E2E", () => 
       await messagesHint.click();
       await expect.poll(() => messagesTooltip.getAttribute("open")).toBe("");
       await expect
-        .poll(() => messagesTooltipHost.locator('[slot="content"]').textContent())
+        .poll(() => messagesTooltip.textContent())
         .toContain("Total user and assistant messages in range.");
       await page.getByRole("button", { name: "Cost", exact: true }).click();
       await expect.poll(() => messagesTooltip.getAttribute("open")).toBeNull();

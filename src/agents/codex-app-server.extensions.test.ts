@@ -1,7 +1,7 @@
 // Verifies plugin extension points that are exposed to the Codex app server.
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
 import {
   createAgentToolResultMiddlewareRunner,
@@ -251,7 +251,7 @@ export default { id: "tool-result-middleware", register(api) {
 } };`,
     });
 
-    const config = {
+    setRuntimeConfigSnapshot({
       plugins: {
         entries: {
           "tool-result-middleware": {
@@ -259,14 +259,10 @@ export default { id: "tool-result-middleware", register(api) {
           },
         },
       },
-    };
-    setRuntimeConfigSnapshot(config);
+    });
     resetActivePluginRegistryForTest();
-    loadOpenClawPlugins({ config, loadModules: false, onlyPluginIds: ["tool-result-middleware"] });
 
     expect(listAgentToolResultMiddlewares("codex")).toHaveLength(0);
-    const manifestRegistry = await import("../plugins/manifest-registry.js");
-    const manifestSpy = vi.spyOn(manifestRegistry, "loadPluginManifestRegistry");
 
     // Startup activation stays false here; the runner must load the owner only
     // when Codex asks for the middleware runtime.
@@ -280,8 +276,6 @@ export default { id: "tool-result-middleware", register(api) {
       result: { content: [{ type: "text", text: "raw" }], details: {} },
     });
 
-    expect(manifestSpy).not.toHaveBeenCalled();
-    manifestSpy.mockRestore();
     expect(result.content).toEqual([{ type: "text", text: "exec lazily compacted" }]);
     expect(listAgentToolResultMiddlewares("codex")).toHaveLength(0);
   });
@@ -308,15 +302,13 @@ export default { id: "tool-result-middleware", register(api) {
 } };`,
     });
 
-    const config = {
+    setRuntimeConfigSnapshot({
       plugins: {
         load: { paths: [pluginFile] },
         allow: ["tool-result-middleware"],
       },
-    };
-    setRuntimeConfigSnapshot(config);
+    });
     resetActivePluginRegistryForTest();
-    loadOpenClawPlugins({ config, loadModules: false, onlyPluginIds: ["tool-result-middleware"] });
 
     expect(listAgentToolResultMiddlewares("codex")).toHaveLength(0);
 
@@ -550,19 +542,24 @@ export default { id: "tool-result-middleware", register(api) {
 } };`,
     });
 
-    const config = {
-      plugins: {
-        load: { paths: [installedPluginFile] },
-        allow: ["bundled-tool-result-middleware", "installed-tool-result-middleware"],
-        entries: {
-          "bundled-tool-result-middleware": {
-            enabled: true,
+    loadOpenClawPlugins({
+      onlyPluginIds: ["bundled-tool-result-middleware"],
+      config: {
+        plugins: {
+          entries: {
+            "bundled-tool-result-middleware": {
+              enabled: true,
+            },
           },
         },
       },
-    };
-    loadOpenClawPlugins({ config, onlyPluginIds: ["bundled-tool-result-middleware"] });
-    setRuntimeConfigSnapshot(config);
+    });
+    setRuntimeConfigSnapshot({
+      plugins: {
+        load: { paths: [installedPluginFile] },
+        allow: ["installed-tool-result-middleware"],
+      },
+    });
 
     expect(listAgentToolResultMiddlewares("codex")).toHaveLength(1);
 

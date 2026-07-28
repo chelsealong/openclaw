@@ -3,6 +3,7 @@ import {
   formatInboundEnvelope,
   implicitMentionKindWhen,
 } from "openclaw/plugin-sdk/channel-inbound";
+import { finalizeInboundContext } from "openclaw/plugin-sdk/reply-runtime";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -11,15 +12,19 @@ import {
   uniqueStrings,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
+import { resolveMattermostReplyToMode } from "./accounts.js";
 import type { MattermostPost } from "./client.js";
 import { resolveMattermostInboundMentionDecision } from "./monitor-activation.js";
 import {
   formatMattermostDirectMessageDropLog,
   normalizeMattermostAllowEntry,
   resolveMattermostMonitorInboundAccess,
+  resolveMattermostTrustedChatKind,
 } from "./monitor-auth.js";
-import { resolveMattermostPendingHistoryKey } from "./monitor-context.js";
-import { buildMattermostEventPlan } from "./monitor-event-plan.js";
+import {
+  resolveMattermostPendingHistoryKey,
+  resolveMattermostThreadSessionContext,
+} from "./monitor-context.js";
 import {
   formatInboundFromLabel,
   normalizeMention,
@@ -46,7 +51,7 @@ import { hasMattermostThreadParticipationWithPersistence } from "./thread-partic
 
 export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
   const { account, botUserId, botUsername, cfg, core, groupPolicy, pairing, resources } = monitor;
-  const { resolveMattermostMedia, resolveUserInfo } = resources;
+  const { resolveChannelInfo, resolveMattermostMedia, resolveUserInfo } = resources;
   const channelHistories = new Map<string, HistoryEntry[]>();
   const historyLimit = Math.max(
     0,
@@ -85,21 +90,17 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
       return;
     }
 
-    const eventPlan = await buildMattermostEventPlan(monitor, {
-      channelId,
-      senderId,
-      postId: post.id,
-      threadRootId: normalizeOptionalString(post.root_id),
-      channelTypeFallback: payload.data?.channel_type,
-      teamId: payload.data?.team_id,
-      channelName: payload.data?.channel_name,
-      channelDisplay: payload.data?.channel_display_name,
-      dropLabel: "post",
-    });
-    if (!eventPlan) {
+    const channelInfo = await resolveChannelInfo(channelId);
+    const channelType =
+      normalizeOptionalString(channelInfo?.type) ??
+      normalizeOptionalString(payload.data?.channel_type);
+    if (!channelType) {
+      monitor.logVerboseMessage(
+        `mattermost: drop post (cannot resolve channel type for ${channelId})`,
+      );
       return;
     }
-    const { channelDisplay, kind, roomLabel, route, thread } = eventPlan;
+    const kind = resolveMattermostTrustedChatKind({ channelType });
     const senderName =
       normalizeOptionalString(payload.data?.sender_name) ??
       normalizeOptionalString((await resolveUserInfo(senderId))?.username) ??
@@ -201,7 +202,29 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
       return;
     }
 
-    const { effectiveReplyToId, sessionKey } = thread;
+    const teamId = payload.data?.team_id ?? channelInfo?.team_id ?? undefined;
+    const channelName = payload.data?.channel_name ?? channelInfo?.name ?? "";
+    const channelDisplay =
+      payload.data?.channel_display_name ?? channelInfo?.display_name ?? channelName;
+    const roomLabel = channelName ? `#${channelName}` : channelDisplay || `#${channelId}`;
+    const route = core.channel.routing.resolveAgentRoute({
+      cfg,
+      channel: "mattermost",
+      accountId: account.accountId,
+      teamId,
+      peer: {
+        kind,
+        id: kind === "direct" ? senderId : channelId,
+      },
+    });
+    const threadContext = resolveMattermostThreadSessionContext({
+      baseSessionKey: route.sessionKey,
+      kind,
+      postId: post.id,
+      replyToMode: resolveMattermostReplyToMode(account, kind),
+      threadRootId: normalizeOptionalString(post.root_id),
+    });
+    const { effectiveReplyToId, sessionKey, parentSessionKey } = threadContext;
     const historyKey = resolveMattermostPendingHistoryKey({ kind, sessionKey });
     const fileIds = uniqueStrings(normalizeTrimmedStringList(post.file_ids ?? []));
     const nativeMedia = fileIds.map(() => ({}));
@@ -357,6 +380,7 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
       });
     }
 
+    const to = kind === "direct" ? `user:${senderId}` : `channel:${channelId}`;
     const commandBody = rawText.trim();
     const inboundHistory =
       historyKey && historyLimit > 0
@@ -365,21 +389,40 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
             limit: historyLimit,
           })
         : undefined;
-    const ctxPayload = eventPlan.finalizeContext({
+    const ctxPayload = finalizeInboundContext({
       Body: combinedBody,
       BodyForAgent: bodyForAgent,
       InboundHistory: inboundHistory,
       RawBody: commandBody,
       CommandBody: commandBody,
       BodyForCommands: commandBody,
+      From:
+        kind === "direct"
+          ? `mattermost:${senderId}`
+          : kind === "group"
+            ? `mattermost:group:${channelId}`
+            : `mattermost:channel:${channelId}`,
+      To: to,
+      SessionKey: sessionKey,
+      DmScope: route.dmScope,
+      ParentSessionKey: parentSessionKey,
+      AccountId: route.accountId,
+      ChatType: kind,
       ConversationLabel: fromLabel,
       GroupSubject: kind !== "direct" ? channelDisplay || roomLabel : undefined,
+      GroupChannel: channelName ? `#${channelName}` : undefined,
+      GroupSpace: teamId,
       SenderName: senderName,
+      SenderId: senderId,
+      Provider: "mattermost" as const,
+      Surface: "mattermost" as const,
       MessageSid: post.id,
       MessageSids: allMessageIds.length > 1 ? allMessageIds : undefined,
       MessageSidFirst: allMessageIds.length > 1 ? allMessageIds[0] : undefined,
       MessageSidLast:
         allMessageIds.length > 1 ? allMessageIds[allMessageIds.length - 1] : undefined,
+      ReplyToId: effectiveReplyToId,
+      MessageThreadId: effectiveReplyToId,
       Timestamp: typeof post.create_at === "number" ? post.create_at : undefined,
       WasMentioned: kind !== "direct" ? mentionDecision.effectiveWasMentioned : undefined,
       CommandAuthorized: commandAuthorized,
@@ -388,6 +431,8 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
       // exception in source-reply-delivery-mode.ts surfaces their acknowledgements under
       // message_tool_only delivery modes (e.g. Codex harness DMs). Mirrors iMessage #82642.
       CommandSource: commandAuthorized && isControlCommand ? ("text" as const) : undefined,
+      OriginatingChannel: "mattermost" as const,
+      OriginatingTo: to,
       ...buildMattermostInboundMediaPayload(mediaList),
     });
     const pinnedMainDmOwner =
@@ -407,7 +452,12 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
       post,
       rawText,
       ctxPayload,
-      eventPlan,
+      kind,
+      route,
+      channelId,
+      senderId,
+      to,
+      effectiveReplyToId,
       historyKey,
       historyLimit,
       channelHistories,

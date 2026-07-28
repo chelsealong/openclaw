@@ -36,10 +36,6 @@ import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shar
 import { createChatRunState } from "../server-chat-state.js";
 import type { GatewayRequestContext } from "./types.js";
 
-type ProjectedDispatchParams = Parameters<
-  typeof import("../../auto-reply/dispatch.js").dispatchInboundMessageWithProjectedDispatcher
->[0];
-
 const mockState = vi.hoisted(() => ({
   config: {} as Record<string, unknown>,
   transcriptPath: "",
@@ -211,28 +207,8 @@ vi.mock("../session-utils.js", async () => {
   };
 });
 
-const dispatchInboundMessageMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../../auto-reply/dispatch.js", async () => {
-  const { createReplyDispatcher } = await vi.importActual<
-    typeof import("../../auto-reply/reply/reply-dispatcher.js")
-  >("../../auto-reply/reply/reply-dispatcher.js");
-  return {
-    dispatchInboundMessage: dispatchInboundMessageMock,
-    dispatchInboundMessageWithProjectedDispatcher: vi.fn(
-      async (params: ProjectedDispatchParams) => {
-        const { dispatcherOptions, ...dispatchParams } = params;
-        return await dispatchInboundMessageMock({
-          ...dispatchParams,
-          dispatcher: createReplyDispatcher(dispatcherOptions),
-        });
-      },
-    ),
-  };
-});
-
-dispatchInboundMessageMock.mockImplementation(
-  vi.fn(
+vi.mock("../../auto-reply/dispatch.js", () => ({
+  dispatchInboundMessage: vi.fn(
     async (params: {
       ctx: MsgContext;
       dispatcher: {
@@ -361,7 +337,7 @@ dispatchInboundMessageMock.mockImplementation(
       };
     },
   ),
-);
+}));
 
 vi.mock("../../infra/outbound/session-binding-service.js", async () => {
   const actual = await vi.importActual<

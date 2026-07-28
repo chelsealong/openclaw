@@ -194,18 +194,15 @@ export {
   switchChatModel,
   switchChatThinkingLevel,
 } from "./chat-session.ts";
-export { ChatStateController } from "./chat-state-controller.ts";
-export { handlePageGatewayEvent } from "./chat-state-events.ts";
-export type { ChatPageHost } from "./chat-state-host.ts";
-export { createPageState } from "./chat-state-page.ts";
 export {
+  canCreateChatSession,
+  ChatStateController,
+  createPageState,
+  handlePageGatewayEvent,
   refreshChatCommands,
   refreshChatMetadata,
   refreshChatModelAuthStatus,
   refreshPageChat,
-} from "./chat-state-refresh.ts";
-export {
-  canCreateChatSession,
   refreshRouteSessionOptions,
   resetChatStateForRouteSession,
   retryChatComposerMemoryFallback,
@@ -213,7 +210,8 @@ export {
   resolveChatAvatarUrl,
   selectedChatSessionRow,
   saveRouteSessionSettings,
-} from "./chat-state-route.ts";
+  type ChatPageHost,
+} from "./chat-state.ts";
 export { resetChatViewState } from "./chat-view-state.ts";
 export { renderChat, type ChatProps } from "./chat-view.ts";
 export {

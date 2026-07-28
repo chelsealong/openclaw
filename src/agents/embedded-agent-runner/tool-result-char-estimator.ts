@@ -1,3 +1,4 @@
+import { CHARS_PER_TOKEN_ESTIMATE } from "../../utils/cjk-chars.js";
 /**
  * Estimates message and tool-result character costs for context guards.
  */
@@ -9,7 +10,6 @@ import {
   COMPACTION_SUMMARY_SUFFIX,
   bashExecutionToText,
 } from "../runtime/index.js";
-import { estimateToolResultTextChars } from "./tool-result-text-budget.js";
 
 export const TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE = 2;
 const IMAGE_CHAR_ESTIMATE = 8_000;
@@ -77,22 +77,6 @@ function estimateContentBlockChars(content: unknown[]): number {
   return chars;
 }
 
-function estimateToolResultContentChars(content: unknown[]): number {
-  let chars = 0;
-  for (const block of content) {
-    if (isTextBlock(block)) {
-      chars += estimateToolResultTextChars(block.text, {
-        minimumRawWeight: TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE,
-      });
-    } else if (isImageBlock(block)) {
-      chars += IMAGE_CHAR_ESTIMATE * TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE;
-    } else {
-      chars += estimateUnknownChars(block) * TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE;
-    }
-  }
-  return chars;
-}
-
 export function getToolResultText(msg: AgentMessage): string {
   const content = getToolResultContent(msg);
   const chunks: string[] = [];
@@ -155,7 +139,11 @@ function estimateMessageChars(msg: AgentMessage): number {
   if (isToolResultMessage(msg)) {
     // `details` is stripped before provider conversion; estimate only visible content.
     const content = getToolResultContent(msg);
-    return estimateToolResultContentChars(content);
+    const chars = estimateContentBlockChars(content);
+    const weightedChars = Math.ceil(
+      chars * (CHARS_PER_TOKEN_ESTIMATE / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE),
+    );
+    return Math.max(chars, weightedChars);
   }
 
   const record = msg as unknown as Record<string, unknown>;

@@ -25,16 +25,13 @@ function shouldSkipLegacyUpdateDoctorConfigWrite(env: NodeJS.ProcessEnv): boolea
   );
 }
 
-export async function runWriteConfigHealth(
-  ctx: DoctorHealthFlowContext,
-  options: { runPostWriteRepairs?: boolean } = {},
-): Promise<void> {
+export async function runWriteConfigHealth(ctx: DoctorHealthFlowContext): Promise<void> {
   const { applyWizardMetadata } = await import("../commands/onboard-helpers.js");
   const { replaceConfigFile } = await import("../config/config.js");
   const { logConfigUpdated } = await import("../config/logging.js");
   const { shortenHomePath } = await import("../utils.js");
   const shouldWriteConfig =
-    (ctx.configResult.shouldWriteConfig && ctx.configResultWriteCommitted !== true) ||
+    ctx.configResult.shouldWriteConfig ||
     JSON.stringify(ctx.cfg) !== JSON.stringify(ctx.cfgForPersistence);
   if (shouldWriteConfig) {
     const updateDoctorRun = isUpdateDoctorRun(ctx.env ?? process.env);
@@ -64,12 +61,6 @@ export async function runWriteConfigHealth(
           : {}),
       },
     });
-    // The final writer runs again after health repairs. Advance its baseline only
-    // after the atomic write succeeds so later failures cannot mark volatile state durable.
-    ctx.cfgForPersistence = structuredClone(ctx.cfg);
-    if (ctx.configResult.shouldWriteConfig === true) {
-      ctx.configResultWriteCommitted = true;
-    }
     // logConfigUpdated already prints the `.bak` backup line when it exists.
     logConfigUpdated(ctx.runtime);
     const preUpdateSnapshotPath = `${ctx.configPath}.pre-update`;
@@ -79,11 +70,7 @@ export async function runWriteConfigHealth(
       );
     }
   }
-  if (
-    options.runPostWriteRepairs === false ||
-    ctx.configResult.shouldRepairCronCodexModelRefsAfterConfigWrite !== true ||
-    ctx.postConfigWriteRepairsCommitted === true
-  ) {
+  if (ctx.configResult.shouldRepairCronCodexModelRefsAfterConfigWrite !== true) {
     return;
   }
   // The config write above must finish before cron rows are rewritten against
@@ -96,7 +83,6 @@ export async function runWriteConfigHealth(
       ? { blockedModelIdentities: new Set(ctx.configResult.blockedCodexModelIdentities) }
       : {}),
   });
-  ctx.postConfigWriteRepairsCommitted = true;
   const { note } = await import("../../packages/terminal-core/src/note.js");
   if (result.changes.length > 0) {
     note(result.changes.join("\n"), "Doctor changes");
@@ -104,14 +90,6 @@ export async function runWriteConfigHealth(
   if (result.warnings.length > 0) {
     note(result.warnings.join("\n"), "Doctor warnings");
   }
-}
-
-/** Commits the finalized config-flow candidate before fallible health diagnostics start. */
-export async function runInitialConfigWriteHealth(ctx: DoctorHealthFlowContext): Promise<void> {
-  if (ctx.configResult.shouldWriteConfig !== true) {
-    return;
-  }
-  await runWriteConfigHealth(ctx, { runPostWriteRepairs: false });
 }
 
 export async function collectWriteConfigHealthFindings(

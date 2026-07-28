@@ -17,17 +17,17 @@ import {
   subscribeChatOutboxProjection,
   updateQueuedMessageForSession,
 } from "./chat-queue.ts";
-import { ChatStateController } from "./chat-state-controller.ts";
-import { handlePageGatewayEvent } from "./chat-state-events.ts";
-import type { ChatPageHost } from "./chat-state-host.ts";
-import { createPageState } from "./chat-state-page.ts";
-import { refreshChatMetadata } from "./chat-state-refresh.ts";
 import {
+  ChatStateController,
+  createPageState,
+  handlePageGatewayEvent,
+  refreshChatMetadata,
   resetChatStateForRouteSession,
   retryChatComposerMemoryFallback,
   resolveChatAvatarUrl,
   selectedChatSessionRow,
-} from "./chat-state-route.ts";
+  type ChatPageHost,
+} from "./chat-state.ts";
 import {
   admitStoredChatComposerQueueItem,
   ChatComposerPersistence,

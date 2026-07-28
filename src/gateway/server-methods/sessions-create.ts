@@ -307,7 +307,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
                 });
                 const selection = resolveSessionPatchModelSelection({
                   cfg,
-                  catalog: await context.loadGatewayModelCatalog({ agentId: target.agentId }),
+                  catalog: await context.loadGatewayModelCatalog(),
                   raw: requestedTitleModel,
                   defaultProvider: defaultModel.provider,
                   defaultModel: defaultModel.model,
@@ -376,11 +376,6 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       ADMIN_SCOPE,
       clientScopes,
     ).allowed;
-    const modelCatalogAgentId = normalizeAgentId(
-      sessionAgentId ??
-        parseAgentSessionKey(sessionKey ?? "")?.agentId ??
-        resolveDefaultAgentId(cfg),
-    );
     const created = await createGatewaySession({
       cfg,
       key: sessionKey,
@@ -415,8 +410,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       commandSource: "webchat",
       creation: resolveOperatorSessionCreation(client, { allowTrustedHint: true }),
       authorizedPluginId: normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId),
-      loadGatewayModelCatalog: () =>
-        context.loadGatewayModelCatalog({ agentId: modelCatalogAgentId }),
+      loadGatewayModelCatalog: context.loadGatewayModelCatalog,
       afterCreate: hasInitialTurn
         ? async ({ key, agentId, entry, storePath }) => {
             messageSeq =

@@ -11,7 +11,6 @@ import { titleForRoute } from "../../app-navigation.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { resolveControlUiAuthHeader } from "../../app/control-ui-auth.ts";
 import { hasOperatorAdminAccess, hasOperatorPairingAccess } from "../../app/operator-access.ts";
-import { loadSettings, patchSettings } from "../../app/settings.ts";
 import { renderSettingsWorkspace } from "../../components/settings-workspace.ts";
 import { t } from "../../i18n/index.ts";
 import { resolveChannelPairingAuthSignature } from "../../lib/channels/index.ts";
@@ -71,9 +70,6 @@ class ChannelsPage extends OpenClawLightDomElement {
 
   @state()
   private pairingNotice: string | null = null;
-
-  @state()
-  private showAdvancedSettings = false;
 
   private readonly wizardHost = new ChannelWizardHost({
     getContext: () => this.context,
@@ -153,16 +149,6 @@ class ChannelsPage extends OpenClawLightDomElement {
           }
           this.applyGatewaySnapshot(snapshot, false);
         });
-      },
-    )
-    // The advanced tier is one global display pref; theme republishes every
-    // appearance setting, so this keeps the channel forms in sync with the
-    // toggle on the config pages.
-    .watch(
-      () => this.context?.theme,
-      (theme, notify) => theme.subscribe(notify),
-      () => {
-        this.showAdvancedSettings = loadSettings().showAdvancedSettings === true;
       },
     );
 
@@ -272,13 +258,6 @@ class ChannelsPage extends OpenClawLightDomElement {
     this.subscriptions.clear();
     this.schemaLoadStarted = false;
     super.disconnectedCallback();
-  }
-
-  private setShowAdvancedSettings(enabled: boolean) {
-    patchSettings({ showAdvancedSettings: enabled });
-    // Republish so the config pages and this page read the same pref without a
-    // reload; patchSettings alone only writes storage and the server pref.
-    this.context.theme.refresh();
   }
 
   private async saveChannelConfig() {
@@ -683,7 +662,6 @@ class ChannelsPage extends OpenClawLightDomElement {
           configUiHints: config.configUiHints,
           configSaving: config.configSaving,
           configFormDirty: config.configFormDirty,
-          showAdvancedSettings: this.showAdvancedSettings,
           nostrProfileFormState: this.nostrProfileFormState,
           nostrProfileAccountId: this.nostrProfileAccountId,
           selectedChannel: this.selectedChannel,
@@ -718,7 +696,6 @@ class ChannelsPage extends OpenClawLightDomElement {
             void context.channels.waitWhatsApp(this.wizardHost.whatsappAccountId),
           onWhatsAppLogout: () =>
             void context.channels.logoutWhatsApp(this.wizardHost.whatsappAccountId),
-          onShowAdvancedSettings: (enabled) => this.setShowAdvancedSettings(enabled),
           onConfigPatch: (path, value) => context.runtimeConfig.patchForm(path, value),
           onConfigSave: () => void this.saveChannelConfig(),
           onConfigReload: () => void this.reloadChannelConfig(),
