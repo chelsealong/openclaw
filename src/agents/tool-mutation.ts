@@ -9,6 +9,7 @@ import {
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
 import { isLikelyMutatingToolName } from "./tool-mutation-names.js";
+import { AUTOMATIONS_TOOL_NAME } from "./tools/automations-tool-name.js";
 
 export { isLikelyMutatingToolName };
 
@@ -373,7 +374,7 @@ export function isMutatingToolCall(toolName: string, args: unknown): boolean {
     case "nodes":
       return action == null || !NODES_REPLAY_SAFE_ACTIONS.has(action);
     default: {
-      if (normalized === "cron" || normalized === "canvas") {
+      if (normalized === AUTOMATIONS_TOOL_NAME || normalized === "canvas") {
         return action == null || !READ_ONLY_ACTIONS.has(action);
       }
       if (normalized.endsWith("_actions")) {
@@ -424,7 +425,7 @@ export function isReplaySafeToolCall(toolName: string, args: unknown): boolean {
     case "nodes":
       return action != null && NODES_REPLAY_SAFE_ACTIONS.has(action);
     default: {
-      if (normalized === "cron" || normalized === "canvas") {
+      if (normalized === AUTOMATIONS_TOOL_NAME || normalized === "canvas") {
         return action != null && READ_ONLY_ACTIONS.has(action);
       }
       return false;

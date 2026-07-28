@@ -1,4 +1,5 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { AUTOMATIONS_TOOL_NAME } from "./tools/automations-tool-name.js";
 
 const MUTATING_TOOL_NAMES = new Set([
   "write",
@@ -11,7 +12,7 @@ const MUTATING_TOOL_NAMES = new Set([
   "sessions",
   "sessions_spawn",
   "sessions_send",
-  "cron",
+  AUTOMATIONS_TOOL_NAME,
   "gateway",
   "canvas",
   "computer",

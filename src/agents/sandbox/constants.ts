@@ -6,6 +6,7 @@
 import path from "node:path";
 import { CHANNEL_IDS } from "../../channels/ids.js";
 import { STATE_DIR } from "../../config/paths.js";
+import { AUTOMATIONS_TOOL_NAME } from "../tools/automations-tool-name.js";
 
 export const DEFAULT_SANDBOX_WORKSPACE_ROOT = path.join(STATE_DIR, "sandboxes");
 
@@ -44,7 +45,7 @@ export const DEFAULT_TOOL_DENY = [
   "computer",
   "mobile_ui",
   "nodes",
-  "cron",
+  AUTOMATIONS_TOOL_NAME,
   "gateway",
   ...CHANNEL_IDS,
 ] as const;
