@@ -33,19 +33,17 @@ function createRegisteredRemindTool(context: OpenClawPluginToolContext = {}): An
 }
 
 type CronAddToolPayload = {
-  job?: {
-    sessionTarget?: string;
-    payload?: {
-      kind?: string;
-      message?: string;
-      toolsAllow?: string[];
-    };
-    delivery?: {
-      mode?: string;
-      channel?: string;
-      to?: string;
-      accountId?: string;
-    };
+  sessionTarget?: string;
+  payload?: {
+    kind?: string;
+    message?: string;
+    toolsAllow?: string[];
+  };
+  delivery?: {
+    mode?: string;
+    channel?: string;
+    to?: string;
+    accountId?: string;
   };
 };
 
@@ -71,11 +69,15 @@ describe("bridge/tools/remind", () => {
     const addPayload = addCall?.[2] as CronAddToolPayload | undefined;
     expect(addCall?.[0]).toBe("cron.add");
     expect(addCall?.[1]).toEqual({ timeoutMs: 60_000 });
-    expect(addPayload?.job?.sessionTarget).toBe("isolated");
-    expect(addPayload?.job?.payload?.kind).toBe("agentTurn");
-    expect(addPayload?.job?.payload?.message).toContain("drink water");
-    expect(addPayload?.job?.payload?.toolsAllow).toEqual([]);
-    expect(addPayload?.job?.delivery).toEqual({
+    // cron.add's params schema is a closed object with job fields at root
+    // (see CronAddParamsSchema); nesting them under a "job" key throws
+    // "unexpected property 'job'" / "must have required property 'name'".
+    expect(addPayload).not.toHaveProperty("job");
+    expect(addPayload?.sessionTarget).toBe("isolated");
+    expect(addPayload?.payload?.kind).toBe("agentTurn");
+    expect(addPayload?.payload?.message).toContain("drink water");
+    expect(addPayload?.payload?.toolsAllow).toEqual([]);
+    expect(addPayload?.delivery).toEqual({
       mode: "announce",
       channel: "qqbot",
       to: "qqbot:c2c:user-openid",
