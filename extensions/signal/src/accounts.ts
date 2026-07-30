@@ -16,6 +16,7 @@ import {
   DEFAULT_SIGNAL_MANAGED_NATIVE_PORT,
   isSignalManagedNativeConnectionUrlForBind,
   resolveLocalSignalTransportPort,
+  resolveManagedNativeConfiguredPort,
 } from "./transport-policy.js";
 import { buildSignalTransportHttpUrl } from "./transport-url.js";
 
@@ -189,7 +190,11 @@ function resolveSignalManagedNativePort(params: {
   }
 
   for (const accountId of implicitManagedAccountIds) {
-    const port = allocateSignalManagedNativePort({ reservedPorts });
+    const accountConfig = resolveSignalAccountConfig(params.cfg, accountId);
+    // A loopback url without httpPort names its own preferred bind port; try it before
+    // falling back to sequential allocation, without treating it as an enforced collision.
+    const preferredPort = resolveManagedNativeConfiguredPort(accountConfig.transport);
+    const port = allocateSignalManagedNativePort({ reservedPorts, preferredPort });
     reservedPorts.add(port);
     if (normalizeAccountId(accountId) === params.accountId) {
       return port;

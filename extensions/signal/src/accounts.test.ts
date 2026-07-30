@@ -37,6 +37,20 @@ describe("resolveSignalAccount", () => {
       expected: { baseUrl: "http://[::1]:8181", httpHost: "::1", httpPort: 8181 },
     },
     {
+      name: "derives the daemon bind port from a loopback url on a non-default port",
+      transport: { kind: "managed-native", url: "http://127.0.0.1:8082" },
+      expected: { baseUrl: "http://127.0.0.1:8082", httpPort: 8082 },
+    },
+    {
+      name: "derives the daemon bind port from a non-loopback httpHost url",
+      transport: {
+        kind: "managed-native",
+        httpHost: "192.168.1.2",
+        url: "http://192.168.1.2:8082",
+      },
+      expected: { baseUrl: "http://192.168.1.2:8082", httpPort: 8082 },
+    },
+    {
       name: "does not reserve a managed transport's own implicit connection endpoint",
       transport: {
         kind: "managed-native",

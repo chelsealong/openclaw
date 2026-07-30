@@ -79,10 +79,15 @@ export function isSignalManagedNativeConnectionUrlForBind(
   if (connectionUrl.protocol !== "http:") {
     return false;
   }
-  const connectionPort = connectionUrl.port ? Number.parseInt(connectionUrl.port, 10) : 80;
-  const bindPort = transport.httpPort ?? DEFAULT_SIGNAL_MANAGED_NATIVE_PORT;
-  if (connectionPort !== bindPort) {
-    return false;
+  // With no explicit httpPort, there is no configured bind port to compare against yet — a
+  // loopback URL is the only stated endpoint, so it names the intended bind by definition.
+  // Comparing against the hardcoded default here would misclassify a URL on a non-default
+  // port as an unrelated independent endpoint instead of the daemon's own bind target.
+  if (transport.httpPort !== undefined) {
+    const connectionPort = connectionUrl.port ? Number.parseInt(connectionUrl.port, 10) : 80;
+    if (connectionPort !== transport.httpPort) {
+      return false;
+    }
   }
   const connectionHost = normalizeSignalEndpointHost(connectionUrl.hostname);
   const bindHost = normalizeSignalEndpointHost(
@@ -104,6 +109,29 @@ export function isSignalManagedNativeConnectionUrlForBind(
     (bindHost === "localhost" && SIGNAL_LOOPBACK_HOST_ALIASES.has(connectionHost)) ||
     (connectionHost === "localhost" && SIGNAL_LOOPBACK_HOST_ALIASES.has(bindHost))
   );
+}
+
+// Returns the port a managed-native transport already names, without allocating a new one:
+// its explicit httpPort, or the port implied by a loopback url when httpPort is absent.
+// Undefined means the transport states no port preference at all.
+export function resolveManagedNativeConfiguredPort(
+  transport: SignalTransportConfig | undefined,
+): number | undefined {
+  if (transport?.kind !== "managed-native") {
+    return undefined;
+  }
+  if (transport.httpPort !== undefined) {
+    return transport.httpPort;
+  }
+  if (!transport.url || !isSignalManagedNativeConnectionUrlForBind(transport)) {
+    return undefined;
+  }
+  // isSignalManagedNativeConnectionUrlForBind already confirmed the host matches the bind
+  // host (loopback or not, e.g. a LAN httpHost); parse the port directly instead of
+  // resolveLocalSignalTransportPort, which rejects non-loopback hosts and would silently
+  // drop a valid non-default bind port here.
+  const connectionUrl = new URL(transport.url);
+  return connectionUrl.port ? Number.parseInt(connectionUrl.port, 10) : 80;
 }
 
 export function assignSignalManagedNativePort(
