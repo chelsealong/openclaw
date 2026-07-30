@@ -112,6 +112,11 @@ const MEMORY_INDEX_MANAGER_GLOBAL_LIFECYCLE_KEY = Symbol.for(
   "openclaw.memoryIndexManagerGlobalLifecycle.v3",
 );
 const EMBEDDING_PROBE_CACHE_TTL_MS = 30_000;
+// While a runtime fallback embedding provider is serving searches, periodically
+// retry the configured primary so a recovered provider is re-adopted without a
+// full process restart (#96534). Bounded interval avoids re-attempting a still-
+// down primary on every search call.
+const MEMORY_FALLBACK_PRIMARY_RETRY_INTERVAL_MS = 5 * 60_000;
 const KEYWORD_FALLBACK_SEARCH_TERM_LIMIT = 6;
 const EXACT_PATH_CANDIDATE_LIMIT = 200;
 const log = createSubsystemLogger("memory");
@@ -428,6 +433,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private readonly requestedProvider: EmbeddingProviderRequest;
   private providerInitPromise: Promise<void> | null = null;
   private providerInitialized = false;
+  private fallbackPrimaryRetryAtMs?: number;
   private embeddingBootstrapFailure?: MemoryEmbeddingBootstrapDebug;
   private providerRetirementPromise: Promise<void> = Promise.resolve();
   private providersPendingRetirement = new Set<EmbeddingProvider>();
@@ -914,6 +920,105 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     this.providerLifecycle = createPendingMemoryProviderLifecycle(this.requestedProvider);
   }
 
+  /**
+   * While a runtime fallback provider is serving searches, probe the configured
+   * primary on a cooldown and adopt it once it succeeds without falling back
+   * itself. The probe never disturbs the currently active (working) fallback
+   * client unless the primary is both reachable and matches the on-disk index
+   * identity, so a still-down (or identity-incompatible) primary leaves search
+   * behavior unchanged (#96534).
+   */
+  private async retryFallbackPrimaryProvider(): Promise<void> {
+    // A concurrent search can reach this same branch while another one's
+    // attempt is still in flight (this.provider is briefly null mid-swap).
+    // Await the existing attempt instead of racing ahead to the provider
+    // assertion that follows this call (#96534).
+    const pending = this.fallbackProviderInitPromise;
+    if (pending) {
+      await pending.catch(() => undefined);
+      return;
+    }
+    const now = Date.now();
+    if (this.fallbackPrimaryRetryAtMs === undefined) {
+      // Just observed a runtime fallback; wait a full interval before the
+      // first retry probe instead of immediately re-testing the primary.
+      this.fallbackPrimaryRetryAtMs = now + MEMORY_FALLBACK_PRIMARY_RETRY_INTERVAL_MS;
+      return;
+    }
+    if (now < this.fallbackPrimaryRetryAtMs) {
+      return;
+    }
+    this.fallbackPrimaryRetryAtMs = now + MEMORY_FALLBACK_PRIMARY_RETRY_INTERVAL_MS;
+    // Publish the in-flight attempt through the same slot `activateFallbackProvider`
+    // uses so `ensureProviderInitialized()` makes a concurrent required-provider
+    // search await this swap instead of observing the brief this.provider=null
+    // window inside `retireCurrentProvider()` as a hard failure (#96534).
+    const attempt = this.retryFallbackPrimaryProviderOnce();
+    this.fallbackProviderInitPromise = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.fallbackProviderInitPromise === attempt) {
+        this.fallbackProviderInitPromise = null;
+      }
+    }
+  }
+
+  private async retryFallbackPrimaryProviderOnce(): Promise<boolean> {
+    let probeResult: EmbeddingProviderResult;
+    try {
+      probeResult = await createEmbeddingProvider({
+        config: this.cfg,
+        agentDir: resolveAgentDir(this.cfg, this.agentId),
+        ...(this.acquireLocalService ? { acquireLocalService: this.acquireLocalService } : {}),
+        ...resolveMemoryPrimaryProviderRequest({ settings: this.settings }),
+        // Probe the primary in isolation: falling back here on failure would
+        // construct (and immediately discard) a second live fallback instance
+        // every cooldown tick -- forking a whole worker process for the local
+        // adapter -- for no benefit, since a working fallback is already running.
+        fallback: "none",
+      });
+    } catch (err) {
+      log.warn(`memory embeddings: primary retry probe failed: ${formatErrorMessage(err)}`);
+      return false;
+    }
+    if (!probeResult.provider) {
+      // Still not able to run the primary standalone; keep the existing fallback.
+      return false;
+    }
+    // Deliberately a narrower check than the full alias-aware identity model
+    // (resolveCurrentIndexIdentityState/computeProviderKey): comparing raw
+    // model/provider id, without cacheKeyData or aliases, cannot be evaluated
+    // without installing the candidate as this.provider first, and doing that
+    // before this on-disk check would reopen the same swap-before-verify risk
+    // this check exists to avoid. A model/provider match here is a reasonable
+    // proxy for "was this index built by (a plain instance of) this primary";
+    // an accepted false-negative (an aliased primary variant, e.g. a `local`
+    // model canonicalized under a different path) just keeps serving the
+    // fallback rather than recover, which the next cooldown tick retries.
+    const meta = this.readMeta();
+    if (
+      meta &&
+      (meta.model !== probeResult.provider.model || meta.provider !== probeResult.provider.id)
+    ) {
+      // The on-disk index is currently built around the fallback identity (a
+      // sync/repair may have rebuilt it while the primary was down). Adopting
+      // the primary now would immediately look mismatched and drop results;
+      // keep serving the working fallback until a reindex reconciles this.
+      await Promise.resolve(probeResult.provider.close?.()).catch(() => undefined);
+      return false;
+    }
+    await this.retireCurrentProvider();
+    this.applyProviderResult(probeResult);
+    this.providerKey = this.computeProviderKey();
+    this.batch = this.resolveBatchConfig();
+    this.fallbackPrimaryRetryAtMs = undefined;
+    log.info("memory embeddings: recovered configured primary provider after fallback", {
+      providerId: probeResult.provider.id,
+    });
+    return true;
+  }
+
   protected markLocalEmbeddingProviderDegraded(err: unknown): void {
     if (this.provider?.id !== "local") {
       return;
@@ -1218,6 +1323,19 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         // makes a valid existing index look mismatched and drops keyword results.
         this.resetProviderInitializationForRetry();
         await this.ensureProviderInitialized();
+      }
+      if (
+        !embeddingBootstrapKeywordOnly &&
+        preflight.shouldInitializeProvider &&
+        this.provider &&
+        this.providerLifecycle.mode === "fallback-active"
+      ) {
+        await this.retryFallbackPrimaryProvider().catch((err: unknown) => {
+          log.warn(`memory search: fallback primary retry failed: ${formatErrorMessage(err)}`);
+        });
+        this.refreshIndexIdentityDirty({
+          providerKeyKnown: this.providerInitialized,
+        });
       }
       this.assertRequiredProviderAvailable("search");
       if (

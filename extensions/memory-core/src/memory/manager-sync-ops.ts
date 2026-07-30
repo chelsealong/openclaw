@@ -72,7 +72,7 @@ export type MemorySemanticProviderGeneration = Extract<
 const log = createSubsystemLogger("memory");
 
 export abstract class MemoryManagerSyncOps extends MemoryManagerSourceSyncOps {
-  private fallbackProviderInitPromise: Promise<boolean> | null = null;
+  protected fallbackProviderInitPromise: Promise<boolean> | null = null;
   protected syncProviderGeneration: MemorySyncProviderGeneration | null = null;
 
   protected beginSyncProviderGeneration(_options?: { forceFtsOnly?: boolean }): void {}

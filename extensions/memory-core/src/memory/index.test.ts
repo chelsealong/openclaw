@@ -3420,6 +3420,137 @@ describe("memory index", () => {
     expect(fields.provider?.id).toBe("mock");
   });
 
+  it("re-adopts the configured primary once reachable after a runtime fallback stayed active (#96534)", async () => {
+    const cfg = createCfg({
+      provider: "openai",
+      fallback: "fallback-provider",
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+    const fields = manager as unknown as {
+      provider: { id: string; embedQuery: (text: string) => Promise<number[]> } | null;
+      providerLifecycle: { mode: string };
+      fallbackPrimaryRetryAtMs?: number;
+    };
+    if (!fields.provider) {
+      throw new Error("Expected a test embedding provider");
+    }
+    fields.provider.embedQuery = async () => {
+      throw new Error("embedding provider failed");
+    };
+
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+    expect(fields.provider?.id).toBe("fallback-provider");
+    expect(fields.providerLifecycle.mode).toBe("fallback-active");
+
+    // Without a periodic retry the manager stays latched on the fallback
+    // forever, even once the primary recovers (the reported bug). Force the
+    // retry cooldown to be due so the next search re-probes the primary.
+    const callsBeforeRecovery = providerCalls.length;
+    fields.fallbackPrimaryRetryAtMs = 0;
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+
+    expect(fields.provider?.id).toBe("mock");
+    expect(fields.providerLifecycle.mode).toBe("active");
+    expect(providerCalls.slice(callsBeforeRecovery).map((call) => call.provider)).toEqual([
+      "openai",
+    ]);
+
+    // A second search within the cooldown window must not re-probe again.
+    const callsAfterRecovery = providerCalls.length;
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+    expect(providerCalls.slice(callsAfterRecovery)).toHaveLength(0);
+  });
+
+  it("keeps serving the working fallback when a primary retry probe still fails (#96534)", async () => {
+    const cfg = createCfg({
+      provider: "openai",
+      fallback: "fallback-provider",
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+    const fields = manager as unknown as {
+      provider: { id: string; embedQuery: (text: string) => Promise<number[]> } | null;
+      providerLifecycle: { mode: string };
+      fallbackPrimaryRetryAtMs?: number;
+    };
+    if (!fields.provider) {
+      throw new Error("Expected a test embedding provider");
+    }
+    fields.provider.embedQuery = async () => {
+      throw new Error("embedding provider failed");
+    };
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+    expect(fields.provider?.id).toBe("fallback-provider");
+
+    providerCreationFailure = "openai";
+    fields.fallbackPrimaryRetryAtMs = 0;
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+
+    expect(fields.provider?.id).toBe("fallback-provider");
+    expect(fields.providerLifecycle.mode).toBe("fallback-active");
+    providerCreationFailure = null;
+  });
+
+  it("blocks a concurrent required-provider search instead of racing during primary-retry swap (#96534)", async () => {
+    const cfg = createCfg({
+      provider: "openai",
+      fallback: "fallback-provider",
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+    const fields = manager as unknown as {
+      provider: { id: string; embedQuery: (text: string) => Promise<number[]> } | null;
+      fallbackPrimaryRetryAtMs?: number;
+    };
+    if (!fields.provider) {
+      throw new Error("Expected a test embedding provider");
+    }
+    fields.provider.embedQuery = async () => {
+      throw new Error("embedding provider failed");
+    };
+    await expect(manager.search("alpha")).resolves.toBeDefined();
+    expect(fields.provider?.id).toBe("fallback-provider");
+
+    let releaseProviderClose: () => void = () => {};
+    providerCloseGate = new Promise<void>((resolve) => {
+      releaseProviderClose = resolve;
+    });
+    fields.fallbackPrimaryRetryAtMs = 0;
+
+    const retrySearch = manager.search("alpha");
+    let concurrentSearch: ReturnType<typeof manager.search> = Promise.resolve([]);
+    try {
+      await vi.waitFor(() => expect(providerCloseCalls).toBeGreaterThan(0));
+      // At this point retireCurrentProvider has nulled this.provider and is
+      // blocked closing the old fallback provider. A concurrent, independent
+      // required-provider search must wait for this in-flight swap instead of
+      // observing the transient null as "embedding provider unavailable".
+      concurrentSearch = manager.search("zebra");
+      let concurrentSettled = false;
+      void concurrentSearch.then(
+        () => {
+          concurrentSettled = true;
+        },
+        () => {
+          concurrentSettled = true;
+        },
+      );
+      await Promise.resolve();
+      expect(concurrentSettled).toBe(false);
+    } finally {
+      releaseProviderClose();
+      providerCloseGate = null;
+      await Promise.allSettled([retrySearch, concurrentSearch]);
+    }
+    await expect(retrySearch).resolves.toBeDefined();
+    await expect(concurrentSearch).resolves.toBeDefined();
+    expect(fields.provider?.id).toBe("mock");
+  });
+
   it("fails closed and retries a required primary after a null fallback result", async () => {
     const cfg = createCfg({
       provider: "openai",
