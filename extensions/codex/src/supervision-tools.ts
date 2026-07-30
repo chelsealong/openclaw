@@ -10,6 +10,7 @@ import { jsonResult, readStringParam, type AnyAgentTool } from "openclaw/plugin-
  * handlers before it starts or resumes the harness-owned Codex thread.
  */
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
+import { redactSensitiveFieldValue } from "openclaw/plugin-sdk/logging-core";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { Type } from "typebox";
 import {
@@ -797,19 +798,15 @@ async function resolveInProgressTurnId(params: {
   }
 }
 
-function redactString(value: string): string {
-  return value
-    .replace(/\b(?:sk|glpat|xox[baprs])-[-_a-zA-Z0-9]{12,}\b/g, "[redacted]")
-    .replace(/\b(?:ghp|gho|ghu|ghs)_[-_a-zA-Z0-9]{12,}\b/g, "[redacted]")
-    .replace(/\bBearer\s+[-._~+/a-zA-Z0-9]+=*/g, "Bearer [redacted]");
-}
-
-/** Redacts secret-bearing fields before legacy tool results leave the plugin. */
+/**
+ * Redacts secret-bearing fields before legacy tool results leave the plugin.
+ * Delegates to the core credential-redaction policy (shared with logging) so
+ * this stays in sync with the full credential class list instead of a
+ * narrower local copy.
+ */
 function redactCodexSupervisionValue(value: unknown, key = ""): unknown {
   if (typeof value === "string") {
-    return /authorization|password|secret|token|api[-_]?key/i.test(key)
-      ? "[redacted]"
-      : redactString(value);
+    return redactSensitiveFieldValue(key, value);
   }
   if (Array.isArray(value)) {
     return value.map((entry) => redactCodexSupervisionValue(entry));

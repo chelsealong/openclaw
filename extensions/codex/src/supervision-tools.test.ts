@@ -1033,4 +1033,25 @@ describe("Codex supervision compatibility tools", () => {
       }),
     ).resolves.toMatchObject({ details: { summary: "codex steer: turn-1" } });
   });
+
+  it("redacts credential classes beyond the legacy 4-prefix set in ordinary fields", async () => {
+    const googleApiKey = "AIzaSyDaBcDeFgHiJkLmNoPqRsTuVwXyZ0123456";
+    const finegrainedPat = "github_pat_11ABCDEFGH0abcdefghijklmnopqrstuvwxyz1234567890ABCDEF";
+    const { request } = createRequest({
+      id: "thread-1",
+      status: { type: "idle" },
+      description: `support contact key ${googleApiKey}`,
+      notes: finegrainedPat,
+    });
+    const tools = createTools(request);
+
+    const result = await toolByName(tools, "codex_session_read").execute("read", {
+      endpoint_id: "local",
+      thread_id: "thread-1",
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(googleApiKey);
+    expect(serialized).not.toContain(finegrainedPat);
+  });
 });
