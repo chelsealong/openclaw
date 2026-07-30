@@ -162,7 +162,7 @@ describe("resolveSkillWorkshopToolApproval", () => {
     expect(lines[3]).toBe("Support files: 0");
   });
 
-  it("falls back to the action description when the proposal cannot be resolved", async () => {
+  it("falls back to a distinguishable description when the proposal cannot be resolved", async () => {
     const workspaceDir = await tempDirs.make("openclaw-skill-workshop-policy-missing-");
 
     const result = await resolveSkillWorkshopToolApproval({
@@ -172,9 +172,11 @@ describe("resolveSkillWorkshopToolApproval", () => {
       config: pendingApprovalConfig,
     });
 
-    expect(result?.requireApproval?.description).toBe(
+    expect(result?.requireApproval?.description).toContain(
       "Apply a pending workspace skill proposal into live workspace skills.",
     );
+    expect(result?.requireApproval?.description).toContain("details unavailable");
+    expect(result?.requireApproval?.description).toContain("id: missing-20260705-0000000000");
     expect(result?.requireApproval?.timeoutMs).toBe(70_000);
 
     const withoutWorkspace = await resolveSkillWorkshopToolApproval({
@@ -182,9 +184,13 @@ describe("resolveSkillWorkshopToolApproval", () => {
       toolParams: { action: "apply", proposal_id: "any-proposal" },
       config: pendingApprovalConfig,
     });
-    expect(withoutWorkspace?.requireApproval?.description).toBe(
+    expect(withoutWorkspace?.requireApproval?.description).toContain(
       "Apply a pending workspace skill proposal into live workspace skills.",
     );
+    expect(withoutWorkspace?.requireApproval?.description).toContain(
+      "no workspace context for this tool call",
+    );
+    expect(withoutWorkspace?.requireApproval?.description).toContain("id: any-proposal");
   });
 
   it("allows lifecycle actions without approval by default", async () => {

@@ -4,14 +4,20 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH } from "../../infra/plugin-approvals.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { PluginHookBeforeToolCallResult } from "../../plugins/hook-before-tool-call-result.js";
 import { resolveSkillWorkshopConfig } from "./config.js";
 import { resolvePendingSkillProposal } from "./service.js";
+
+const log = createSubsystemLogger("skills/workshop");
 
 const SKILL_WORKSHOP_LIFECYCLE_ACTIONS = new Set(["apply", "reject", "quarantine"]);
 // Codex dynamic tools have a 90s watchdog. Approval RPCs reserve another 10s
 // for Gateway cleanup, leaving 10s for proposal lookup and tool-call overhead.
 const SKILL_WORKSHOP_APPROVAL_TIMEOUT_MS = 70_000;
+// Bounds the raw error text folded into a fallback approval description so a
+// verbose resolver error cannot blow past PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH.
+const APPROVAL_FALLBACK_REASON_MAX_LENGTH = 200;
 
 type SkillWorkshopLifecycleAction = "apply" | "reject" | "quarantine";
 
@@ -98,6 +104,16 @@ function buildLifecycleApprovalDescription(params: {
   return [fixedLines[0], `${skillPrefix}${skillName}`, ...fixedLines.slice(1)].join("\n");
 }
 
+function describeUnresolvedProposal(params: {
+  fallback: string;
+  proposalId?: string;
+  reason: string;
+}): string {
+  const boundedReason = truncateUtf16Safe(params.reason, APPROVAL_FALLBACK_REASON_MAX_LENGTH);
+  const idSuffix = params.proposalId ? ` id: ${params.proposalId};` : "";
+  return `${params.fallback} (details unavailable —${idSuffix} reason: ${boundedReason})`;
+}
+
 async function resolveLifecycleApprovalDescription(params: {
   toolParams: unknown;
   workspaceDir?: string;
@@ -106,13 +122,23 @@ async function resolveLifecycleApprovalDescription(params: {
   description: string;
   proposalId?: string;
 }> {
-  if (!params.workspaceDir) {
-    return { description: params.fallback };
-  }
   const toolParams = asNullableRecord(params.toolParams);
+  const requestedProposalId = readOptionalString(toolParams, "proposal_id");
+  if (!params.workspaceDir) {
+    log.debug("skill workshop approval description has no workspaceDir in tool-call context", {
+      proposalId: requestedProposalId,
+    });
+    return {
+      description: describeUnresolvedProposal({
+        fallback: params.fallback,
+        proposalId: requestedProposalId,
+        reason: "no workspace context for this tool call",
+      }),
+    };
+  }
   try {
     const proposal = await resolvePendingSkillProposal({
-      proposalId: readOptionalString(toolParams, "proposal_id"),
+      proposalId: requestedProposalId,
       name: readOptionalString(toolParams, "name"),
       workspaceDir: params.workspaceDir,
     });
@@ -127,8 +153,18 @@ async function resolveLifecycleApprovalDescription(params: {
       }),
       proposalId: record.id,
     };
-  } catch {
-    return { description: params.fallback };
+  } catch (error) {
+    log.warn("failed to resolve skill workshop proposal for approval description", {
+      proposalId: requestedProposalId,
+      error: String(error),
+    });
+    return {
+      description: describeUnresolvedProposal({
+        fallback: params.fallback,
+        proposalId: requestedProposalId,
+        reason: String(error),
+      }),
+    };
   }
 }
 

@@ -577,9 +577,10 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
     const approvalCall = requireApprovalRequestCall("skill_workshop approval request");
     expect(approvalCall.request.pluginId).toBeUndefined();
     expect(approvalCall.request.title).toBe("Apply workspace skill proposal");
-    expect(approvalCall.request.description).toBe(
+    expect(approvalCall.request.description).toContain(
       "Apply a pending workspace skill proposal into live workspace skills.",
     );
+    expect(approvalCall.request.description).toContain("id: weather-20260530-a1b2c3d4e5");
     expect(approvalCall.request.severity).toBe("warning");
     expect(approvalCall.request.allowedDecisions).toEqual(["allow-once", "deny"]);
     expect(approvalCall.request.timeoutMs).toBe(70_000);
