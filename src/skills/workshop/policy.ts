@@ -18,6 +18,10 @@ const SKILL_WORKSHOP_APPROVAL_TIMEOUT_MS = 70_000;
 // Bounds the raw error text folded into a fallback approval description so a
 // verbose resolver error cannot blow past PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH.
 const APPROVAL_FALLBACK_REASON_MAX_LENGTH = 200;
+// proposal_id has no schema maxLength (it is agent-controlled tool-call input),
+// so it is capped independently — well past any real proposal id — instead of
+// letting it consume the whole description budget and crowd out the reason.
+const APPROVAL_FALLBACK_PROPOSAL_ID_MAX_LENGTH = 100;
 
 type SkillWorkshopLifecycleAction = "apply" | "reject" | "quarantine";
 
@@ -109,9 +113,25 @@ function describeUnresolvedProposal(params: {
   proposalId?: string;
   reason: string;
 }): string {
-  const boundedReason = truncateUtf16Safe(params.reason, APPROVAL_FALLBACK_REASON_MAX_LENGTH);
-  const idSuffix = params.proposalId ? ` id: ${params.proposalId};` : "";
-  return `${params.fallback} (details unavailable —${idSuffix} reason: ${boundedReason})`;
+  // proposalId and reason both trace back to agent-controlled tool-call input
+  // (proposal_id has no schema maxLength; reason can be a thrown error's
+  // message). Fold them through the same spoof/control-char guard as the
+  // resolved-proposal path, then hard-cap the assembled string so an
+  // oversized value can never push the description past
+  // PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH — exceeding that limit makes
+  // buildPluginApprovalPresentation() return null and the whole approval
+  // record read back as corrupt, which is worse than the plain fallback text.
+  const boundedReason = formatApprovalField(
+    truncateUtf16Safe(params.reason, APPROVAL_FALLBACK_REASON_MAX_LENGTH),
+  );
+  const boundedProposalId = params.proposalId
+    ? formatApprovalField(
+        truncateUtf16Safe(params.proposalId, APPROVAL_FALLBACK_PROPOSAL_ID_MAX_LENGTH),
+      )
+    : undefined;
+  const idSuffix = boundedProposalId ? ` id: ${boundedProposalId};` : "";
+  const description = `${params.fallback} (details unavailable —${idSuffix} reason: ${boundedReason})`;
+  return truncateUtf16Safe(description, PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH);
 }
 
 async function resolveLifecycleApprovalDescription(params: {

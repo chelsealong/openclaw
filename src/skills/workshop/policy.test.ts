@@ -193,6 +193,26 @@ describe("resolveSkillWorkshopToolApproval", () => {
     expect(withoutWorkspace?.requireApproval?.description).toContain("id: any-proposal");
   });
 
+  it("bounds the fallback description even when proposal_id is unreasonably long", async () => {
+    // proposal_id has no schema maxLength, so an oversized or hallucinated value
+    // must never push the fallback description past the wire-size limit that
+    // buildPluginApprovalPresentation() enforces, or the whole approval record
+    // reads back as corrupt instead of showing a degraded-but-valid card.
+    const oversizedProposalId = "p".repeat(PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH * 2);
+
+    const result = await resolveSkillWorkshopToolApproval({
+      toolName: "skill_workshop",
+      toolParams: { action: "apply", proposal_id: oversizedProposalId },
+      config: pendingApprovalConfig,
+    });
+
+    const description = result?.requireApproval?.description ?? "";
+    expect(description.length).toBeLessThanOrEqual(PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH);
+    // The reason must survive truncation — an oversized id must not crowd it out.
+    expect(description).toContain("no workspace context for this tool call");
+    expect(description).not.toContain(oversizedProposalId);
+  });
+
   it("allows lifecycle actions without approval by default", async () => {
     await expect(
       resolveSkillWorkshopToolApproval({
