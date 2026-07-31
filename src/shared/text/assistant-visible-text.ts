@@ -1046,7 +1046,9 @@ function applyAssistantVisibleTextStagePipeline(
       cleaned = stripAssistantInternalTraceLines(cleaned);
     }
     cleaned = stripLegacyBracketToolCallBlocks(cleaned);
-    cleaned = stripPlainTextToolCallBlocks(cleaned);
+    cleaned = stripPlainTextToolCallBlocks(cleaned, {
+      isProtected: (offset) => isInsideCode(offset, findCodeRegions(cleaned)),
+    });
     if (!options.preserveDowngradedToolText) {
       cleaned = stripDowngradedToolCallText(cleaned);
     }

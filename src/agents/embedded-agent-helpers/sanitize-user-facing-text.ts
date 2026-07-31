@@ -23,6 +23,7 @@ import {
   stripMinimaxToolCallXml,
   stripToolCallXmlTags,
 } from "../../shared/text/assistant-visible-text.js";
+import { findCodeRegions, isInsideCode } from "../../shared/text/code-regions.js";
 import { stripFinalTags } from "../../shared/text/final-tags.js";
 import { formatExecDeniedUserMessage } from "../exec-approval-result.js";
 import { stripInternalRuntimeContext } from "../internal-runtime-context.js";
@@ -451,9 +452,10 @@ export function sanitizeUserFacingText(text: unknown, opts?: { errorContext?: bo
   const withoutInternalTraceLines = errorContext
     ? stripAssistantInternalTraceLines(withoutPlaceholder)
     : withoutPlaceholder;
-  const withoutToolCallBlocks = stripPlainTextToolCallBlocks(
-    stripLegacyBracketToolCallBlocks(withoutInternalTraceLines),
-  );
+  const withoutLegacyBracketBlocks = stripLegacyBracketToolCallBlocks(withoutInternalTraceLines);
+  const withoutToolCallBlocks = stripPlainTextToolCallBlocks(withoutLegacyBracketBlocks, {
+    isProtected: (offset) => isInsideCode(offset, findCodeRegions(withoutLegacyBracketBlocks)),
+  });
   const trimmed = withoutToolCallBlocks.trim();
   if (!trimmed) {
     return "";

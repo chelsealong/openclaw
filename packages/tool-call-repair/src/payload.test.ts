@@ -187,4 +187,27 @@ describe("stripPlainTextToolCallBlocks", () => {
     expect(stripPlainTextToolCallBlocks(tracked.text)).toBe(raw);
     expect(tracked.indexedReads).toBeLessThan(raw.length * 16);
   });
+
+  it("skips a block whose start offset is reported as protected", () => {
+    const raw = '[read]\n{"path":"a.txt"}\n[/read]';
+
+    expect(stripPlainTextToolCallBlocks(raw, { isProtected: () => true })).toBe(raw);
+  });
+
+  it("still strips a real standalone block when isProtected returns false", () => {
+    const raw = '[read]\n{"path":"a.txt"}\n[/read]';
+
+    expect(stripPlainTextToolCallBlocks(raw, { isProtected: () => false })).toBe("");
+  });
+
+  it("only skips blocks that start inside a protected offset range", () => {
+    const protectedBlock = '[read]\n{"path":"a.txt"}\n[/read]';
+    const strippedBlock = '[write]\n{"path":"b.txt"}\n[/write]';
+    const raw = `${protectedBlock}\n${strippedBlock}`;
+    const protectedEnd = protectedBlock.length;
+
+    expect(
+      stripPlainTextToolCallBlocks(raw, { isProtected: (offset) => offset < protectedEnd }),
+    ).toBe(`${protectedBlock}\n`);
+  });
 });

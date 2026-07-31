@@ -681,7 +681,12 @@ export function parseStandalonePlainTextToolCallBlocks(
 }
 
 /** Removes full-line standalone plain-text tool-call blocks from user-visible text. */
-export function stripPlainTextToolCallBlocks(text: string): string {
+export function stripPlainTextToolCallBlocks(
+  text: string,
+  // isProtected guards Markdown code regions so documentation examples of the
+  // plain-text tool-call syntax survive instead of being scrubbed as leaked calls.
+  options?: { isProtected?: (offset: number) => boolean },
+): string {
   if (
     !text ||
     (!/\[(?:tool:)?[A-Za-z0-9_-]+\]/.test(text) &&
@@ -702,6 +707,10 @@ export function stripPlainTextToolCallBlocks(text: string): string {
       continue;
     }
     const blockStart = skipLineIndentation(text, index);
+    if (options?.isProtected?.(blockStart)) {
+      index += 1;
+      continue;
+    }
     const scan = scanPlainTextToolCall(text, blockStart);
     if (scan.kind === "prefix" && scan.completeEnd === undefined) {
       return result + text.slice(cursor);
@@ -719,6 +728,9 @@ export function stripPlainTextToolCallBlocks(text: string): string {
     result += text.slice(cursor, index);
     while (true) {
       const adjacentStart = skipLineIndentation(text, blockEnd);
+      if (options?.isProtected?.(adjacentStart)) {
+        break;
+      }
       const adjacent = scanPlainTextToolCall(text, adjacentStart);
       const adjacentEnd =
         adjacent.kind === "complete"

@@ -938,6 +938,26 @@ describe("sanitizeAssistantVisibleText", () => {
     expect(sanitizeAssistantVisibleText(input)).toBe(input);
   });
 
+  it("preserves plain-text tool-call syntax documented inside fenced code", () => {
+    const input = [
+      "The fallback syntax is:",
+      "```text",
+      "[read]",
+      '{"path":"a.txt"}',
+      "[/read]",
+      "```",
+      "Use it when tools are off.",
+    ].join("\n");
+
+    expect(sanitizeAssistantVisibleText(input)).toBe(input);
+  });
+
+  it("still strips a real standalone plain-text tool call outside code", () => {
+    const input = ["[read]", '{"path":"a.txt"}', "[/read]"].join("\n");
+
+    expect(sanitizeAssistantVisibleText(input)).toBe("");
+  });
+
   it("preserves ordinary analysis headings", () => {
     const input = ["Analysis:", "This is user-visible reasoning about the result."].join("\n");
 
