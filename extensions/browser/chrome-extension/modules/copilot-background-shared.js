@@ -48,13 +48,21 @@ export async function resolveSidePanelTabId(chromeApi, port, panelBindings) {
   return tabId;
 }
 
+// Archiving never clears a session's label, so a shared literal collides
+// with any earlier tab-copilot session the gateway still has on file. The
+// sessionKey suffix comes from crypto.randomUUID() and is never reused
+// (unlike a Chrome tab id, which a browser restart can hand to a new tab).
+export function copilotSessionLabel(sessionKey) {
+  return `Browser copilot (${sessionKey.slice(-8)})`;
+}
+
 export async function archiveCopilotSession(gateway, entry) {
   if (entry.ensureCreated) {
     // The worker may have stopped after persisting creation intent but before
     // sending it. sessions.create adopts the same key, making cleanup idempotent.
     await gateway.request("sessions.create", {
       key: entry.sessionKey,
-      label: "Browser copilot",
+      label: copilotSessionLabel(entry.sessionKey),
     });
   }
   try {

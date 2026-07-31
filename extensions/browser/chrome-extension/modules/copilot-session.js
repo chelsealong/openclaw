@@ -1,4 +1,4 @@
-import { resolveBindingTarget } from "./copilot-background-shared.js";
+import { copilotSessionLabel, resolveBindingTarget } from "./copilot-background-shared.js";
 import { isDefinitiveGatewayRejection } from "./copilot-gateway.js";
 import { buildCopilotChatSendParams, deriveTabSessionKey } from "./panel-core.js";
 
@@ -140,7 +140,7 @@ export function createCopilotSessionController({
       try {
         created = await gateway.request("sessions.create", {
           key: entry.sessionKey,
-          label: "Browser copilot",
+          label: copilotSessionLabel(entry.sessionKey),
         });
       } catch (error) {
         if (isDefinitiveGatewayRejection(error)) {

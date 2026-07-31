@@ -724,10 +724,31 @@ describe("browser copilot background", () => {
       { sessionKey: "session-pending", ensureCreated: true } as never,
     );
     expect(request.mock.calls).toEqual([
-      ["sessions.create", { key: "session-pending", label: "Browser copilot" }],
+      ["sessions.create", { key: "session-pending", label: "Browser copilot (-pending)" }],
       ["sessions.messages.unsubscribe", { key: "session-pending" }],
       ["sessions.abort", { key: "session-pending" }],
       ["sessions.patch", { key: "session-pending", archived: true }],
     ]);
+  });
+
+  it("gives two tab-copilot sessions distinct labels so neither collides on reconnect", async () => {
+    const request = vi.fn(async () => ({ ok: true }));
+    await archiveCopilotSession(
+      { request } as never,
+      {
+        sessionKey: "main:thread:browser-copilot-11111111-1111-1111-1111-111111111111",
+        ensureCreated: true,
+      } as never,
+    );
+    await archiveCopilotSession(
+      { request } as never,
+      {
+        sessionKey: "main:thread:browser-copilot-22222222-2222-2222-2222-222222222222",
+        ensureCreated: true,
+      } as never,
+    );
+    const [firstCreate] = request.mock.calls;
+    const secondCreate = request.mock.calls[4];
+    expect(firstCreate[1].label).not.toEqual(secondCreate[1].label);
   });
 });
