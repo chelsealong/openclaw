@@ -1449,7 +1449,15 @@ export function formatAssistantErrorText(
   }
 
   const apiError = parseApiErrorInfo(raw);
-  if (apiError?.type?.toLowerCase().includes("invalid_request") && apiError.message?.trim()) {
+  // Anthropic tags thinking-signature replay failures with the same
+  // invalid_request_error type as generic schema/syntax errors. Let the more
+  // specific replay_invalid classification (checked below) win so users get
+  // the "/new" guidance instead of a generic rejected-request echo (#116967).
+  if (
+    providerRuntimeFailureKind !== "replay_invalid" &&
+    apiError?.type?.toLowerCase().includes("invalid_request") &&
+    apiError.message?.trim()
+  ) {
     return `LLM request rejected: ${apiError.message.trim()}`;
   }
 

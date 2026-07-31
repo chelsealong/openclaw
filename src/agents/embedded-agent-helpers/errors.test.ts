@@ -8,6 +8,7 @@ import {
   classifyFailoverReason,
   extractFailoverSignalDetails,
   formatAssistantErrorText,
+  formatUserFacingAssistantErrorText,
   isLikelyContextOverflowError,
 } from "./errors.js";
 
@@ -109,6 +110,32 @@ describe("formatAssistantErrorText streaming JSON parse classification", () => {
         matchedRule: "browser",
         sandboxMode: "non-main",
       },
+    );
+  });
+});
+
+describe("formatAssistantErrorText thinking-signature replay classification", () => {
+  const replayErrorMessage =
+    '{"type":"error","error":{"type":"invalid_request_error","message":"messages.5.content.0.thinking: Invalid signature for thinking block"}}';
+
+  const makeReplayError = (): AssistantMessage =>
+    makeAssistantMessageFixture({
+      provider: "anthropic",
+      errorMessage: replayErrorMessage,
+      content: [{ type: "text", text: replayErrorMessage }],
+    });
+
+  it("surfaces the /new replay guidance instead of the generic invalid_request echo (#116967)", () => {
+    const msg = makeReplayError();
+    expect(formatAssistantErrorText(msg)).toBe(
+      "Session history or replay state is invalid. Use /new to start a fresh session and try again.",
+    );
+  });
+
+  it("keeps the replay guidance through the user-facing formatter instead of the schema-rejection text", () => {
+    const msg = makeReplayError();
+    expect(formatUserFacingAssistantErrorText(msg)).toBe(
+      "Session history or replay state is invalid. Use /new to start a fresh session and try again.",
     );
   });
 });
