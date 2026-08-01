@@ -75,6 +75,9 @@ flow:
         - assert:
             expr: Boolean(threadId)
             message: missing QA thread id
+        - set: sessionKey
+          value:
+            expr: "`agent:qa:qa-channel:channel:${threadPayload.target}`"
         - set: requestCursorBefore
           value:
             expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/request-cursor`)).cursor : 0"
@@ -107,6 +110,17 @@ flow:
             expr: "!env.mock || scenarioRequests.some((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.channelId === config.conversationId && request.plannedToolArgs?.threadId === threadId && request.plannedToolArgs?.message === config.expectedMarker)"
             message:
               expr: "`expected message(action=thread-reply), saw ${JSON.stringify(scenarioRequests.map((request) => ({ plannedToolName: request.plannedToolName ?? null, plannedToolArgs: request.plannedToolArgs ?? null, toolOutput: request.toolOutput ?? '' })))} `"
+        - call: waitForCondition
+          saveAs: currentSourceDelivery
+          args:
+            - lambda:
+                async: true
+                params: []
+                expr: "await readSessionTranscriptSummary(env, sessionKey, { allowEmpty: true }).then((summary) => summary.currentSourceToolDeliveries?.find((delivery) => delivery.toolName === 'message' && delivery.threadId === threadId))"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - assert:
+            expr: Boolean(currentSourceDelivery)
+            message: missing runtime current-source thread placement in message tool result
         - call: waitForOutboundMessage
           saveAs: outbound
           args:
@@ -115,23 +129,12 @@ flow:
                 params: [candidate]
                 expr: "candidate.conversation.id === config.conversationId && candidate.threadId === threadId && candidate.text === config.expectedMarker"
             - expr: liveTurnTimeoutMs(env, 180000)
-        - call: waitForCondition
-          saveAs: completedToolRequest
-          args:
-            - lambda:
-                async: true
-                params: []
-                expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBefore}`)).find((request) => { const output = String(request.toolOutput ?? ''); return String(request.allInputText ?? '').includes(config.promptSnippet) && output.includes('sourceReplyRoute') && output.includes('current-source') && output.includes('threadId') && output.includes(threadId); }) : true"
-            - expr: liveTurnTimeoutMs(env, 180000)
-        - assert:
-            expr: "!env.mock || Boolean(completedToolRequest)"
-            message: missing current-source thread placement in message tool result
         - call: sleep
           args:
             - expr: config.duplicateWindowMs
         - set: turnOutbound
           value:
-            expr: "state.getSnapshot().messages.slice(outboundStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId)"
+            expr: "state.getSnapshot().messages.slice(outboundStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId)"
         - assert:
             expr: "turnOutbound.length === 1 && turnOutbound[0]?.id === outbound.id"
             message:
@@ -163,7 +166,7 @@ flow:
           args:
             - lambda:
                 params: []
-                expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)).length === 2"
+                expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)).length === 2"
             - expr: liveTurnTimeoutMs(env, 180000)
         - set: divergentRequests
           value:
@@ -174,7 +177,7 @@ flow:
               expr: "`expected divergent message(action=thread-reply), saw ${JSON.stringify(divergentRequests.map((request) => ({ plannedToolName: request.plannedToolName ?? null, plannedToolArgs: request.plannedToolArgs ?? null, toolOutput: request.toolOutput ?? '' })))} `"
         - set: divergentOutbound
           value:
-            expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker))"
+            expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker))"
         - assert:
             expr: "divergentOutbound.length === 2 && divergentOutbound.some((message) => message.text === divergentToolMarker) && divergentOutbound.some((message) => message.text === divergentFinalMarker)"
             message:

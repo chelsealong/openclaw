@@ -203,6 +203,41 @@ describe("qa-channel plugin", () => {
     expect(route?.threadId).toBeUndefined();
   });
 
+  it("publishes the current QA thread to message-tool delivery proof", () => {
+    const hasRepliedRef = { value: false };
+    const context = qaChannelPlugin.threading?.buildToolContext?.({
+      cfg: {},
+      context: {
+        To: "thread:qa-room/thread-1",
+        NativeChannelId: "qa-room",
+        ChatType: "channel",
+        MessageThreadId: "thread-1",
+      },
+      hasRepliedRef,
+    });
+
+    expect(context).toEqual({
+      currentChannelId: "qa-room",
+      currentChatType: "channel",
+      currentMessagingTarget: "thread:qa-room/thread-1",
+      currentThreadTs: "thread-1",
+      replyToMode: "all",
+      hasRepliedRef,
+    });
+    expect(
+      qaChannelPlugin.threading?.matchesToolContextTarget?.({
+        target: "qa-room",
+        toolContext: context!,
+      }),
+    ).toBe(true);
+    expect(
+      qaChannelPlugin.threading?.matchesToolContextTarget?.({
+        target: "other-room",
+        toolContext: context!,
+      }),
+    ).toBe(false);
+  });
+
   it("rejects conflicting explicit thread routing metadata", () => {
     expect(() =>
       qaChannelPlugin.messaging?.resolveOutboundSessionRoute?.({
@@ -1004,6 +1039,16 @@ describe("qa-channel plugin", () => {
         },
       });
       expect(sendTarget).toEqual({ to: "channel:qa-room", threadId: undefined });
+
+      const threadReplyTarget = qaChannelPlugin.actions?.extractToolSend?.({
+        args: {
+          action: "thread-reply",
+          channelId: "qa-room",
+          threadId: "thread-1",
+          message: "hello thread",
+        },
+      });
+      expect(threadReplyTarget).toEqual({ to: "thread:qa-room/thread-1" });
 
       const result = await qaChannelPlugin.actions?.handleAction?.({
         channel: "qa-channel",

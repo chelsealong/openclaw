@@ -48,6 +48,7 @@ type QaSessionTranscriptSummary = {
   assistantMirrors?: Array<{ identity: string; text: string }>;
   assistantToolCallCounts: Record<string, number>;
   completedToolCallCounts: Record<string, number>;
+  currentSourceToolDeliveries?: Array<{ toolName: string; threadId?: string }>;
   eventCursor: number;
   userMessageCount: number;
   successfulToolCallCounts: Record<string, number>;
@@ -119,6 +120,7 @@ function summarizeSessionTranscriptEvents(
   const assistantMirrors: Array<{ identity: string; text: string }> = [];
   const assistantToolCallCounts: Record<string, number> = {};
   const completedToolCallCounts: Record<string, number> = {};
+  const currentSourceToolDeliveries: Array<{ toolName: string; threadId?: string }> = [];
   const successfulToolCallCounts: Record<string, number> = {};
   const assistantToolNamesByCallId = new Map<string, string>();
   const completedToolCallIds = new Set<string>();
@@ -144,6 +146,15 @@ function summarizeSessionTranscriptEvents(
     if (message.role === "toolResult") {
       const toolCallId = readNonEmptyString(message.toolCallId);
       const toolName = readNonEmptyString(message.toolName);
+      const details = isRecord(message.details) ? message.details : undefined;
+      if (toolName && details?.sourceReplyRoute === "current-source") {
+        const receipt = isRecord(details.receipt) ? details.receipt : undefined;
+        const threadId = readNonEmptyString(receipt?.threadId);
+        currentSourceToolDeliveries.push({
+          toolName,
+          ...(threadId ? { threadId } : {}),
+        });
+      }
       if (
         toolCallId &&
         toolName &&
@@ -204,6 +215,7 @@ function summarizeSessionTranscriptEvents(
     ...(assistantMirrors.length > 0 ? { assistantMirrors } : {}),
     assistantToolCallCounts,
     completedToolCallCounts,
+    ...(currentSourceToolDeliveries.length > 0 ? { currentSourceToolDeliveries } : {}),
     eventCursor,
     userMessageCount,
     successfulToolCallCounts,

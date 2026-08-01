@@ -96,7 +96,8 @@ describe("qa scenario catalog channel contracts", () => {
     });
     expect(scenario.execution.config).toMatchObject({ duplicateWindowMs: 2000 });
     expect(flow).toContain("request.plannedToolArgs?.action === 'thread-reply'");
-    expect(flow).toContain("output.includes('current-source')");
+    expect(flow).toContain("readSessionTranscriptSummary");
+    expect(flow).toContain("summary.currentSourceToolDeliveries?.find");
     expect(flow).toContain("turnOutbound.length === 1");
     expect(flow).toContain("divergentOutbound.length === 2");
     expect(flow).toContain("QA-THREAD-RECEIPT-TOOL-OK");

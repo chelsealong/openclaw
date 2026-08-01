@@ -144,7 +144,7 @@ export const qaChannelMessageActions: ChannelMessageActionAdapter = {
     if (action === "sendMessage") {
       return extractToolSend(args, "sendMessage") ?? null;
     }
-    if (action === "threadReply") {
+    if (action === "thread-reply") {
       const channelId = typeof args.channelId === "string" ? args.channelId.trim() : "";
       const threadId = typeof args.threadId === "string" ? args.threadId.trim() : "";
       return channelId && threadId ? { to: `thread:${channelId}/${threadId}` } : null;
