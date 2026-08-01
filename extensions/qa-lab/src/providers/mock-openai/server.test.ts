@@ -788,6 +788,7 @@ describe("qa mock openai server", () => {
           call_id: outputToolCallId(toolCall, "call_thread_reply_divergent"),
           output: JSON.stringify({ ok: true }),
         },
+        makeUserInput("Continue from the tool result."),
       ],
     });
 

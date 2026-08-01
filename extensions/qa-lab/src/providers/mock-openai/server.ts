@@ -1033,10 +1033,21 @@ async function buildResponsesPayload(
       return buildToolCallEventsWithArgs("sessions_send", sessionsSendArgs);
     }
   }
-  const threadReplyReceiptMatch = QA_THREAD_REPLY_RECEIPT_PROMPT_RE.exec(allInputText);
+  const threadReplyReceiptPrompt = extractLastMatchingUserTurn(
+    input,
+    QA_THREAD_REPLY_RECEIPT_PROMPT_RE,
+  )?.text;
+  const threadReplyReceiptMatch = threadReplyReceiptPrompt
+    ? QA_THREAD_REPLY_RECEIPT_PROMPT_RE.exec(threadReplyReceiptPrompt)
+    : null;
   if (threadReplyReceiptMatch) {
-    const marker = exactMarkerDirective ?? exactReplyDirective ?? "QA-THREAD-RECEIPT-OK";
-    const divergentFinal = /divergent final:\s*`([^`]+)`/iu.exec(prompt)?.[1]?.trim();
+    const marker =
+      extractExactMarkerDirective(threadReplyReceiptPrompt) ??
+      extractExactReplyDirective(threadReplyReceiptPrompt) ??
+      "QA-THREAD-RECEIPT-OK";
+    const divergentFinal = /divergent final:\s*`([^`]+)`/iu
+      .exec(threadReplyReceiptPrompt)?.[1]
+      ?.trim();
     if (!toolOutput && hasDeclaredTool(body, "message")) {
       return buildToolCallEventsWithArgs("message", {
         action: "thread-reply",
