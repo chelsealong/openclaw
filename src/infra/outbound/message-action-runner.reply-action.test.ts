@@ -326,6 +326,22 @@ describe("runMessageAction reply-type plugin actions", () => {
     expect((result.payload as { sourceReplyRoute?: unknown }).sourceReplyRoute).toBeUndefined();
   });
 
+  it("trusts a contradictory delivery receipt over the planned owner target", async () => {
+    registerReplyPlugin({
+      ok: true,
+      messageId: "om_reply",
+      receipt: { threadId: "other-thread" },
+    });
+
+    const result = await runThreadReplyAction({
+      actionParams: { threadId: "1783", message: "visible thread reply" },
+      currentChannelId: "channel:1783",
+      currentThreadTs: "1783",
+    });
+
+    expect((result.payload as { sourceReplyRoute?: unknown }).sourceReplyRoute).toBeUndefined();
+  });
+
   it("marks a receipt-proven message-thread reply as a current-source delivery", async () => {
     registerReplyPlugin(
       {

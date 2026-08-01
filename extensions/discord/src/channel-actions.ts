@@ -30,9 +30,27 @@ function resolveDiscordActionExecutionMode({ action }: { action: ChannelMessageA
   return localExecutionActions.has(action) ? "local" : "gateway";
 }
 
-function resolveDiscordThreadReplyTarget(args: Record<string, unknown>): string | undefined {
+function resolveDiscordThreadReplyDeliveryAlias(args: Record<string, unknown>): string | undefined {
+  if (
+    normalizeOptionalString(args.target) ||
+    normalizeOptionalString(args.to) ||
+    normalizeOptionalString(args.channelId)
+  ) {
+    return undefined;
+  }
   const threadId = normalizeOptionalString(args.threadId);
   return threadId ? normalizeDiscordMessagingTarget(`channel:${threadId}`) : undefined;
+}
+
+function resolveDiscordThreadReplyTarget(args: Record<string, unknown>): string | undefined {
+  const threadId = normalizeOptionalString(args.threadId);
+  const target =
+    threadId !== undefined
+      ? `channel:${threadId}`
+      : (normalizeOptionalString(args.channelId) ??
+        normalizeOptionalString(args.to) ??
+        normalizeOptionalString(args.target));
+  return target ? normalizeDiscordMessagingTarget(target) : undefined;
 }
 
 function matchesCurrentDiscordThread(params: {
@@ -208,7 +226,7 @@ export const discordMessageActions: ChannelMessageActionAdapter = {
     "thread-reply": {
       aliases: ["threadId"],
       deliveryTargetAliases: ["threadId"],
-      resolveDeliveryTarget: ({ args }) => resolveDiscordThreadReplyTarget(args),
+      resolveDeliveryTarget: ({ args }) => resolveDiscordThreadReplyDeliveryAlias(args),
       matchesCurrentConversation: ({ args, toolContext }) =>
         matchesCurrentDiscordThread({ args, toolContext }),
     },

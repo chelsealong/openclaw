@@ -91,14 +91,12 @@ function resolveDeliveredThreadPlacement(
   if (deliveredThreadId) {
     return deliveredThreadId === currentThreadId ? "match" : "mismatch";
   }
-  if (isThreadPlacementSourceReplyActionName(params.action)) {
-    const deliveredReplyToId = normalizeOptionalString(receipt.replyToId);
-    if (deliveredReplyToId) {
-      const currentMessageId = normalizeMessageIdValue(params.toolContext?.currentMessageId);
-      return deliveredReplyToId === currentThreadId || deliveredReplyToId === currentMessageId
-        ? "match"
-        : "mismatch";
-    }
+  const deliveredReplyToId = normalizeOptionalString(receipt.replyToId);
+  if (deliveredReplyToId) {
+    const currentMessageId = normalizeMessageIdValue(params.toolContext?.currentMessageId);
+    return deliveredReplyToId === currentThreadId || deliveredReplyToId === currentMessageId
+      ? "match"
+      : "mismatch";
   }
   return currentThreadId ? "mismatch" : "match";
 }
@@ -434,19 +432,15 @@ function isDeliveredThreadPlacementSourceReply(params: SourceReplyTranscriptMirr
   if (!hasCurrentSourceContext(params)) {
     return false;
   }
-  const ownerMatch = resolveOwnerCurrentConversationMatch(params);
-  if (ownerMatch !== undefined) {
-    return ownerMatch;
-  }
   const receipt = resolveDeliveryReceipt(params);
-  if (!normalizeOptionalString(receipt?.threadId) && !normalizeOptionalString(receipt?.replyToId)) {
-    return false;
+  if (normalizeOptionalString(receipt?.threadId) || normalizeOptionalString(receipt?.replyToId)) {
+    const threadPlacement = resolveSourceReplyThreadPlacement(
+      params,
+      resolveChannelThreadAddressing(params.channel),
+    );
+    return threadPlacement === "match" && matchesCurrentSourceTarget(params, threadPlacement);
   }
-  const threadPlacement = resolveSourceReplyThreadPlacement(
-    params,
-    resolveChannelThreadAddressing(params.channel),
-  );
-  return threadPlacement === "match" && matchesCurrentSourceTarget(params, threadPlacement);
+  return resolveOwnerCurrentConversationMatch(params) ?? false;
 }
 
 /** Confirms that a successful send reached the exact trusted source conversation. */

@@ -107,6 +107,25 @@ describe("isDeliveredCurrentSourceReply", () => {
     ).toBe(false);
   });
 
+  it("matches a send receipt anchored to the current inbound thread message", () => {
+    expect(
+      isDeliveredCurrentSourceReply({
+        action: "send",
+        channel: "feishu",
+        actionParams: { target: "oc_group", message: "topic reply" },
+        cfg: {},
+        sessionKey: "agent:main:feishu:group:oc_group:topic:om_root",
+        toolContext: {
+          currentChannelProvider: "feishu",
+          currentChannelId: "oc_group",
+          currentThreadTs: "om_root",
+          currentMessageId: "om_inbound",
+        },
+        deliveredPayload: { receipt: { replyToId: "om_inbound" } },
+      }),
+    ).toBe(true);
+  });
+
   it.each([
     {
       name: "current thread root",

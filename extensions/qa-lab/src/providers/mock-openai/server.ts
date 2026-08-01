@@ -1036,6 +1036,7 @@ async function buildResponsesPayload(
   const threadReplyReceiptMatch = QA_THREAD_REPLY_RECEIPT_PROMPT_RE.exec(allInputText);
   if (threadReplyReceiptMatch) {
     const marker = exactMarkerDirective ?? exactReplyDirective ?? "QA-THREAD-RECEIPT-OK";
+    const divergentFinal = /divergent final:\s*`([^`]+)`/iu.exec(prompt)?.[1]?.trim();
     if (!toolOutput && hasDeclaredTool(body, "message")) {
       return buildToolCallEventsWithArgs("message", {
         action: "thread-reply",
@@ -1044,7 +1045,7 @@ async function buildResponsesPayload(
         message: marker,
       });
     }
-    return buildAssistantEvents("");
+    return buildAssistantEvents(divergentFinal || marker);
   }
   if (QA_GROUP_VISIBLE_REPLY_TOOL_PROMPT_RE.test(allInputText)) {
     const marker = exactMarkerDirective ?? exactReplyDirective ?? "QA-GROUP-TOOL-OK";

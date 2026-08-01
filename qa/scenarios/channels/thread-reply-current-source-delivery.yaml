@@ -10,15 +10,25 @@ scenario:
       - channels.qa-channel-outbound
       - channels.native-threads
       - channels.outbound-message
-  objective: Verify a successful native thread-reply action suppresses automatic fallback delivery.
+  objective: Verify a successful native thread-reply action suppresses only its identical automatic fallback.
   gatewayConfigPatch:
     messages:
       groupChat:
-        visibleReplies: message_tool
+        visibleReplies: automatic
+    tools:
+      alsoAllow:
+        - message
+    agents:
+      entries:
+        qa:
+          tools:
+            alsoAllow:
+              - message
   successCriteria:
     - The mock provider calls message(action=thread-reply) for the current QA thread.
-    - The tool result carries canonical delivery placement for that thread.
+    - The tool result marks current-source delivery and carries canonical placement for that thread.
     - The Gateway emits exactly one outbound message and no automatic fallback.
+    - A distinct automatic final remains visible after the native thread reply.
   docsRefs:
     - docs/channels/qa-channel.md
     - docs/channels/groups.md
@@ -32,6 +42,7 @@ scenario:
     config:
       requiredProviderMode: mock-openai
       conversationId: qa-thread-receipt-room
+      duplicateWindowMs: 2000
       promptSnippet: qa thread reply receipt check
       expectedMarker: QA-THREAD-RECEIPT-OK
 
@@ -104,6 +115,20 @@ flow:
                 params: [candidate]
                 expr: "candidate.conversation.id === config.conversationId && candidate.threadId === threadId && candidate.text === config.expectedMarker"
             - expr: liveTurnTimeoutMs(env, 180000)
+        - call: waitForCondition
+          saveAs: completedToolRequest
+          args:
+            - lambda:
+                async: true
+                params: []
+                expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBefore}`)).find((request) => { const output = String(request.toolOutput ?? ''); return String(request.allInputText ?? '').includes(config.promptSnippet) && output.includes('sourceReplyRoute') && output.includes('current-source') && output.includes('threadId') && output.includes(threadId); }) : true"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - assert:
+            expr: "!env.mock || Boolean(completedToolRequest)"
+            message: missing current-source thread placement in message tool result
+        - call: sleep
+          args:
+            - expr: config.duplicateWindowMs
         - set: turnOutbound
           value:
             expr: "state.getSnapshot().messages.slice(outboundStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId)"
@@ -111,4 +136,47 @@ flow:
             expr: "turnOutbound.length === 1 && turnOutbound[0]?.id === outbound.id"
             message:
               expr: "`expected exactly one native thread reply and no fallback, saw ${JSON.stringify(turnOutbound.map((message) => ({ id: message.id, threadId: message.threadId ?? null, text: message.text })))} `"
+
+        - set: divergentToolMarker
+          value: QA-THREAD-RECEIPT-TOOL-OK
+        - set: divergentFinalMarker
+          value: QA-THREAD-RECEIPT-FINAL-OK
+        - set: divergentStartIndex
+          value:
+            expr: state.getSnapshot().messages.length
+        - set: requestCursorBeforeDivergent
+          value:
+            expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/request-cursor`)).cursor : 0"
+        - sendInbound:
+            conversation:
+              id:
+                ref: config.conversationId
+              kind: channel
+              title: Current-source receipt proof
+            senderId: alice
+            senderName: Alice
+            text:
+              expr: "`@openclaw ${config.promptSnippet}. Use the native reply path. channel id: \\`${config.conversationId}\\`; thread id: \\`${threadId}\\`; exact marker: \\`${divergentToolMarker}\\`; divergent final: \\`${divergentFinalMarker}\\``"
+            threadId:
+              ref: threadId
+        - call: waitForCondition
+          args:
+            - lambda:
+                params: []
+                expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)).length === 2"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - set: divergentRequests
+          value:
+            expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBeforeDivergent}`)).filter((request) => String(request.allInputText ?? '').includes(config.promptSnippet)) : []"
+        - assert:
+            expr: "!env.mock || divergentRequests.some((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.message === divergentToolMarker)"
+            message:
+              expr: "`expected divergent message(action=thread-reply), saw ${JSON.stringify(divergentRequests.map((request) => ({ plannedToolName: request.plannedToolName ?? null, plannedToolArgs: request.plannedToolArgs ?? null, toolOutput: request.toolOutput ?? '' })))} `"
+        - set: divergentOutbound
+          value:
+            expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker))"
+        - assert:
+            expr: "divergentOutbound.length === 2 && divergentOutbound.some((message) => message.text === divergentToolMarker) && divergentOutbound.some((message) => message.text === divergentFinalMarker)"
+            message:
+              expr: "`expected distinct native tool and automatic final replies, saw ${JSON.stringify(divergentOutbound.map((message) => ({ id: message.id, threadId: message.threadId ?? null, text: message.text })))} `"
       detailsExpr: "`${outbound.threadId}:${outbound.text}`"
