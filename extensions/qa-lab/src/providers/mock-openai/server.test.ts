@@ -725,6 +725,28 @@ describe("qa mock openai server", () => {
     });
   });
 
+  it("plans the native thread reply used by current-source receipt proof", async () => {
+    const server = await startMockServer();
+    const prompt =
+      "qa thread reply receipt check. Use the native reply path. channel id: `qa-room`; thread id: `thread-1`; exact marker: `QA-THREAD-RECEIPT-OK`";
+
+    const payload = await expectResponsesJson(server, {
+      stream: false,
+      model: "gpt-5.6-luna",
+      tools: [{ type: "function", name: "message" }],
+      input: [makeUserInput(prompt)],
+    });
+
+    expect(outputItem(payload).type).toBe("function_call");
+    expect(outputItem(payload).name).toBe("message");
+    expect(outputToolArgs(payload)).toEqual({
+      action: "thread-reply",
+      channelId: "qa-room",
+      threadId: "thread-1",
+      message: "QA-THREAD-RECEIPT-OK",
+    });
+  });
+
   it("emits deterministic text deltas for generic streaming QA prompts", async () => {
     const server = await startMockServer();
 

@@ -107,7 +107,73 @@ describe("isDeliveredCurrentSourceReply", () => {
     ).toBe(false);
   });
 
-  it("marks a thread-reply delivered to the current conversation as current-source", () => {
+  it.each([
+    {
+      name: "current thread root",
+      receipt: { replyToId: "om_root" },
+      toolContext: {
+        currentChannelProvider: "testchat" as const,
+        currentChannelId: "oc_group",
+        currentThreadTs: "om_root",
+        currentMessageId: "om_inbound",
+      },
+      expected: true,
+    },
+    {
+      name: "current inbound message",
+      receipt: { replyToId: "om_inbound" },
+      toolContext: {
+        currentChannelProvider: "testchat" as const,
+        currentChannelId: "oc_group",
+        currentThreadTs: "om_root",
+        currentMessageId: "om_inbound",
+      },
+      expected: true,
+    },
+    {
+      name: "another message",
+      receipt: { replyToId: "om_other" },
+      toolContext: {
+        currentChannelProvider: "testchat" as const,
+        currentChannelId: "oc_group",
+        currentThreadTs: "om_root",
+        currentMessageId: "om_inbound",
+      },
+      expected: false,
+    },
+    {
+      name: "conflicting native thread",
+      receipt: { threadId: "other-thread", replyToId: "om_inbound" },
+      toolContext: {
+        currentChannelProvider: "testchat" as const,
+        currentChannelId: "oc_group",
+        currentThreadTs: "om_root",
+        currentMessageId: "om_inbound",
+      },
+      expected: false,
+    },
+  ])(
+    "uses a canonical thread-reply receipt for the $name",
+    ({ receipt, toolContext, expected }) => {
+      expect(
+        isDeliveredCurrentSourceReply({
+          action: "thread-reply",
+          channel: "testchat",
+          actionParams: {
+            to: "oc_group",
+            messageId: "om_inbound",
+            message: "visible thread reply",
+          },
+          cfg: {},
+          sessionKey: "agent:main:testchat:group:oc_group",
+          toolContext,
+          deliveredPayload: { receipt },
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it("fails closed when a thread-reply has neither owner proof nor a canonical receipt", () => {
     expect(
       isDeliveredCurrentSourceReply({
         action: "thread-reply",
@@ -120,7 +186,7 @@ describe("isDeliveredCurrentSourceReply", () => {
           currentChannelId: "direct:user-1",
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

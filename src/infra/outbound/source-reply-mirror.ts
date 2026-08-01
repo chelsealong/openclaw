@@ -8,7 +8,8 @@ import {
 import { normalizeOptionalTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
-import type { ChannelId } from "../../channels/plugins/types.public.js";
+import { resolveChannelPluginRegistration } from "../../channels/plugins/registry.js";
+import type { ChannelId, ChannelMessageActionName } from "../../channels/plugins/types.public.js";
 import { resolveChannelThreadAddressing } from "../../channels/thread-addressing.js";
 import type { InternalChannelThreadingToolContext } from "../../channels/threading-tool-context-internal.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions.js";
@@ -70,24 +71,36 @@ function resolveSourceReplyThreadId(params: SourceReplyTranscriptMirrorParams): 
   return readFirstString(params.actionParams, ["threadId", "messageThreadId"]);
 }
 
+function resolveDeliveryReceipt(
+  params: SourceReplyTranscriptMirrorParams,
+): Record<string, unknown> | undefined {
+  const payload = asRecord(params.deliveredPayload);
+  const result = asRecord(payload?.result);
+  return asRecord(result?.receipt) ?? asRecord(payload?.receipt);
+}
+
 function resolveDeliveredThreadPlacement(
   params: SourceReplyTranscriptMirrorParams,
   currentThreadId: string | undefined,
 ): SourceReplyThreadPlacement | undefined {
-  const payload = asRecord(params.deliveredPayload);
-  const result = asRecord(payload?.result);
-  const receipt = asRecord(result?.receipt) ?? asRecord(payload?.receipt);
+  const receipt = resolveDeliveryReceipt(params);
   if (!receipt) {
     return undefined;
   }
   const deliveredThreadId = normalizeOptionalString(receipt.threadId);
-  return deliveredThreadId
-    ? deliveredThreadId === currentThreadId
-      ? "match"
-      : "mismatch"
-    : currentThreadId
-      ? "mismatch"
-      : "match";
+  if (deliveredThreadId) {
+    return deliveredThreadId === currentThreadId ? "match" : "mismatch";
+  }
+  if (isThreadPlacementSourceReplyActionName(params.action)) {
+    const deliveredReplyToId = normalizeOptionalString(receipt.replyToId);
+    if (deliveredReplyToId) {
+      const currentMessageId = normalizeMessageIdValue(params.toolContext?.currentMessageId);
+      return deliveredReplyToId === currentThreadId || deliveredReplyToId === currentMessageId
+        ? "match"
+        : "mismatch";
+    }
+  }
+  return currentThreadId ? "mismatch" : "match";
 }
 
 function resolveSourceReplyThreadPlacement(
@@ -288,15 +301,6 @@ function resolveTranscriptMirrorIdempotencyKey(params: {
   return `${params.idempotencyKey}:terminal-receipt:${params.sourceTurnId}`;
 }
 
-// `thread-reply` addresses a thread target the same way `send`/`poll` address a
-// conversation target, so its current-source marking (message-action-runner.ts's
-// marker only, via `isDeliveredCurrentSourceReply`) reuses the target +
-// thread-placement contract below instead of the reply message-id contract
-// (`isDeliveredCurrentSourceReplyAction`), which `thread-reply` cannot satisfy:
-// it only optionally carries a replied-to message id. Transcript mirroring and
-// the restart-recovery terminal receipt still exclude `thread-reply` (see
-// `includeThreadPlacementActions` below) since its `message` param does carry
-// mirrorable text and arming that receipt for it needs its own tests.
 const THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES = new Set(["thread-reply"]);
 
 /** Thread-reply actions address a conversation/thread target, not a message id. */
@@ -304,35 +308,7 @@ export function isThreadPlacementSourceReplyActionName(action: string): boolean 
   return THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES.has(action.trim().toLowerCase());
 }
 
-function isTargetMatchedSourceReplyActionName(
-  action: string,
-  includeThreadPlacementActions: boolean,
-): boolean {
-  return (
-    action === "send" ||
-    action === "poll" ||
-    (includeThreadPlacementActions && isThreadPlacementSourceReplyActionName(action))
-  );
-}
-
-function isCurrentSourceConversation(
-  params: SourceReplyTranscriptMirrorParams,
-  threadPlacement = resolveSourceReplyThreadPlacement(
-    params,
-    resolveChannelThreadAddressing(params.channel),
-  ),
-  // Thread replies carry message text and can arm the restart-recovery terminal
-  // receipt, unlike polls, so transcript mirroring and that receipt must keep
-  // excluding them; only the marker-only `isDeliveredCurrentSourceReply` path
-  // (which does neither) opts in via this flag.
-  includeThreadPlacementActions = false,
-): params is MirrorableSourceReplyTranscriptParams {
-  // Polls share the send target contract: `to` addresses a conversation, so the
-  // same current-source matching applies. Transcript mirroring stays send-only
-  // because poll params carry no message text to mirror.
-  if (!isTargetMatchedSourceReplyActionName(params.action, includeThreadPlacementActions)) {
-    return false;
-  }
+function hasCurrentSourceContext(params: SourceReplyTranscriptMirrorParams): boolean {
   if (!params.sessionKey?.trim()) {
     return false;
   }
@@ -352,6 +328,17 @@ function isCurrentSourceConversation(
   }
   const currentChannel = normalizeOptionalLowercaseString(toolContext.currentChannelProvider);
   if (!currentChannel || currentChannel !== normalizeOptionalLowercaseString(params.channel)) {
+    return false;
+  }
+  return true;
+}
+
+function matchesCurrentSourceTarget(
+  params: SourceReplyTranscriptMirrorParams,
+  threadPlacement: SourceReplyThreadPlacement,
+): boolean {
+  const toolContext = params.toolContext;
+  if (!toolContext) {
     return false;
   }
   const currentTargets = [
@@ -390,37 +377,88 @@ function isCurrentSourceConversation(
   );
 }
 
+function isCurrentSourceConversation(
+  params: SourceReplyTranscriptMirrorParams,
+): params is MirrorableSourceReplyTranscriptParams {
+  // Polls share the send target contract. Transcript mirroring stays send-only
+  // because poll params carry no message text to mirror.
+  if (params.action !== "send" && params.action !== "poll") {
+    return false;
+  }
+  if (!hasCurrentSourceContext(params)) {
+    return false;
+  }
+  const threadPlacement = resolveSourceReplyThreadPlacement(
+    params,
+    resolveChannelThreadAddressing(params.channel),
+  );
+  return matchesCurrentSourceTarget(params, threadPlacement);
+}
+
 function isExactCurrentSourceConversation(
   params: SourceReplyTranscriptMirrorParams,
-  includeThreadPlacementActions = false,
 ): params is MirrorableSourceReplyTranscriptParams {
   const threadPlacement = resolveSourceReplyThreadPlacement(
     params,
     resolveChannelThreadAddressing(params.channel),
   );
-  return (
-    threadPlacement === "match" &&
-    isCurrentSourceConversation(params, threadPlacement, includeThreadPlacementActions)
+  return threadPlacement === "match" && isCurrentSourceConversation(params);
+}
+
+function resolveOwnerCurrentConversationMatch(
+  params: SourceReplyTranscriptMirrorParams,
+): boolean | undefined {
+  const toolContext = params.toolContext;
+  if (!toolContext) {
+    return undefined;
+  }
+  const registration = resolveChannelPluginRegistration(params.channel as ChannelId);
+  if (registration?.origin !== "bundled") {
+    return undefined;
+  }
+  const matcher =
+    registration.plugin.actions?.messageActionTargetAliases?.[
+      params.action as ChannelMessageActionName
+    ]?.matchesCurrentConversation;
+  if (!matcher) {
+    return undefined;
+  }
+  return matcher({
+    args: params.actionParams,
+    accountId: normalizeAccountId(params.accountId ?? params.currentAccountId),
+    toolContext,
+  });
+}
+
+function isDeliveredThreadPlacementSourceReply(params: SourceReplyTranscriptMirrorParams): boolean {
+  if (!hasCurrentSourceContext(params)) {
+    return false;
+  }
+  const ownerMatch = resolveOwnerCurrentConversationMatch(params);
+  if (ownerMatch !== undefined) {
+    return ownerMatch;
+  }
+  const receipt = resolveDeliveryReceipt(params);
+  if (!normalizeOptionalString(receipt?.threadId) && !normalizeOptionalString(receipt?.replyToId)) {
+    return false;
+  }
+  const threadPlacement = resolveSourceReplyThreadPlacement(
+    params,
+    resolveChannelThreadAddressing(params.channel),
   );
+  return threadPlacement === "match" && matchesCurrentSourceTarget(params, threadPlacement);
 }
 
 /** Confirms that a successful send reached the exact trusted source conversation. */
 export function isDeliveredCurrentSourceReply(params: SourceReplyTranscriptMirrorParams): boolean {
-  return (
-    !hasExplicitDeliveryFailure(params.deliveredPayload) &&
-    // Marker-only: this does not mirror transcript text or arm the restart-recovery
-    // receipt, so thread-reply can safely opt into target + thread-placement matching
-    // here without changing `mirrorDeliveredSourceReplyToTranscript` or
-    // `resolveTerminalSourceReplyDeliveryReceipt`, which call `isCurrentSourceConversation`
-    // (via `isExactCurrentSourceConversation` / directly) without this flag.
-    isExactCurrentSourceConversation(params, /* includeThreadPlacementActions */ true)
-  );
+  if (hasExplicitDeliveryFailure(params.deliveredPayload)) {
+    return false;
+  }
+  return isThreadPlacementSourceReplyActionName(params.action)
+    ? isDeliveredThreadPlacementSourceReply(params)
+    : isExactCurrentSourceConversation(params);
 }
 
-// `thread-reply` addresses a thread target and only optionally carries a
-// replied-to message id, so the message-id contract below cannot verify it;
-// it is validated via `isThreadPlacementSourceReplyActionName` instead (target
-// + thread-placement matching, same contract as `send`/`poll`).
 const CURRENT_SOURCE_REPLY_ACTION_NAMES = new Set(["reply"]);
 
 /** Reply-type message actions address a message id rather than a conversation target. */
@@ -507,7 +545,7 @@ export async function mirrorDeliveredSourceReplyToTranscript(
     params,
     resolveChannelThreadAddressing(params.channel),
   );
-  if (!isCurrentSourceConversation(params, threadPlacement)) {
+  if (!isCurrentSourceConversation(params)) {
     return false;
   }
   if (params.sourceReplyFinal === true && threadPlacement !== "match") {

@@ -1,0 +1,114 @@
+title: Thread reply current-source delivery
+
+scenario:
+  id: thread-reply-current-source-delivery
+  surface: channel
+  coverage:
+    primary:
+      - channels.outbound-group-reply
+    secondary:
+      - channels.qa-channel-outbound
+      - channels.native-threads
+      - channels.outbound-message
+  objective: Verify a successful native thread-reply action suppresses automatic fallback delivery.
+  gatewayConfigPatch:
+    messages:
+      groupChat:
+        visibleReplies: message_tool
+  successCriteria:
+    - The mock provider calls message(action=thread-reply) for the current QA thread.
+    - The tool result carries canonical delivery placement for that thread.
+    - The Gateway emits exactly one outbound message and no automatic fallback.
+  docsRefs:
+    - docs/channels/qa-channel.md
+    - docs/channels/groups.md
+  codeRefs:
+    - extensions/qa-channel/src/channel-actions.ts
+    - src/infra/outbound/source-reply-mirror.ts
+    - src/infra/outbound/message-action-runner.ts
+  execution:
+    kind: flow
+    channel: qa-channel
+    config:
+      requiredProviderMode: mock-openai
+      conversationId: qa-thread-receipt-room
+      promptSnippet: qa thread reply receipt check
+      expectedMarker: QA-THREAD-RECEIPT-OK
+
+flow:
+  steps:
+    - name: suppresses fallback after a proven native thread reply
+      actions:
+        - call: waitForGatewayHealthy
+          args:
+            - ref: env
+            - 60000
+        - call: waitForQaChannelReady
+          args:
+            - ref: env
+            - 60000
+        - call: reset
+        - call: handleQaAction
+          saveAs: threadPayload
+          args:
+            - env:
+                ref: env
+              action: thread-create
+              args:
+                channelId:
+                  ref: config.conversationId
+                title: Current-source receipt proof
+        - set: threadId
+          value:
+            expr: threadPayload?.thread?.id
+        - assert:
+            expr: Boolean(threadId)
+            message: missing QA thread id
+        - set: requestCursorBefore
+          value:
+            expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/request-cursor`)).cursor : 0"
+        - set: outboundStartIndex
+          value:
+            expr: state.getSnapshot().messages.length
+        - sendInbound:
+            conversation:
+              id:
+                ref: config.conversationId
+              kind: channel
+              title: Current-source receipt proof
+            senderId: alice
+            senderName: Alice
+            text:
+              expr: "`@openclaw ${config.promptSnippet}. Use the native reply path. channel id: \\`${config.conversationId}\\`; thread id: \\`${threadId}\\`; exact marker: \\`${config.expectedMarker}\\``"
+            threadId:
+              ref: threadId
+        - call: waitForCondition
+          args:
+            - lambda:
+                async: true
+                params: []
+                expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBefore}`)).find((request) => String(request.allInputText ?? '').includes(config.promptSnippet) && request.plannedToolName === 'message') : true"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - set: scenarioRequests
+          value:
+            expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBefore}`)).filter((request) => String(request.allInputText ?? '').includes(config.promptSnippet)) : []"
+        - assert:
+            expr: "!env.mock || scenarioRequests.some((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.channelId === config.conversationId && request.plannedToolArgs?.threadId === threadId && request.plannedToolArgs?.message === config.expectedMarker)"
+            message:
+              expr: "`expected message(action=thread-reply), saw ${JSON.stringify(scenarioRequests.map((request) => ({ plannedToolName: request.plannedToolName ?? null, plannedToolArgs: request.plannedToolArgs ?? null, toolOutput: request.toolOutput ?? '' })))} `"
+        - call: waitForOutboundMessage
+          saveAs: outbound
+          args:
+            - ref: state
+            - lambda:
+                params: [candidate]
+                expr: "candidate.conversation.id === config.conversationId && candidate.threadId === threadId && candidate.text === config.expectedMarker"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - set: turnOutbound
+          value:
+            expr: "state.getSnapshot().messages.slice(outboundStartIndex).filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId)"
+        - assert:
+            expr: "turnOutbound.length === 1 && turnOutbound[0]?.id === outbound.id"
+            message:
+              expr: "`expected exactly one native thread reply and no fallback, saw ${JSON.stringify(turnOutbound.map((message) => ({ id: message.id, threadId: message.threadId ?? null, text: message.text })))} `"
+      detailsExpr: "`${outbound.threadId}:${outbound.text}`"

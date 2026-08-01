@@ -34,6 +34,7 @@ import {
   QA_PROVIDER_HTTP_503_AFTER_TOOL_PROMPT_RE,
   QA_GROUP_VISIBLE_REPLY_TOOL_PROMPT_RE,
   QA_MSTEAMS_THREAD_DEDUPE_PROMPT_RE,
+  QA_THREAD_REPLY_RECEIPT_PROMPT_RE,
   QA_A2A_MESSAGE_TOOL_MIRROR_PROMPT_RE,
   QA_GROUP_MESSAGE_UNAVAILABLE_FALLBACK_PROMPT_RE,
   QA_STRANDED_FINAL_RECOVERY_PROMPT_RE,
@@ -1031,6 +1032,19 @@ async function buildResponsesPayload(
     if (sessionsSendArgs && hasDeclaredTool(body, "sessions_send")) {
       return buildToolCallEventsWithArgs("sessions_send", sessionsSendArgs);
     }
+  }
+  const threadReplyReceiptMatch = QA_THREAD_REPLY_RECEIPT_PROMPT_RE.exec(allInputText);
+  if (threadReplyReceiptMatch) {
+    const marker = exactMarkerDirective ?? exactReplyDirective ?? "QA-THREAD-RECEIPT-OK";
+    if (!toolOutput && hasDeclaredTool(body, "message")) {
+      return buildToolCallEventsWithArgs("message", {
+        action: "thread-reply",
+        channelId: threadReplyReceiptMatch[1],
+        threadId: threadReplyReceiptMatch[2],
+        message: marker,
+      });
+    }
+    return buildAssistantEvents("");
   }
   if (QA_GROUP_VISIBLE_REPLY_TOOL_PROMPT_RE.test(allInputText)) {
     const marker = exactMarkerDirective ?? exactReplyDirective ?? "QA-GROUP-TOOL-OK";

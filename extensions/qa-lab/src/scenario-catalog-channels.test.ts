@@ -82,6 +82,20 @@ describe("qa scenario catalog channel contracts", () => {
     expect(flow).not.toContain('"call":"runAgentPrompt"');
   });
 
+  it("binds current-source thread receipt proof to the QA Gateway lane", () => {
+    const scenario = requireFlowScenario(
+      readQaScenarioById("thread-reply-current-source-delivery"),
+    );
+    const flow = JSON.stringify(scenario.execution.flow);
+
+    expect(scenario.execution.channel).toBe("qa-channel");
+    expect(scenario.gatewayConfigPatch).toMatchObject({
+      messages: { groupChat: { visibleReplies: "message_tool" } },
+    });
+    expect(flow).toContain("request.plannedToolArgs?.action === 'thread-reply'");
+    expect(flow).toContain("turnOutbound.length === 1");
+  });
+
   it("marks live transport modules as live-driver-only", () => {
     for (const scenarioId of [
       "matrix-approval-exec-metadata-single-event",
