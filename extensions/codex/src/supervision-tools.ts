@@ -798,15 +798,21 @@ async function resolveInProgressTurnId(params: {
   }
 }
 
+const SUPERVISION_SENSITIVE_FIELD_RE = /authorization|password|secret|token|api[-_]?key/i;
+
 /**
  * Redacts secret-bearing fields before legacy tool results leave the plugin.
- * Delegates to the core credential-redaction policy (shared with logging) so
- * this stays in sync with the full credential class list instead of a
+ * Values under recognized sensitive field names are fully replaced, matching
+ * this boundary's prior full-redaction contract. Ordinary free-text fields
+ * delegate to the core credential-redaction policy (shared with logging) so
+ * they stay in sync with the full credential class list instead of a
  * narrower local copy.
  */
 function redactCodexSupervisionValue(value: unknown, key = ""): unknown {
   if (typeof value === "string") {
-    return redactSensitiveFieldValue(key, value);
+    return SUPERVISION_SENSITIVE_FIELD_RE.test(key)
+      ? "[redacted]"
+      : redactSensitiveFieldValue(key, value);
   }
   if (Array.isArray(value)) {
     return value.map((entry) => redactCodexSupervisionValue(entry));

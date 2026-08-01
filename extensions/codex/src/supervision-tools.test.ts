@@ -1054,4 +1054,26 @@ describe("Codex supervision compatibility tools", () => {
     expect(serialized).not.toContain(googleApiKey);
     expect(serialized).not.toContain(finegrainedPat);
   });
+
+  it("fully redacts values under recognized sensitive field names instead of partially masking them", async () => {
+    const apiKey = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+    const { request } = createRequest({
+      id: "thread-1",
+      status: { type: "idle" },
+      token: apiKey,
+      apiKey,
+    });
+    const tools = createTools(request);
+
+    const result = await toolByName(tools, "codex_session_read").execute("read", {
+      endpoint_id: "local",
+      thread_id: "thread-1",
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(apiKey);
+    expect(serialized).not.toContain(apiKey.slice(0, 6));
+    expect(serialized).not.toContain(apiKey.slice(-4));
+    expect(serialized).toContain("[redacted]");
+  });
 });
