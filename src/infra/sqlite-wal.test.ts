@@ -808,6 +808,37 @@ describe("sqlite WAL maintenance", () => {
     expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
   });
 
+  it("never memory-maps a supplied path whose filesystem cannot be classified", () => {
+    // A supplied databasePath that resolvePathJournalPolicy could not match to
+    // any mount entry still uses WAL (compatibility default), but that is not
+    // proof of a local filesystem - the mount table simply had no entry to
+    // check against. Treating "no match" as "local" would enable mmap on a
+    // filesystem that was never actually verified.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-mmap-unclassified-"));
+    try {
+      const db = createMockDb();
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockImplementation(() => {
+        throw new Error("statfs unavailable");
+      });
+      vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+        throw new Error("no proc mountinfo");
+      });
+      vi.spyOn(childProcess, "execFileSync").mockReturnValue(Buffer.from(""));
+
+      configureSqliteWalMaintenance(db, {
+        checkpointIntervalMs: 0,
+        databasePath: path.join(tempDir, "openclaw.sqlite"),
+      });
+
+      expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["NFS", 0x6969],
     ["SMB", 0x517b],

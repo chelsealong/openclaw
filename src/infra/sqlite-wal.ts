@@ -47,7 +47,12 @@ type IntervalHandle = ReturnType<typeof setInterval> & {
 };
 
 type SqliteWalCheckpointMode = "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE";
-type SqliteFilesystemJournalPolicy = "rollback" | "unsupported" | "wal";
+// "wal" means the filesystem was positively classified as safe for mmap
+// (a matched mount entry or statfs type that is not NFS/SMB/CIFS/SMB2).
+// "wal-unverified" means WAL is still fine to use, but classification was
+// inconclusive (no matching mount entry, no resolvable parent, etc.) - it
+// must never be treated as a positive local result for mmap purposes.
+type SqliteFilesystemJournalPolicy = "rollback" | "unsupported" | "wal" | "wal-unverified";
 type MountEntry = { mountPoint: string; fsType: string; source?: string };
 
 export type SqliteWalMaintenance = {
@@ -262,7 +267,7 @@ function resolveMountEntryJournalPolicy(
   const mountEntry = mountEntries
     .filter((entry) => isPathWithinMount(targetPath, entry.mountPoint))
     .toSorted((a, b) => b.mountPoint.length - a.mountPoint.length)[0];
-  return mountEntry ? resolveMountTypeJournalPolicy(mountEntry) : "wal";
+  return mountEntry ? resolveMountTypeJournalPolicy(mountEntry) : "wal-unverified";
 }
 
 function combineMountEntryJournalPolicies(
@@ -278,7 +283,13 @@ function combineMountEntryJournalPolicies(
   if (policies.has("unsupported")) {
     return "unsupported";
   }
-  return policies.has("rollback") ? "rollback" : "wal";
+  if (policies.has("rollback")) {
+    return "rollback";
+  }
+  // Prefer a positive match from either path representation over an
+  // unverified default: the original and canonical paths describe the same
+  // mount, so one matching is enough to trust it.
+  return policies.has("wal") ? "wal" : "wal-unverified";
 }
 
 function isWindowsUncPath(targetPath: string): boolean {
@@ -312,7 +323,7 @@ function resolvePathJournalPolicy(targetPath: string): SqliteFilesystemJournalPo
   }
   const checkedPaths = findExistingVolumePaths(targetPath);
   if (!checkedPaths) {
-    return "wal";
+    return "wal-unverified";
   }
   const mountLookupPaths = [checkedPaths.originalPath, checkedPaths.canonicalPath];
   if (typeof fs.statfsSync !== "function") {
@@ -464,10 +475,13 @@ export function configureSqliteWalMaintenance(
   const timerIntervalMs = Math.min(checkpointIntervalMs, MAX_TIMER_TIMEOUT_MS);
   const checkpointMode = options.checkpointMode ?? "TRUNCATE";
   const periodicCheckpointMode = options.checkpointMode ?? "PASSIVE";
-  const hasVerifiedLocalPath = Boolean(options.databasePath);
   const journalPolicy = options.databasePath
     ? resolvePathJournalPolicy(options.databasePath)
-    : "wal";
+    : "wal-unverified";
+  // Only a positively classified local filesystem ("wal") is safe for mmap.
+  // "wal-unverified" also runs WAL journaling, but classification could not
+  // rule out a network mount, so it must not reach the mmap pragma below.
+  const hasVerifiedLocalPath = journalPolicy === "wal";
   if (journalPolicy === "unsupported") {
     refuseUnsupportedFilesystem(options);
   }
@@ -488,13 +502,14 @@ export function configureSqliteWalMaintenance(
   db.exec(`PRAGMA wal_autocheckpoint = ${autoCheckpointPages};`);
   db.exec(`PRAGMA journal_size_limit = ${DEFAULT_SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES};`);
   if (hasVerifiedLocalPath) {
-    // Local-filesystem WAL is confirmed at this point via resolvePathJournalPolicy:
-    // the rollback and WAL-refused branches above have already returned for
-    // NFS/SMB/CIFS/SMB2 volumes. node:sqlite is synchronous, so each page the OS
-    // must serve from disk is event-loop block time, which memory-mapped reads
-    // cut directly. When no databasePath was supplied, the filesystem was never
-    // checked, so mmap stays off — an unmapped I/O error is recoverable, but a
-    // mapped one raises a signal SQLite cannot catch (#60349).
+    // journalPolicy === "wal" means resolvePathJournalPolicy positively matched
+    // a mount entry or statfs type that is not NFS/SMB/CIFS/SMB2 - the rollback
+    // and WAL-refused branches above already returned for those. node:sqlite is
+    // synchronous, so each page the OS must serve from disk is event-loop block
+    // time, which memory-mapped reads cut directly. An inconclusive
+    // classification ("wal-unverified": no databasePath, no resolvable parent,
+    // no matching mount entry) keeps mmap off - an unmapped I/O error is
+    // recoverable, but a mapped one raises a signal SQLite cannot catch (#60349).
     db.exec(`PRAGMA mmap_size = ${DEFAULT_SQLITE_MMAP_SIZE_BYTES};`);
   }
 
