@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { OutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
 import type { ReplyPayload } from "../reply-payload.js";
 import { createReplyTurnLedger } from "./dispatch-from-config.turn-ledger.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
@@ -71,6 +72,27 @@ describe("createReplyTurnLedger", () => {
     expect(ledger.sendQueued("block", { text: "streamed" }).queued).toBe(true);
     await ledger.settleQueued();
     expect(ledger.hasVisibleDelivery()).toBe(true);
+    dispatcher.markComplete();
+    await dispatcher.waitForIdle();
+  });
+
+  it("does not count a confirmed pre-send OutboundDeliveryError as visible", async () => {
+    // Some adapters flip their internal "started" flag before checking
+    // preconditions (e.g. "no active session") and never reach the platform.
+    // OutboundDeliveryError.sentBeforeError is the authoritative signal here,
+    // so this must classify the same as a pre-transport failure (#117441).
+    const dispatcher = createReplyDispatcher({
+      deliver: async () => {
+        throw new OutboundDeliveryError("no active session", {
+          cause: new Error("no active session"),
+          stage: "platform_send",
+        });
+      },
+    });
+    const ledger = createReplyTurnLedger(dispatcher);
+    expect(ledger.sendQueued("final", { text: "hello" }).queued).toBe(true);
+    await ledger.settleQueued();
+    expect(ledger.hasVisibleDelivery()).toBe(false);
     dispatcher.markComplete();
     await dispatcher.waitForIdle();
   });

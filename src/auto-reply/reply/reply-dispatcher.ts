@@ -1,7 +1,9 @@
 // Dispatches final reply payloads through visible senders and message tools.
+import { isChannelPartialDeliveryError } from "../../channels/turn/delivery-result.js";
 import type { TypingCallbacks } from "../../channels/typing.js";
 import type { HumanDelayConfig } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isOutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
 import { generateSecureInt } from "../../infra/secure-random.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { SilentReplyConversationType } from "../../shared/silent-reply-policy.js";
@@ -217,6 +219,23 @@ export function captureReplyDispatchDeliveryOutcome(payload: ReplyPayload): {
   };
   deliveryOutcomeTrackers.set(payload, tracker);
   return { promise: tracker.promise, isTracked: () => tracker.tracked };
+}
+
+// `deliveryStarted` only proves the send attempt began, not that anything
+// reached the platform: adapters that reject before any network attempt
+// (e.g. "no active session") still flip it before throwing. Prefer the
+// error's own sent-before-error signal when the delivery layer provides one,
+// so a confirmed pre-send rejection still classifies as "failed-before-deliver"
+// (openclaw/openclaw#117441) instead of wrongly looking like a possible partial
+// send.
+function wasSentBeforeError(err: unknown, deliveryStarted: boolean): boolean {
+  if (isOutboundDeliveryError(err)) {
+    return err.sentBeforeError;
+  }
+  if (isChannelPartialDeliveryError(err)) {
+    return true;
+  }
+  return deliveryStarted;
 }
 
 function buildReplyDispatchRuntimeInfo(
@@ -477,7 +496,9 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
         deliveryOutcome = "delivered";
       })
       .catch(async (err: unknown) => {
-        deliveryOutcome = deliveryStarted ? "failed-deliver" : "failed-before-deliver";
+        deliveryOutcome = wasSentBeforeError(err, deliveryStarted)
+          ? "failed-deliver"
+          : "failed-before-deliver";
         failedCounts[kind] += 1;
         // Error cleanup belongs to this send: idle/finalization must not race it.
         // Observer failures stay isolated from later queued deliveries.
