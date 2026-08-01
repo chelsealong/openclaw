@@ -289,10 +289,14 @@ function resolveTranscriptMirrorIdempotencyKey(params: {
 }
 
 // `thread-reply` addresses a thread target the same way `send`/`poll` address a
-// conversation target, so its current-source marking reuses the target +
+// conversation target, so its current-source marking (message-action-runner.ts's
+// marker only, via `isDeliveredCurrentSourceReply`) reuses the target +
 // thread-placement contract below instead of the reply message-id contract
 // (`isDeliveredCurrentSourceReplyAction`), which `thread-reply` cannot satisfy:
-// it only optionally carries a replied-to message id.
+// it only optionally carries a replied-to message id. Transcript mirroring and
+// the restart-recovery terminal receipt still exclude `thread-reply` (see
+// `includeThreadPlacementActions` below) since its `message` param does carry
+// mirrorable text and arming that receipt for it needs its own tests.
 const THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES = new Set(["thread-reply"]);
 
 /** Thread-reply actions address a conversation/thread target, not a message id. */
@@ -300,8 +304,15 @@ export function isThreadPlacementSourceReplyActionName(action: string): boolean 
   return THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES.has(action.trim().toLowerCase());
 }
 
-function isTargetMatchedSourceReplyActionName(action: string): boolean {
-  return action === "send" || action === "poll" || isThreadPlacementSourceReplyActionName(action);
+function isTargetMatchedSourceReplyActionName(
+  action: string,
+  includeThreadPlacementActions: boolean,
+): boolean {
+  return (
+    action === "send" ||
+    action === "poll" ||
+    (includeThreadPlacementActions && isThreadPlacementSourceReplyActionName(action))
+  );
 }
 
 function isCurrentSourceConversation(
@@ -310,12 +321,16 @@ function isCurrentSourceConversation(
     params,
     resolveChannelThreadAddressing(params.channel),
   ),
+  // Thread replies carry message text and can arm the restart-recovery terminal
+  // receipt, unlike polls, so transcript mirroring and that receipt must keep
+  // excluding them; only the marker-only `isDeliveredCurrentSourceReply` path
+  // (which does neither) opts in via this flag.
+  includeThreadPlacementActions = false,
 ): params is MirrorableSourceReplyTranscriptParams {
-  // Polls and thread replies share the send target contract: `to` (plus thread
-  // placement) addresses a conversation, so the same current-source matching
-  // applies. Transcript mirroring stays send-only because poll/thread-reply
-  // params carry no message text to mirror.
-  if (!isTargetMatchedSourceReplyActionName(params.action)) {
+  // Polls share the send target contract: `to` addresses a conversation, so the
+  // same current-source matching applies. Transcript mirroring stays send-only
+  // because poll params carry no message text to mirror.
+  if (!isTargetMatchedSourceReplyActionName(params.action, includeThreadPlacementActions)) {
     return false;
   }
   if (!params.sessionKey?.trim()) {
@@ -377,18 +392,28 @@ function isCurrentSourceConversation(
 
 function isExactCurrentSourceConversation(
   params: SourceReplyTranscriptMirrorParams,
+  includeThreadPlacementActions = false,
 ): params is MirrorableSourceReplyTranscriptParams {
   const threadPlacement = resolveSourceReplyThreadPlacement(
     params,
     resolveChannelThreadAddressing(params.channel),
   );
-  return threadPlacement === "match" && isCurrentSourceConversation(params, threadPlacement);
+  return (
+    threadPlacement === "match" &&
+    isCurrentSourceConversation(params, threadPlacement, includeThreadPlacementActions)
+  );
 }
 
 /** Confirms that a successful send reached the exact trusted source conversation. */
 export function isDeliveredCurrentSourceReply(params: SourceReplyTranscriptMirrorParams): boolean {
   return (
-    !hasExplicitDeliveryFailure(params.deliveredPayload) && isExactCurrentSourceConversation(params)
+    !hasExplicitDeliveryFailure(params.deliveredPayload) &&
+    // Marker-only: this does not mirror transcript text or arm the restart-recovery
+    // receipt, so thread-reply can safely opt into target + thread-placement matching
+    // here without changing `mirrorDeliveredSourceReplyToTranscript` or
+    // `resolveTerminalSourceReplyDeliveryReceipt`, which call `isCurrentSourceConversation`
+    // (via `isExactCurrentSourceConversation` / directly) without this flag.
+    isExactCurrentSourceConversation(params, /* includeThreadPlacementActions */ true)
   );
 }
 
