@@ -104,6 +104,15 @@ export async function runReplyAgent(
   } = params;
   // One lifecycle for all adoption sites in this run.
   const turnAdoptionLifecycle = opts?.turnAdoptionLifecycle;
+  // Best-effort claim release for early-return sites that never reach an
+  // adoption call: never let ingress cleanup fail the reply turn itself.
+  const abandonTurnAdoption = async () => {
+    try {
+      await turnAdoptionLifecycle?.onAbandoned?.();
+    } catch (error) {
+      logVerbose(`queue: turn adoption abandon callback failed: ${String(error)}`);
+    }
+  };
   let activeSessionEntry = sessionEntry;
   const activeSessionStore = sessionStore;
   let activeIsNewSession = isNewSession;
@@ -387,6 +396,10 @@ export async function runReplyAgent(
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "skipped", reason: "active-run" };
     }
+    // Dropped turns never reach an adoption site below. Release the ingress
+    // claim now so it is replayable instead of dead-lettering after the
+    // adoption-stall watchdog fires.
+    await abandonTurnAdoption();
     typing.cleanup();
     return undefined;
   }
@@ -401,6 +414,10 @@ export async function runReplyAgent(
       false,
     );
     if (!enqueued) {
+      // Never queued, so no later adoption site will run for this turn either.
+      // Release the claim immediately rather than let it stall for the full
+      // adoption-stall timeout before dead-lettering.
+      await abandonTurnAdoption();
       typing.cleanup();
       return undefined;
     }

@@ -942,8 +942,14 @@ describe("runReplyAgent heartbeat followup guard", () => {
 
   it("drops heartbeat runs when another run is active", async () => {
     const runState: ReplyOperationRunState = {};
+    const onAdopted = vi.fn();
+    const onAbandoned = vi.fn();
     const { run, typing } = createMinimalRun({
-      opts: { isHeartbeat: true, [REPLY_OPERATION_RUN_STATE]: runState },
+      opts: {
+        isHeartbeat: true,
+        [REPLY_OPERATION_RUN_STATE]: runState,
+        turnAdoptionLifecycle: { onAdopted, onAbandoned },
+      },
       isActive: true,
       shouldFollowup: true,
       resolvedQueueMode: "collect",
@@ -956,6 +962,11 @@ describe("runReplyAgent heartbeat followup guard", () => {
     expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
     expect(typing.cleanup).toHaveBeenCalledTimes(1);
     expect(runState.admission).toEqual({ status: "skipped", reason: "active-run" });
+    // A dropped turn never reaches an adoption site; the ingress claim must be
+    // released here instead of stalling until the adoption watchdog
+    // dead-letters it (issue #117286).
+    expect(onAbandoned).toHaveBeenCalledTimes(1);
+    expect(onAdopted).not.toHaveBeenCalled();
   });
 
   it("drops heartbeat runs before steering active streams", async () => {
@@ -1012,8 +1023,10 @@ describe("runReplyAgent heartbeat followup guard", () => {
 
   it("cleans up typing when followup admission is rejected", async () => {
     vi.mocked(enqueueFollowupRun).mockReturnValueOnce(false);
+    const onAdopted = vi.fn();
+    const onAbandoned = vi.fn();
     const { run, typing } = createMinimalRun({
-      opts: { isHeartbeat: false },
+      opts: { isHeartbeat: false, turnAdoptionLifecycle: { onAdopted, onAbandoned } },
       isActive: true,
       isRunActive: () => true,
       shouldFollowup: true,
@@ -1027,6 +1040,11 @@ describe("runReplyAgent heartbeat followup guard", () => {
     expect(vi.mocked(scheduleFollowupDrain)).not.toHaveBeenCalled();
     expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
     expect(typing.cleanup).toHaveBeenCalledTimes(1);
+    // A turn that never enqueues never reaches an adoption site either; the
+    // ingress claim must be released here instead of stalling until the
+    // adoption watchdog dead-letters it (issue #117286).
+    expect(onAbandoned).toHaveBeenCalledTimes(1);
+    expect(onAdopted).not.toHaveBeenCalled();
   });
 
   it("keeps typing alive when a followup is queued behind a live active run", async () => {
