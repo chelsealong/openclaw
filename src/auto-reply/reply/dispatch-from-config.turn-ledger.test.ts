@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { OutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
+import {
+  OutboundDeliveryError,
+  PlatformMessageNotDispatchedError,
+} from "../../infra/outbound/deliver-types.js";
 import type { ReplyPayload } from "../reply-payload.js";
 import { createReplyTurnLedger } from "./dispatch-from-config.turn-ledger.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
@@ -76,23 +79,47 @@ describe("createReplyTurnLedger", () => {
     await dispatcher.waitForIdle();
   });
 
-  it("does not count a confirmed pre-send OutboundDeliveryError as visible", async () => {
-    // Some adapters flip their internal "started" flag before checking
-    // preconditions (e.g. "no active session") and never reach the platform.
-    // OutboundDeliveryError.sentBeforeError is the authoritative signal here,
-    // so this must classify the same as a pre-transport failure (#117441).
+  it("does not count a proven pre-dispatch rejection as visible", async () => {
+    // Adapters flip the internal "started" flag before checking preconditions
+    // and never reach the platform (e.g. WhatsApp's "no active listener"
+    // check in extensions/whatsapp/src/send.ts). That precondition throws
+    // PlatformMessageNotDispatchedError, the provider's own proof that no
+    // send began, so this must classify the same as a pre-transport failure
+    // instead of the coincidental absence of recorded results (#117441).
     const dispatcher = createReplyDispatcher({
       deliver: async () => {
-        throw new OutboundDeliveryError("no active session", {
-          cause: new Error("no active session"),
-          stage: "platform_send",
+        const cause = new PlatformMessageNotDispatchedError("no active listener", {
+          cause: new Error("no active listener"),
         });
+        throw new OutboundDeliveryError(cause.message, { cause, stage: "platform_send" });
       },
     });
     const ledger = createReplyTurnLedger(dispatcher);
     expect(ledger.sendQueued("final", { text: "hello" }).queued).toBe(true);
     await ledger.settleQueued();
     expect(ledger.hasVisibleDelivery()).toBe(false);
+    dispatcher.markComplete();
+    await dispatcher.waitForIdle();
+  });
+
+  it("still counts an unproven OutboundDeliveryError failure as visible", async () => {
+    // Absence of recorded results is not proof nothing reached the platform
+    // (a mid-send network reset can fail before results are captured too).
+    // Without an explicit provider-asserted non-dispatch or proven pre-connect
+    // failure, this must stay conservative like a generic transport error, or
+    // recovery could resend a message the recipient already received.
+    const dispatcher = createReplyDispatcher({
+      deliver: async () => {
+        throw new OutboundDeliveryError("socket reset mid-send", {
+          cause: new Error("socket reset mid-send"),
+          stage: "platform_send",
+        });
+      },
+    });
+    const ledger = createReplyTurnLedger(dispatcher);
+    expect(ledger.sendQueued("block", { text: "streamed" }).queued).toBe(true);
+    await ledger.settleQueued();
+    expect(ledger.hasVisibleDelivery()).toBe(true);
     dispatcher.markComplete();
     await dispatcher.waitForIdle();
   });

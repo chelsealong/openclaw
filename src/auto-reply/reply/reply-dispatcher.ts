@@ -1,8 +1,8 @@
 // Dispatches final reply payloads through visible senders and message tools.
-import { isChannelPartialDeliveryError } from "../../channels/turn/delivery-result.js";
 import type { TypingCallbacks } from "../../channels/typing.js";
 import type { HumanDelayConfig } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isProvenDeliveryNotSentError } from "../../infra/delivery-recovery.shared.js";
 import { isOutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
 import { generateSecureInt } from "../../infra/secure-random.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -223,19 +223,15 @@ export function captureReplyDispatchDeliveryOutcome(payload: ReplyPayload): {
 
 // `deliveryStarted` only proves the send attempt began, not that anything
 // reached the platform: adapters that reject before any network attempt
-// (e.g. "no active session") still flip it before throwing. Prefer the
-// error's own sent-before-error signal when the delivery layer provides one,
-// so a confirmed pre-send rejection still classifies as "failed-before-deliver"
-// (openclaw/openclaw#117441) instead of wrongly looking like a possible partial
-// send.
-function wasSentBeforeError(err: unknown, deliveryStarted: boolean): boolean {
-  if (isOutboundDeliveryError(err)) {
-    return err.sentBeforeError;
-  }
-  if (isChannelPartialDeliveryError(err)) {
-    return true;
-  }
-  return deliveryStarted;
+// (e.g. "no active session") still flip it before throwing. `sentBeforeError`
+// alone is too weak to override it (it is merely "no results were recorded
+// yet", which can't rule out an ambiguous mid-send failure); require the same
+// stricter proof the outbound queue's failDeliveryBeforePlatformSend gate uses
+// (deliver-queue-execute.ts) — an explicit provider-asserted non-dispatch or a
+// proven pre-connect failure in the error graph — before downgrading to
+// "failed-before-deliver" (openclaw/openclaw#117441).
+function wasConfirmedNotSentBeforeDeliver(err: unknown): boolean {
+  return isOutboundDeliveryError(err) && !err.sentBeforeError && isProvenDeliveryNotSentError(err);
 }
 
 function buildReplyDispatchRuntimeInfo(
@@ -496,9 +492,10 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
         deliveryOutcome = "delivered";
       })
       .catch(async (err: unknown) => {
-        deliveryOutcome = wasSentBeforeError(err, deliveryStarted)
-          ? "failed-deliver"
-          : "failed-before-deliver";
+        deliveryOutcome =
+          deliveryStarted && !wasConfirmedNotSentBeforeDeliver(err)
+            ? "failed-deliver"
+            : "failed-before-deliver";
         failedCounts[kind] += 1;
         // Error cleanup belongs to this send: idle/finalization must not race it.
         // Observer failures stay isolated from later queued deliveries.
