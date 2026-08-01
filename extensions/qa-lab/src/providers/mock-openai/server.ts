@@ -1040,7 +1040,7 @@ async function buildResponsesPayload(
   const threadReplyReceiptMatch = threadReplyReceiptPrompt
     ? QA_THREAD_REPLY_RECEIPT_PROMPT_RE.exec(threadReplyReceiptPrompt)
     : null;
-  if (threadReplyReceiptMatch) {
+  if (threadReplyReceiptPrompt && threadReplyReceiptMatch) {
     const marker =
       extractExactMarkerDirective(threadReplyReceiptPrompt) ??
       extractExactReplyDirective(threadReplyReceiptPrompt) ??
