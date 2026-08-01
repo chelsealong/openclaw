@@ -481,7 +481,10 @@ export function configureSqliteWalMaintenance(
   // Only a positively classified local filesystem ("wal") is safe for mmap.
   // "wal-unverified" also runs WAL journaling, but classification could not
   // rule out a network mount, so it must not reach the mmap pragma below.
-  const hasVerifiedLocalPath = journalPolicy === "wal";
+  // Windows is excluded even on a verified local drive: SQLite cannot
+  // truncate a memory-mapped database file there, which conflicts with the
+  // incremental auto_vacuum this helper enables and periodically runs below.
+  const hasVerifiedLocalPath = journalPolicy === "wal" && process.platform !== "win32";
   if (journalPolicy === "unsupported") {
     refuseUnsupportedFilesystem(options);
   }

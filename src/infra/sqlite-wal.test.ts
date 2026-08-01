@@ -794,6 +794,27 @@ describe("sqlite WAL maintenance", () => {
     );
   });
 
+  it("never memory-maps a verified local Windows drive", () => {
+    // SQLite cannot truncate a memory-mapped database file on Windows, which
+    // conflicts with the incremental auto_vacuum/incremental_vacuum
+    // maintenance this helper runs. A verified local drive still reaches the
+    // WAL branch (see "does not treat namespaced Windows local drives as UNC
+    // paths" above), but must not reach the mmap pragma.
+    const db = createMockDb();
+    const databasePath = String.raw`\\?\C:\state\openclaw.sqlite`;
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    vi.spyOn(fs.realpathSync, "native").mockReturnValue(databasePath);
+
+    configureSqliteWalMaintenance(db, {
+      checkpointIntervalMs: 0,
+      databasePath,
+    });
+
+    const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+    expect(sql).toContain("PRAGMA journal_mode = WAL;");
+    expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+  });
+
   it("never memory-maps a database when no path was supplied to verify the filesystem", () => {
     // A caller that omits databasePath never had its filesystem checked against
     // the NFS/SMB/CIFS/SMB2 rollback boundary above. Treating that as "local" for
