@@ -171,18 +171,16 @@ flow:
                 expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBeforeDivergent}`)).find((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.channelId === config.conversationId && request.plannedToolArgs?.threadId === threadId && request.plannedToolArgs?.message === divergentToolMarker) : true"
             - expr: liveTurnTimeoutMs(env, 180000)
         - call: waitForCondition
+          saveAs: divergentOutbound
           args:
             - lambda:
                 params: []
-                expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)).length === 2"
+                expr: "(() => { const messages = state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)); return messages.length === 2 ? messages : undefined; })()"
             - expr: liveTurnTimeoutMs(env, 180000)
         - assert:
             expr: "!env.mock || Boolean(divergentToolRequest)"
             message:
               expr: "`expected divergent message(action=thread-reply), saw ${JSON.stringify(divergentToolRequest ?? null)}`"
-        - set: divergentOutbound
-          value:
-            expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker))"
         - assert:
             expr: "divergentOutbound.length === 2 && divergentOutbound.some((message) => message.text === divergentToolMarker) && divergentOutbound.some((message) => message.text === divergentFinalMarker)"
             message:

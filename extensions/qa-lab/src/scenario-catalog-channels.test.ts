@@ -100,6 +100,7 @@ describe("qa scenario catalog channel contracts", () => {
     expect(flow).toContain("summary.currentSourceToolDeliveries?.find");
     expect(flow).toContain("turnOutbound.length === 1");
     expect(flow).toContain("divergentOutbound.length === 2");
+    expect(flow).toContain("return messages.length === 2 ? messages : undefined");
     expect(flow).toContain("QA-THREAD-RECEIPT-TOOL-OK");
     expect(flow).toContain("QA-THREAD-RECEIPT-FINAL-OK");
   });
