@@ -288,6 +288,22 @@ function resolveTranscriptMirrorIdempotencyKey(params: {
   return `${params.idempotencyKey}:terminal-receipt:${params.sourceTurnId}`;
 }
 
+// `thread-reply` addresses a thread target the same way `send`/`poll` address a
+// conversation target, so its current-source marking reuses the target +
+// thread-placement contract below instead of the reply message-id contract
+// (`isDeliveredCurrentSourceReplyAction`), which `thread-reply` cannot satisfy:
+// it only optionally carries a replied-to message id.
+const THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES = new Set(["thread-reply"]);
+
+/** Thread-reply actions address a conversation/thread target, not a message id. */
+export function isThreadPlacementSourceReplyActionName(action: string): boolean {
+  return THREAD_PLACEMENT_SOURCE_REPLY_ACTION_NAMES.has(action.trim().toLowerCase());
+}
+
+function isTargetMatchedSourceReplyActionName(action: string): boolean {
+  return action === "send" || action === "poll" || isThreadPlacementSourceReplyActionName(action);
+}
+
 function isCurrentSourceConversation(
   params: SourceReplyTranscriptMirrorParams,
   threadPlacement = resolveSourceReplyThreadPlacement(
@@ -295,10 +311,11 @@ function isCurrentSourceConversation(
     resolveChannelThreadAddressing(params.channel),
   ),
 ): params is MirrorableSourceReplyTranscriptParams {
-  // Polls share the send target contract: `to` addresses a conversation, so the
-  // same current-source matching applies. Transcript mirroring stays send-only
-  // because poll params carry no message text to mirror.
-  if (params.action !== "send" && params.action !== "poll") {
+  // Polls and thread replies share the send target contract: `to` (plus thread
+  // placement) addresses a conversation, so the same current-source matching
+  // applies. Transcript mirroring stays send-only because poll/thread-reply
+  // params carry no message text to mirror.
+  if (!isTargetMatchedSourceReplyActionName(params.action)) {
     return false;
   }
   if (!params.sessionKey?.trim()) {
@@ -377,7 +394,8 @@ export function isDeliveredCurrentSourceReply(params: SourceReplyTranscriptMirro
 
 // `thread-reply` addresses a thread target and only optionally carries a
 // replied-to message id, so the message-id contract below cannot verify it;
-// its current-source marking needs thread-placement validation as follow-up.
+// it is validated via `isThreadPlacementSourceReplyActionName` instead (target
+// + thread-placement matching, same contract as `send`/`poll`).
 const CURRENT_SOURCE_REPLY_ACTION_NAMES = new Set(["reply"]);
 
 /** Reply-type message actions address a message id rather than a conversation target. */

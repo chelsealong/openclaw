@@ -45,8 +45,9 @@ function createReplyActionPlugin(handleAction: ChannelActionHandler): ChannelPlu
       },
     },
     actions: {
-      describeMessageTool: () => ({ actions: ["reply", "poll"] }),
-      supportsAction: ({ action }) => action === "reply" || action === "poll",
+      describeMessageTool: () => ({ actions: ["reply", "poll", "thread-reply"] }),
+      supportsAction: ({ action }) =>
+        action === "reply" || action === "poll" || action === "thread-reply",
       handleAction,
     },
   };
@@ -121,6 +122,31 @@ async function runPollAction(params: { to: string }) {
       pollQuestion: "Preferred default?",
       pollOption: ["Tell me right away", "Only important"],
     },
+    toolContext,
+    messageActionAuthorization: {
+      requesterAccountId: "default",
+      toolContext,
+    },
+    sessionKey: "agent:main:testchat:direct:user-1",
+    defaultAccountId: "default",
+    sourceReplyDeliveryMode: "message_tool_only",
+    dryRun: false,
+  });
+}
+
+async function runThreadReplyAction(params: {
+  actionParams: Record<string, unknown>;
+  currentThreadTs?: string;
+}) {
+  const toolContext = {
+    currentChannelProvider: "testchat" as const,
+    currentChannelId: "direct:user-1",
+    ...(params.currentThreadTs !== undefined ? { currentThreadTs: params.currentThreadTs } : {}),
+  };
+  return await runMessageAction({
+    cfg: testchatConfig,
+    action: "thread-reply",
+    params: { channel: "testchat", ...params.actionParams },
     toolContext,
     messageActionAuthorization: {
       requesterAccountId: "default",
@@ -214,6 +240,40 @@ describe("runMessageAction reply-type plugin actions", () => {
     registerReplyPlugin();
 
     const result = await runPollAction({ to: "direct:someone-else" });
+
+    expect((result.payload as { sourceReplyRoute?: unknown }).sourceReplyRoute).toBeUndefined();
+  });
+
+  it("marks thread replies to the current conversation as current-source deliveries", async () => {
+    registerReplyPlugin();
+
+    const result = await runThreadReplyAction({
+      actionParams: { to: "direct:user-1", message: "visible thread reply" },
+    });
+
+    expect(result.kind).toBe("action");
+    expect(result.payload).toMatchObject({ sourceReplyRoute: "current-source" });
+    const details = "toolResult" in result ? result.toolResult?.details : undefined;
+    expect(details).toMatchObject({ sourceReplyRoute: "current-source" });
+  });
+
+  it("leaves thread replies to other conversations unmarked", async () => {
+    registerReplyPlugin();
+
+    const result = await runThreadReplyAction({
+      actionParams: { to: "direct:someone-else", message: "visible thread reply" },
+    });
+
+    expect((result.payload as { sourceReplyRoute?: unknown }).sourceReplyRoute).toBeUndefined();
+  });
+
+  it("leaves thread replies whose explicit threadId misses the current thread unmarked", async () => {
+    registerReplyPlugin();
+
+    const result = await runThreadReplyAction({
+      actionParams: { to: "direct:user-1", message: "visible thread reply", threadId: "999" },
+      currentThreadTs: "1783",
+    });
 
     expect((result.payload as { sourceReplyRoute?: unknown }).sourceReplyRoute).toBeUndefined();
   });
