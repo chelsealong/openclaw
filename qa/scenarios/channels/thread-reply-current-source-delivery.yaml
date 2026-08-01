@@ -163,18 +163,23 @@ flow:
             threadId:
               ref: threadId
         - call: waitForCondition
+          saveAs: divergentToolRequest
+          args:
+            - lambda:
+                async: true
+                params: []
+                expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBeforeDivergent}`)).find((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.channelId === config.conversationId && request.plannedToolArgs?.threadId === threadId && request.plannedToolArgs?.message === divergentToolMarker) : true"
+            - expr: liveTurnTimeoutMs(env, 180000)
+        - call: waitForCondition
           args:
             - lambda:
                 params: []
                 expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker)).length === 2"
             - expr: liveTurnTimeoutMs(env, 180000)
-        - set: divergentRequests
-          value:
-            expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBeforeDivergent}`)).filter((request) => String(request.allInputText ?? '').includes(config.promptSnippet)) : []"
         - assert:
-            expr: "!env.mock || divergentRequests.some((request) => request.plannedToolName === 'message' && request.plannedToolArgs?.action === 'thread-reply' && request.plannedToolArgs?.message === divergentToolMarker)"
+            expr: "!env.mock || Boolean(divergentToolRequest)"
             message:
-              expr: "`expected divergent message(action=thread-reply), saw ${JSON.stringify(divergentRequests.map((request) => ({ plannedToolName: request.plannedToolName ?? null, plannedToolArgs: request.plannedToolArgs ?? null, toolOutput: request.toolOutput ?? '' })))} `"
+              expr: "`expected divergent message(action=thread-reply), saw ${JSON.stringify(divergentToolRequest ?? null)}`"
         - set: divergentOutbound
           value:
             expr: "state.getSnapshot().messages.slice(divergentStartIndex).filter((message) => message.direction === 'outbound' && !message.deleted && message.conversation.id === config.conversationId && message.threadId === threadId && (message.text === divergentToolMarker || message.text === divergentFinalMarker))"
