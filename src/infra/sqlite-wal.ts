@@ -464,6 +464,7 @@ export function configureSqliteWalMaintenance(
   const timerIntervalMs = Math.min(checkpointIntervalMs, MAX_TIMER_TIMEOUT_MS);
   const checkpointMode = options.checkpointMode ?? "TRUNCATE";
   const periodicCheckpointMode = options.checkpointMode ?? "PASSIVE";
+  const hasVerifiedLocalPath = Boolean(options.databasePath);
   const journalPolicy = options.databasePath
     ? resolvePathJournalPolicy(options.databasePath)
     : "wal";
@@ -486,11 +487,16 @@ export function configureSqliteWalMaintenance(
   enableMacosCheckpointFullfsync(db);
   db.exec(`PRAGMA wal_autocheckpoint = ${autoCheckpointPages};`);
   db.exec(`PRAGMA journal_size_limit = ${DEFAULT_SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES};`);
-  // Local-filesystem WAL is confirmed at this point: the rollback and
-  // WAL-refused branches above have already returned. node:sqlite is
-  // synchronous, so each page the OS must serve from disk is event-loop block
-  // time, which memory-mapped reads cut directly.
-  db.exec(`PRAGMA mmap_size = ${DEFAULT_SQLITE_MMAP_SIZE_BYTES};`);
+  if (hasVerifiedLocalPath) {
+    // Local-filesystem WAL is confirmed at this point via resolvePathJournalPolicy:
+    // the rollback and WAL-refused branches above have already returned for
+    // NFS/SMB/CIFS/SMB2 volumes. node:sqlite is synchronous, so each page the OS
+    // must serve from disk is event-loop block time, which memory-mapped reads
+    // cut directly. When no databasePath was supplied, the filesystem was never
+    // checked, so mmap stays off — an unmapped I/O error is recoverable, but a
+    // mapped one raises a signal SQLite cannot catch (#60349).
+    db.exec(`PRAGMA mmap_size = ${DEFAULT_SQLITE_MMAP_SIZE_BYTES};`);
+  }
 
   const runCheckpoint = (mode: SqliteWalCheckpointMode): boolean => {
     try {

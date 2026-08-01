@@ -548,20 +548,21 @@ describe("sqlite WAL maintenance", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
 
     const maintenance = configureSqliteWalMaintenance(db, { checkpointIntervalMs: 100 });
-    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit, mmap_size.
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit. No databasePath
+    // is supplied, so mmap_size is not issued (the filesystem was never verified).
+    expect(db["exec"]).toHaveBeenCalledTimes(3);
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(PASSIVE);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
-    expect(db["exec"]).toHaveBeenCalledTimes(5);
+    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenCalledTimes(4);
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE);");
-    expect(db["exec"]).toHaveBeenCalledTimes(5);
+    expect(db["exec"]).toHaveBeenCalledTimes(4);
 
     vi.advanceTimersByTime(200);
-    expect(db["exec"]).toHaveBeenCalledTimes(5);
+    expect(db["exec"]).toHaveBeenCalledTimes(4);
   });
 
   it("clamps oversized checkpoint intervals before arming timers", () => {
@@ -590,7 +591,7 @@ describe("sqlite WAL maintenance", () => {
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(FULL);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenLastCalledWith("PRAGMA wal_checkpoint(FULL);");
@@ -775,10 +776,14 @@ describe("sqlite WAL maintenance", () => {
   });
 
   it("enables memory-mapped reads on the local-filesystem WAL path", () => {
+    const tempDir = tempDirs.make("openclaw-sqlite-mmap-local-");
     const db = createMockDb();
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
 
-    configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
+    configureSqliteWalMaintenance(db, {
+      checkpointIntervalMs: 0,
+      databasePath: path.join(tempDir, "openclaw.sqlite"),
+    });
 
     const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
     expect(sql).toContain("PRAGMA mmap_size = 67108864;");
@@ -787,6 +792,20 @@ describe("sqlite WAL maintenance", () => {
     expect(sql.indexOf("PRAGMA mmap_size = 67108864;")).toBeGreaterThan(
       sql.indexOf("PRAGMA journal_mode = WAL;"),
     );
+  });
+
+  it("never memory-maps a database when no path was supplied to verify the filesystem", () => {
+    // A caller that omits databasePath never had its filesystem checked against
+    // the NFS/SMB/CIFS/SMB2 rollback boundary above. Treating that as "local" for
+    // mmap would let an unverified network-backed connection reach the pragma
+    // that produced the #60349 SIGBUS crashes.
+    const db = createMockDb();
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+
+    configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
+
+    const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+    expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
   });
 
   it.each([
