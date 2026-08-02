@@ -269,6 +269,12 @@ function resolveMountTypeJournalPolicy(entry: MountEntry): SqliteFilesystemJourn
     // arbitrary backing store, so WAL is safe but mmap eligibility is not.
     return isSshfsMountSource(entry.source) ? "unsupported" : "wal-mmap-ineligible";
   }
+  if (normalized === "fuse" || normalized.startsWith("fuse.")) {
+    // Any other FUSE type (e.g. fuse.rclone) is the same passthrough hazard
+    // as macFUSE/OSXFUSE above: it can front an arbitrary, possibly
+    // network-backed store that this classifier cannot positively verify.
+    return "wal-mmap-ineligible";
+  }
   return "wal";
 }
 

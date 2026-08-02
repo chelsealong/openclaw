@@ -524,6 +524,33 @@ describe("sqlite WAL maintenance", () => {
     }
   });
 
+  it("keeps WAL enabled but never memory-maps generic FUSE mounts", () => {
+    // A non-SSHFS fuse.* mount (e.g. fuse.rclone) is not specifically named
+    // like macFUSE/OSXFUSE, but it is the same passthrough hazard: it can
+    // front an arbitrary, possibly network-backed filesystem, so it must
+    // never be treated as verified-local for mmap.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-fuse-generic-"));
+    try {
+      const db = createMockDb();
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(0));
+      vi.spyOn(fs, "readFileSync").mockReturnValue(
+        `42 12 0:41 / ${tempDir} rw,relatime - fuse.rclone rclone:remote rw\n`,
+      );
+
+      configureSqliteWalMaintenance(db, {
+        checkpointIntervalMs: 0,
+        databasePath: path.join(tempDir, "openclaw.sqlite"),
+      });
+
+      expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("parses Linux mount command filesystem names when proc mountinfo is unavailable", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-nfs-"));
     try {
