@@ -14,7 +14,11 @@ import {
   extractText,
 } from "./extract.js";
 import { resolveInboundMediaMimetype } from "./media-mimetype.js";
-import { downloadInboundMedia, downloadQuotedInboundMedia } from "./media.js";
+import {
+  downloadInboundMedia,
+  downloadQuotedInboundMedia,
+  isRetryableWhatsAppInboundMediaError,
+} from "./media.js";
 
 export type WhatsAppEnrichedInboundMessage = {
   body: string;
@@ -77,6 +81,13 @@ export async function enrichWhatsAppInboundMessage(params: {
       await downloadInboundMedia(msg as proto.IWebMessageInfo, sock, maxBytes),
     );
   } catch (error) {
+    if (isRetryableWhatsAppInboundMediaError(error)) {
+      // Pre-adoption failure: reject so the durable ingress drain retries the
+      // whole event instead of degrading it to an unavailable-attachment
+      // notice that permanently loses media with no text fallback (mirrors
+      // the LINE ingress retry boundary, PR #110921).
+      throw error;
+    }
     params.logVerbose(`Inbound media download failed: ${String(error)}`);
     body = formatInboundMediaUnavailableText({
       body,
@@ -91,6 +102,9 @@ export async function enrichWhatsAppInboundMessage(params: {
       mediaKind = replyContext.media.kind ?? undefined;
       mediaType = mediaType ?? replyContext.media.contentType ?? undefined;
     } catch (error) {
+      if (isRetryableWhatsAppInboundMediaError(error)) {
+        throw error;
+      }
       params.logVerbose(`Quoted media download failed: ${String(error)}`);
       body = formatInboundMediaUnavailableText({
         body,
