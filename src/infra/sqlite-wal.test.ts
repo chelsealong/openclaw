@@ -494,7 +494,11 @@ describe("sqlite WAL maintenance", () => {
     }
   });
 
-  it("keeps WAL enabled for non-remote macFUSE mounts", () => {
+  it("keeps WAL enabled but never memory-maps non-remote macFUSE mounts", () => {
+    // A non-SSHFS MacFUSE/OSXFUSE report is not the network-coordination
+    // hazard SSHFS is, so WAL stays enabled. But it is still a FUSE
+    // passthrough that can front an arbitrary, possibly network-backed,
+    // filesystem, so it must never be treated as verified-local for mmap.
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-macfuse-"));
     try {
       const db = createMockDb();
@@ -513,6 +517,8 @@ describe("sqlite WAL maintenance", () => {
       });
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

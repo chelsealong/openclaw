@@ -52,7 +52,16 @@ type SqliteWalCheckpointMode = "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE";
 // "wal-unverified" means WAL is still fine to use, but classification was
 // inconclusive (no matching mount entry, no resolvable parent, etc.) - it
 // must never be treated as a positive local result for mmap purposes.
-type SqliteFilesystemJournalPolicy = "rollback" | "unsupported" | "wal" | "wal-unverified";
+// "wal-mmap-ineligible" means WAL is still fine (a non-SSHFS MacFUSE/OSXFUSE
+// mount is not the network-coordination hazard SSHFS is), but the mount is a
+// FUSE passthrough that can sit in front of an arbitrary, possibly
+// network-backed, filesystem, so it must never reach the mmap pragma either.
+type SqliteFilesystemJournalPolicy =
+  | "rollback"
+  | "unsupported"
+  | "wal"
+  | "wal-unverified"
+  | "wal-mmap-ineligible";
 type MountEntry = { mountPoint: string; fsType: string; source?: string };
 
 export type SqliteWalMaintenance = {
@@ -254,8 +263,11 @@ function resolveMountTypeJournalPolicy(entry: MountEntry): SqliteFilesystemJourn
   if (normalized === "fuse.sshfs") {
     return "unsupported";
   }
-  if ((normalized === "macfuse" || normalized === "osxfuse") && isSshfsMountSource(entry.source)) {
-    return "unsupported";
+  if (normalized === "macfuse" || normalized === "osxfuse") {
+    // SSHFS reported under these names is refused above via source sniffing.
+    // A non-SSHFS report is still just a FUSE passthrough: it can front an
+    // arbitrary backing store, so WAL is safe but mmap eligibility is not.
+    return isSshfsMountSource(entry.source) ? "unsupported" : "wal-mmap-ineligible";
   }
   return "wal";
 }
@@ -285,6 +297,13 @@ function combineMountEntryJournalPolicies(
   }
   if (policies.has("rollback")) {
     return "rollback";
+  }
+  // A FUSE passthrough identified via either path representation is enough to
+  // distrust mmap eligibility, even if the other representation resolved to a
+  // plain "wal" - both describe the same mount, so the more conservative
+  // result wins rather than the more permissive one.
+  if (policies.has("wal-mmap-ineligible")) {
+    return "wal-mmap-ineligible";
   }
   // Prefer a positive match from either path representation over an
   // unverified default: the original and canonical paths describe the same
@@ -481,6 +500,9 @@ export function configureSqliteWalMaintenance(
   // Only a positively classified local filesystem ("wal") is safe for mmap.
   // "wal-unverified" also runs WAL journaling, but classification could not
   // rule out a network mount, so it must not reach the mmap pragma below.
+  // "wal-mmap-ineligible" (non-SSHFS MacFUSE/OSXFUSE) runs WAL too, but a FUSE
+  // passthrough can front an arbitrary backing store, so it is excluded the
+  // same way.
   // Windows is excluded even on a verified local drive: SQLite cannot
   // truncate a memory-mapped database file there, which conflicts with the
   // incremental auto_vacuum this helper enables and periodically runs below.
