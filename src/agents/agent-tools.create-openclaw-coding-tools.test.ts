@@ -2464,6 +2464,82 @@ describe("createOpenClawCodingTools", () => {
     }
   });
 
+  it("rejects a queued sandbox memory-flush append after its caller aborts while waiting", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-sandbox-abort-"));
+    const memoryRelativePath = "memory/2026-08-02.md";
+    try {
+      await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(path.join(workspaceDir, memoryRelativePath), "seed", "utf8");
+
+      // A's first real bridge call is held open (bounded by a fallback timeout)
+      // until explicitly released, so B -- invoked immediately after A and
+      // racing through the same tool wrapper chain -- has time to pass its own
+      // pre-execution checks and land inside the mutation queue, genuinely
+      // waiting behind A's still-unresolved turn, before B's caller aborts.
+      let releaseA: (() => void) | undefined;
+      let resolveAEntered: (() => void) | undefined;
+      const aEntered = new Promise<void>((resolve) => {
+        resolveAEntered = resolve;
+      });
+      let statCallCount = 0;
+      const baseBridge = createHostSandboxFsBridge(workspaceDir);
+      const sharedBridge = {
+        ...baseBridge,
+        stat: async (params: Parameters<typeof baseBridge.stat>[0]) => {
+          statCallCount += 1;
+          if (statCallCount === 1) {
+            resolveAEntered?.();
+            await new Promise<void>((resolve) => {
+              releaseA = resolve;
+              setTimeout(resolve, 200);
+            });
+          }
+          return baseBridge.stat(params);
+        },
+      };
+      const buildWriteTool = () => {
+        const sandbox = createAgentToolsSandboxContext({
+          workspaceDir,
+          fsBridge: sharedBridge,
+          workspaceAccess: "rw",
+        });
+        const tools = createOpenClawCodingTools({
+          workspaceDir,
+          sandbox,
+          trigger: "memory",
+          memoryFlushWritePath: memoryRelativePath,
+        });
+        return requireToolExecute(requireTool(tools, "write"));
+      };
+
+      const writeA = buildWriteTool();
+      const writeB = buildWriteTool();
+      const controllerB = new AbortController();
+
+      const writeAPromise = writeA("session-a-flush", {
+        path: memoryRelativePath,
+        content: "durable-note-A",
+      });
+      const writeBPromise = writeB(
+        "session-b-flush",
+        { path: memoryRelativePath, content: "durable-note-B" },
+        controllerB.signal,
+      );
+      await aEntered;
+      controllerB.abort();
+      releaseA?.();
+
+      await writeAPromise;
+      await expect(writeBPromise).rejects.toThrow("Operation aborted");
+
+      const finalContent = await fs.readFile(path.join(workspaceDir, memoryRelativePath), "utf8");
+      expect(finalContent).toContain("durable-note-A");
+      expect(finalContent).not.toContain("durable-note-B");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects legacy alias parameters", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-legacy-alias-"));
     try {

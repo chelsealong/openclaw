@@ -671,6 +671,9 @@ async function appendMemoryFlushContent(params: {
   // same mutation queue ordinary write/edit tools use so two concurrent memory
   // flushes for one in-process sandbox workspace cannot silently drop a note.
   await withMutationQueueKey(`sandbox-append:${sandbox.root}:${params.relativePath}`, async () => {
+    if (params.signal?.aborted) {
+      throw new Error("Operation aborted");
+    }
     const existing = await readOptionalUtf8File({
       absolutePath: params.absolutePath,
       relativePath: params.relativePath,
