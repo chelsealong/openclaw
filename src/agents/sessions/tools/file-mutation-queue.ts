@@ -29,7 +29,23 @@ export async function withFileMutationQueues<T>(
   filePaths: readonly string[],
   fn: () => Promise<T>,
 ): Promise<T> {
-  const keys = [...new Set(filePaths.map(getMutationQueueKey))].toSorted();
+  return await withMutationQueueKeys(filePaths.map(getMutationQueueKey), fn);
+}
+
+/**
+ * Serialize mutation operations sharing a caller-supplied key. Use for targets
+ * without a real host filesystem path (e.g. remote sandbox backends) where
+ * `getMutationQueueKey`'s realpath resolution does not apply.
+ */
+export async function withMutationQueueKey<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  return await withMutationQueueKeys([key], fn);
+}
+
+async function withMutationQueueKeys<T>(
+  queueKeys: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(queueKeys)].toSorted();
   const current = Promise.all(
     keys.map((key) => (fileMutationTails.get(key) ?? Promise.resolve()).catch(() => undefined)),
   ).then(fn);

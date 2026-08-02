@@ -2402,6 +2402,68 @@ describe("createOpenClawCodingTools", () => {
     }
   });
 
+  it("serializes concurrent sandbox memory-flush appends instead of losing one", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-sandbox-race-"));
+    const memoryRelativePath = "memory/2026-08-01.md";
+    try {
+      await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(path.join(workspaceDir, memoryRelativePath), "seed", "utf8");
+
+      // Both real writeFile calls raced to the sandbox backend land here. The
+      // first one to arrive pauses (bounded by a fallback) so a second racing
+      // caller, if any, can also reach this point before either write commits
+      // to disk -- reproducing the lost-update window from a read-modify-write
+      // append without an in-process mutation queue.
+      let writerCount = 0;
+      let releaseFirstWriter: (() => void) | undefined;
+      const baseBridge = createHostSandboxFsBridge(workspaceDir);
+      const sharedBridge = {
+        ...baseBridge,
+        writeFile: async (params: Parameters<typeof baseBridge.writeFile>[0]) => {
+          writerCount += 1;
+          if (writerCount === 1) {
+            await new Promise<void>((resolve) => {
+              releaseFirstWriter = resolve;
+              setTimeout(resolve, 100);
+            });
+          } else {
+            releaseFirstWriter?.();
+          }
+          return baseBridge.writeFile(params);
+        },
+      };
+
+      const buildWriteTool = () => {
+        const sandbox = createAgentToolsSandboxContext({
+          workspaceDir,
+          fsBridge: sharedBridge,
+          workspaceAccess: "rw",
+        });
+        const tools = createOpenClawCodingTools({
+          workspaceDir,
+          sandbox,
+          trigger: "memory",
+          memoryFlushWritePath: memoryRelativePath,
+        });
+        return requireToolExecute(requireTool(tools, "write"));
+      };
+
+      const writeA = buildWriteTool();
+      const writeB = buildWriteTool();
+
+      await Promise.all([
+        writeA("session-a-flush", { path: memoryRelativePath, content: "durable-note-A" }),
+        writeB("session-b-flush", { path: memoryRelativePath, content: "durable-note-B" }),
+      ]);
+
+      const finalContent = await fs.readFile(path.join(workspaceDir, memoryRelativePath), "utf8");
+      expect(finalContent).toContain("durable-note-A");
+      expect(finalContent).toContain("durable-note-B");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects legacy alias parameters", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-legacy-alias-"));
     try {
