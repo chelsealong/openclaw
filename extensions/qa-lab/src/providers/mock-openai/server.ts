@@ -1048,7 +1048,7 @@ async function buildResponsesPayload(
     const divergentFinal = /divergent final:\s*`([^`]+)`/iu
       .exec(threadReplyReceiptPrompt)?.[1]
       ?.trim();
-    if (!toolOutput && hasDeclaredTool(body, "message")) {
+    if (!hasCompletedToolOutput && hasDeclaredTool(body, "message")) {
       return buildToolCallEventsWithArgs("message", {
         action: "thread-reply",
         channelId: threadReplyReceiptMatch[1],

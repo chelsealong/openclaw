@@ -725,7 +725,10 @@ describe("qa mock openai server", () => {
     });
   });
 
-  it("plans the native thread reply used by current-source receipt proof", async () => {
+  it.each([
+    { label: "structured", output: JSON.stringify({ ok: true }) },
+    { label: "empty", output: "" },
+  ])("plans the native thread reply and completes after $label output", async ({ output }) => {
     const server = await startMockServer();
     const prompt =
       "qa thread reply receipt check. Use the native reply path. channel id: `qa-room`; thread id: `thread-1`; exact marker: `QA-THREAD-RECEIPT-OK`";
@@ -756,7 +759,7 @@ describe("qa mock openai server", () => {
         {
           type: "function_call_output",
           call_id: outputToolCallId(toolCall, "call_thread_reply_receipt"),
-          output: JSON.stringify({ ok: true }),
+          output,
         },
       ],
     });
