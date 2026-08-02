@@ -48,7 +48,7 @@ import {
   createWriteTool,
   type ReadToolDetails,
   type ReadToolTruncationDetails,
-  withMutationQueueKey,
+  withFileMutationQueue,
 } from "./sessions/index.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
 
@@ -668,9 +668,9 @@ async function appendMemoryFlushContent(params: {
 
   // The sandbox backend has no atomic append primitive: it reads, concatenates,
   // and overwrites the whole file. Serialize same-path appends through the
-  // same mutation queue ordinary write/edit tools use so two concurrent memory
-  // flushes for one in-process sandbox workspace cannot silently drop a note.
-  await withMutationQueueKey(`sandbox-append:${sandbox.root}:${params.relativePath}`, async () => {
+  // mutation queue ordinary write/edit tools use so concurrent mutations in
+  // one in-process sandbox workspace cannot silently overwrite each other.
+  await withFileMutationQueue(params.absolutePath, async () => {
     if (params.signal?.aborted) {
       throw new Error("Operation aborted");
     }
