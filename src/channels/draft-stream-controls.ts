@@ -90,7 +90,13 @@ export function createFinalizableDraftStreamControls<T = string>(params: {
 
   const seal = async (): Promise<void> => {
     // Sealing keeps the preview id for callers that already own final delivery/deletion.
+    // Mark stopped (not just final) so the loop's own isStopped guard blocks any update
+    // that lands while awaiting the in-flight send below; the loop's `final` flag alone
+    // does not stop it, since `stop()` relies on `final` staying send-permissive for its
+    // own flush. Without this, a concurrent update queued after loop.stop() clears the
+    // current timer can still be sent later and overwrite the finalized message content.
     params.markFinal();
+    params.markStopped();
     loop.stop();
     await loop.waitForInFlight();
   };
