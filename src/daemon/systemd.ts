@@ -1425,9 +1425,21 @@ async function resyncSystemdManagedEnvironmentFile(env: GatewayServiceEnv): Prom
   const stateDir = resolveStateDir(env as NodeJS.ProcessEnv);
   const { entries: stateDirDotEnvEntries, skippedShellReferenceKeys } =
     readStateDirDotEnvFromStateDir(stateDir);
+  // `environment` merges inline Environment= directives with values already read back
+  // from the installed EnvironmentFile — the very file being rewritten here — so it can't
+  // be used as the "already covered" baseline the way writeSystemdUnit uses its
+  // freshly-computed install-time environment: every file-managed key's value in it is
+  // stale by construction. Compare against only the inline-sourced portion instead, so a
+  // changed file-managed key's current .env value is never mistaken for unchanged.
+  const inlineOnlyValues = Object.fromEntries(
+    Object.entries(environment ?? {}).filter(([key]) => {
+      const source = readEnvironmentValueSource(environmentValueSources, key);
+      return hasInlineEnvironmentSource(source) && !hasEnvironmentFileSource(source);
+    }),
+  );
   const stateDirDotEnvVars = Object.fromEntries(
     Object.entries(stateDirDotEnvEntries).filter(([key, value]) => {
-      const inlineValue = environment?.[key];
+      const inlineValue = inlineOnlyValues[key];
       if (typeof inlineValue !== "string") {
         return true;
       }
@@ -1436,14 +1448,16 @@ async function resyncSystemdManagedEnvironmentFile(env: GatewayServiceEnv): Prom
   );
   await writeSystemdGatewayEnvironmentFile({
     stateDir,
-    dotenvVars: stateDirDotEnvVars,
+    // Current .env wins; the stale on-disk value only fills in a file-managed key that
+    // .env no longer carries (e.g. one resolved once at install time and never mirrored
+    // to .env), so resync never drops it from the regenerated file.
+    dotenvVars: {
+      ...collectSystemdFileBackedEnvironment({ environment, fileManagedKeys }),
+      ...stateDirDotEnvVars,
+    },
     inlineManagedKeys: collectSystemdInlineManagedKeys({ environment, environmentValueSources }),
     fileManagedKeys,
     skippedManagedKeys: skippedShellReferenceKeys,
-    fileBackedEnvironment: collectSystemdFileBackedEnvironment({
-      environment,
-      fileManagedKeys,
-    }),
     environment,
   });
 }

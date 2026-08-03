@@ -2233,6 +2233,76 @@ describe("stageSystemdService", () => {
   });
 });
 
+describe("restartSystemdService resyncs the managed env file (#118503)", () => {
+  beforeEach(() => {
+    execFileMock.mockReset();
+    assertNoSystemSystemdOwnershipMock.mockReset();
+    assertNoSystemSystemdOwnershipMock.mockResolvedValue();
+  });
+
+  it("picks up an edited state-dir .env value for a file-managed key on restart", async () => {
+    const tempHomeRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "openclaw-systemd-restart-resync-"),
+    );
+    const home = path.join(tempHomeRoot, "home");
+    const stateDir = path.join(home, ".openclaw");
+    const env = {
+      HOME: home,
+      OPENCLAW_STATE_DIR: stateDir,
+      OPENCLAW_SYSTEMD_UNIT: "openclaw-gateway-restart-resync-test",
+    };
+    const unitName = "openclaw-gateway-restart-resync-test.service";
+    const unitPath = resolveSystemdUserUnitPath(env);
+    const envFilePath = path.join(stateDir, "gateway.systemd.env");
+
+    try {
+      await fs.mkdir(stateDir, { recursive: true });
+      // Stale value from a previous install/reinstall, still referenced by the unit.
+      await fs.writeFile(envFilePath, "OPENAI_API_KEY=stale-key\n", {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.writeFile(
+        unitPath,
+        [
+          "[Service]",
+          "ExecStart=/usr/bin/openclaw gateway run",
+          `EnvironmentFile=-${envFilePath}`,
+          "Environment=OPENCLAW_SERVICE_MANAGED_ENV_KEYS=OPENAI_API_KEY",
+        ].join("\n"),
+        "utf8",
+      );
+      // Operator edited .env since the last install; a plain restart must pick this up.
+      await fs.writeFile(path.join(stateDir, ".env"), "OPENAI_API_KEY=fresh-key\n", "utf8");
+
+      execFileMock
+        .mockImplementationOnce((_cmd, args, _opts, cb) => {
+          assertUserSystemctlArgs(args, "status");
+          cb(null, "", "");
+        })
+        .mockImplementationOnce((_cmd, args, _opts, cb) => {
+          assertUserSystemctlArgs(args, "reset-failed", unitName);
+          cb(null, "", "");
+        })
+        .mockImplementationOnce((_cmd, args, _opts, cb) => {
+          assertUserSystemctlArgs(args, "restart", unitName);
+          cb(null, "", "");
+        });
+
+      await restartSystemdService({
+        stdout: { write: vi.fn() } as unknown as NodeJS.WritableStream,
+        env,
+      });
+
+      const rewrittenEnvFile = await fs.readFile(envFilePath, "utf8");
+      expect(rewrittenEnvFile).toBe("OPENAI_API_KEY=fresh-key\n");
+    } finally {
+      await fs.rm(tempHomeRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("systemd service install and uninstall", () => {
   async function withNodeSystemdFixture(
     run: (context: {
