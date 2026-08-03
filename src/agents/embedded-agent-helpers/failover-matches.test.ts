@@ -275,3 +275,11 @@ describe("HTTP 429 overload wording (#98101)", () => {
     ).toBe("⚠️ rate limit: service overloaded, try again in 30 seconds");
   });
 });
+
+describe("Claude CLI session-limit message (#118793)", () => {
+  it("classifies the harness session-limit message as rate_limit so the fallback chain runs", () => {
+    const raw = "You've hit your session limit · resets 1:50pm (America/Buenos_Aires)";
+    expect(isRateLimitErrorMessage(raw)).toBe(true);
+    expect(classifyFailoverReason(raw)).toBe("rate_limit");
+  });
+});

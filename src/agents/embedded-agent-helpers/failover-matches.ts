@@ -84,6 +84,10 @@ const ERROR_PATTERNS = {
     "throttled",
     "throttling",
     "usage limit",
+    // Claude CLI harness session-limit message ("You've hit your session
+    // limit · resets 1:50pm") has no other matcher, so it fell through to
+    // surface_error instead of the fallback chain (#118793).
+    "session limit",
     /\btpm\b/i,
     "tokens per minute",
     "tokens per day",
