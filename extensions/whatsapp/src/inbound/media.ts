@@ -44,14 +44,9 @@ function errorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-// Baileys rejects a transient CDN fetch failure (bad HTTP status via @hapi/boom,
-// or a raw network error from the underlying stream) exactly like a permanent
-// one; its own reupload-on-410/404 retry never engages here because it keys off
-// `error.status`, which @hapi/boom never sets (statuses live under
-// `error.output.statusCode`). Only rethrow shapes a later attempt can plausibly
-// resolve (429/408/5xx, dropped connections) so the ingress drain retries the
-// whole event; everything else, including the size-limit error, degrades
-// immediately as before.
+// Baileys' own reupload-on-410/404 retry never engages here (it keys off
+// `error.status`, which @hapi/boom never sets), so we rethrow only errors a
+// retry can plausibly fix; everything else, including the size limit, degrades.
 export function isRetryableWhatsAppInboundMediaError(err: unknown): boolean {
   const statusCode = boomStatusCode(err);
   if (statusCode !== undefined) {
