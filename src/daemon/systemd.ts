@@ -1406,6 +1406,48 @@ async function writeSystemdGatewayEnvironmentFile(params: {
   return { environmentFiles: [envFilePath], environmentKeys };
 }
 
+/** Rewrites the installed unit's EnvironmentFile from the current state-dir .env so
+ *  managed-but-file-only keys (e.g. plugin credentials) pick up edits made since the
+ *  last install/reinstall. Plain `systemctl restart` only respawns the process; it
+ *  never re-reads .env, so without this the systemd env file stays stuck on whatever
+ *  was written at install time (see #118503). Best-effort: a stale env file is
+ *  recoverable with `gateway install --force`, so failures here must not block start/restart. */
+async function resyncSystemdManagedEnvironmentFile(env: GatewayServiceEnv): Promise<void> {
+  const installed = await readSystemdServiceExecStart(env).catch(() => null);
+  if (!installed) {
+    return;
+  }
+  const { environment, environmentValueSources } = installed;
+  const fileManagedKeys = collectSystemdFileManagedKeys({ environmentValueSources });
+  if (fileManagedKeys.size === 0) {
+    return;
+  }
+  const stateDir = resolveStateDir(env as NodeJS.ProcessEnv);
+  const { entries: stateDirDotEnvEntries, skippedShellReferenceKeys } =
+    readStateDirDotEnvFromStateDir(stateDir);
+  const stateDirDotEnvVars = Object.fromEntries(
+    Object.entries(stateDirDotEnvEntries).filter(([key, value]) => {
+      const inlineValue = environment?.[key];
+      if (typeof inlineValue !== "string") {
+        return true;
+      }
+      return inlineValue.trim() === value.trim();
+    }),
+  );
+  await writeSystemdGatewayEnvironmentFile({
+    stateDir,
+    dotenvVars: stateDirDotEnvVars,
+    inlineManagedKeys: collectSystemdInlineManagedKeys({ environment, environmentValueSources }),
+    fileManagedKeys,
+    skippedManagedKeys: skippedShellReferenceKeys,
+    fileBackedEnvironment: collectSystemdFileBackedEnvironment({
+      environment,
+      fileManagedKeys,
+    }),
+    environment,
+  });
+}
+
 async function removeNodeSystemdManagedEnvironmentKeys(env: GatewayServiceEnv): Promise<void> {
   if (!isNodeSystemdEnvironment(env)) {
     return;
@@ -1600,6 +1642,9 @@ async function runSystemdServiceAction(params: {
   const env = params.env ?? process.env;
   const installed = await findInstalledSystemdGatewayScope(env);
   const unitName = installed?.unitName ?? `${resolveSystemdServiceName(env)}.service`;
+  if (params.action !== "stop") {
+    await resyncSystemdManagedEnvironmentFile(env).catch(() => undefined);
+  }
   if (installed?.scope === "system") {
     if (!isRunningAsRoot()) {
       throw new Error(
