@@ -1,9 +1,11 @@
 // Covers config path resolution across env, home, and agent roots.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { resolveLegacyOAuthPath } from "../agents/auth-profiles/legacy-source-diagnostic.js";
+import { resetContainerEnvironmentCacheForTest } from "../infra/container-environment.js";
 import { withTempDir } from "../test-helpers/temp-dir.js";
+import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import {
   CONFIG_PATH,
   DEFAULT_GATEWAY_PORT,
@@ -16,6 +18,7 @@ import {
   resolveDefaultConfigCandidates,
   resolveConfigPathCandidate,
   resolveConfigPath,
+  resolveGatewayLockDir,
   resolveGatewayPort,
   resolveIncludeRoots,
   resolveOAuthDir,
@@ -576,5 +579,38 @@ describe("resolveIncludeRoots", () => {
       OPENCLAW_INCLUDE_ROOTS: ["", a, "  ", a].join(path.delimiter),
     });
     expect(resolveIncludeRoots(env, () => HOME)).toEqual([a]);
+  });
+});
+
+describe("resolveGatewayLockDir", () => {
+  const flyEnvKeys = ["FLY_MACHINE_ID", "FLY_APP_NAME"] as const;
+
+  afterEach(() => {
+    for (const key of flyEnvKeys) {
+      deleteTestEnvValue(key);
+    }
+    resetContainerEnvironmentCacheForTest();
+  });
+
+  it("uses the tmpdir-based ephemeral directory outside a container", () => {
+    resetContainerEnvironmentCacheForTest();
+    const dir = resolveGatewayLockDir(() => "/tmp", {} as NodeJS.ProcessEnv);
+    expect(dir.startsWith("/tmp")).toBe(true);
+    expect(dir).not.toContain("gateway-locks");
+  });
+
+  it("routes the lock through the state dir inside a container so it survives across containers sharing that mount", () => {
+    const capture = captureEnv([...flyEnvKeys]);
+    try {
+      setTestEnvValue("FLY_MACHINE_ID", "3d8d5459a03038");
+      setTestEnvValue("FLY_APP_NAME", "openclaw-test");
+      resetContainerEnvironmentCacheForTest();
+      const env = { OPENCLAW_STATE_DIR: "/home/node/.openclaw" } as NodeJS.ProcessEnv;
+      const dir = resolveGatewayLockDir(() => "/tmp", env);
+      expect(dir).toBe(path.join("/home/node/.openclaw", "gateway-locks"));
+    } finally {
+      capture.restore();
+      resetContainerEnvironmentCacheForTest();
+    }
   });
 });

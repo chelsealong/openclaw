@@ -41,7 +41,8 @@ function canonicalizeDatabasePath(databasePath: string): string {
 
 function resolveDeviceIdentityCoordinatorPath(
   databasePath: string,
-  lockDir = resolveGatewayLockDir(),
+  env: NodeJS.ProcessEnv = process.env,
+  lockDir = resolveGatewayLockDir(undefined, env),
 ): string {
   const canonicalPath = canonicalizeDatabasePath(databasePath);
   const databaseHash = crypto.createHash("sha256").update(canonicalPath).digest("hex").slice(0, 8);
@@ -91,8 +92,13 @@ export function acquireDeviceIdentityCoordinator(params: {
   databasePath: string;
   busyTimeoutMs?: number;
   lockDir?: string;
+  env?: NodeJS.ProcessEnv;
 }): { release: () => void } {
-  const coordinatorPath = resolveDeviceIdentityCoordinatorPath(params.databasePath, params.lockDir);
+  const coordinatorPath = resolveDeviceIdentityCoordinatorPath(
+    params.databasePath,
+    params.env,
+    params.lockDir,
+  );
   ensurePrivateCoordinatorDirectory(path.dirname(coordinatorPath));
   const database = openNodeSqliteDatabase(coordinatorPath);
   try {

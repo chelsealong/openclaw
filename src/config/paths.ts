@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { isValidProfileName } from "../cli/profile-utils.js";
 import { resolveGatewayNativeServiceIdentityConflict } from "../daemon/constants.js";
+import { isContainerEnvironment } from "../infra/container-environment.js";
 import { resolveHomeRelativePath, resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { parseTcpPort } from "../infra/tcp-port.js";
 import { isFastTestRuntimeEnv } from "../infra/test-runtime-env.js";
@@ -402,10 +403,23 @@ export function resolveDefaultConfigCandidates(
 export const DEFAULT_GATEWAY_PORT = 18789;
 
 /**
- * Gateway lock directory (ephemeral).
+ * Gateway lock directory.
  * Default: os.tmpdir()/openclaw-<uid> (uid suffix when available).
+ *
+ * Inside containers, os.tmpdir() is container-local: a second container that
+ * bind-mounts the same state dir (e.g. `docker compose run` against the
+ * gateway service) never sees the first container's lock file there, so the
+ * single-instance guard silently no-ops and both containers start channel
+ * pollers against the same credentials (#117635). Route the lock through the
+ * bind-mounted state dir in that case so it is visible across containers.
  */
-export function resolveGatewayLockDir(tmpdir: () => string = os.tmpdir): string {
+export function resolveGatewayLockDir(
+  tmpdir: () => string = os.tmpdir,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (isContainerEnvironment()) {
+    return path.join(resolveStateDir(env), "gateway-locks");
+  }
   const base = tmpdir();
   const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
   const suffix = uid != null ? `openclaw-${uid}` : "openclaw";

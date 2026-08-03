@@ -8,7 +8,9 @@ import {
   closeOpenClawStateDatabaseForTest,
   OPENCLAW_STATE_SCHEMA_VERSION,
 } from "../state/openclaw-state-db.js";
+import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
+import { resetContainerEnvironmentCacheForTest } from "./container-environment.js";
 import { acquireDeviceIdentityCoordinator } from "./device-identity-coordinator.js";
 import { normalizeLegacyDeviceIdentity } from "./device-identity-legacy.js";
 import type { DeviceIdentityStoreOptions } from "./device-identity-store.js";
@@ -326,6 +328,45 @@ describe("device identity SQLite store", () => {
       fs.writeFileSync(legacyPath, "{}\n");
 
       expect(() => loadOrCreateDeviceIdentity({ path: dbPath(rootDir) })).toThrow(/doctor --fix/);
+    });
+  });
+});
+
+describe("device identity coordinator lock placement", () => {
+  const flyEnvKeys = ["FLY_MACHINE_ID", "FLY_APP_NAME"] as const;
+
+  afterEach(() => {
+    for (const key of flyEnvKeys) {
+      deleteTestEnvValue(key);
+    }
+    resetContainerEnvironmentCacheForTest();
+  });
+
+  it("locks under the caller's env state dir inside a container, not process.env's", async () => {
+    await withTempDir("openclaw-device-identity-coordinator-env-", async (rootDir) => {
+      const capture = captureEnv([...flyEnvKeys]);
+      try {
+        setTestEnvValue("FLY_MACHINE_ID", "3d8d5459a03038");
+        setTestEnvValue("FLY_APP_NAME", "openclaw-test");
+        resetContainerEnvironmentCacheForTest();
+
+        const databasePath = path.join(rootDir, "state", "openclaw.sqlite");
+        const coordinator = acquireDeviceIdentityCoordinator({
+          databasePath,
+          env: { ...process.env, OPENCLAW_STATE_DIR: rootDir },
+          busyTimeoutMs: 0,
+        });
+        try {
+          const lockDir = path.join(rootDir, "gateway-locks");
+          expect(fs.existsSync(lockDir)).toBe(true);
+          expect(fs.readdirSync(lockDir).length).toBeGreaterThan(0);
+        } finally {
+          coordinator.release();
+        }
+      } finally {
+        capture.restore();
+        resetContainerEnvironmentCacheForTest();
+      }
     });
   });
 });
