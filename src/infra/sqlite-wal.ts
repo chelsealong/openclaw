@@ -39,6 +39,34 @@ const PROC_MOUNTINFO_PATH = "/proc/self/mountinfo";
 // Filesystem classification runs during database open, so never let the fallback probe stall it.
 const MOUNT_COMMAND_TIMEOUT_MS = 1_000;
 const NETWORK_FILESYSTEM_TYPES = new Set(["cifs", "smbfs", "smb2", "smb3"]);
+// mmap eligibility requires a positive match against this list rather than
+// merely avoiding the network/FUSE blocklist below: an unrecognized mount
+// type (a remote or virtual filesystem this classifier does not know about,
+// e.g. 9p, ceph, glusterfs, davfs) must fail closed instead of silently
+// reaching PRAGMA mmap_size.
+const LOCAL_DISK_FILESYSTEM_TYPES = new Set([
+  "ext2",
+  "ext3",
+  "ext4",
+  "xfs",
+  "btrfs",
+  "jfs",
+  "reiserfs",
+  "reiser4",
+  "f2fs",
+  "zfs",
+  "ufs",
+  "ntfs",
+  "ntfs3",
+  "vfat",
+  "msdos",
+  "exfat",
+  "iso9660",
+  "udf",
+  "hfs",
+  "hfsplus",
+  "apfs",
+]);
 const JOURNAL_MODE_RETRY_INTERVAL_MS = 10;
 const JOURNAL_MODE_RETRY_SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
@@ -47,11 +75,15 @@ type IntervalHandle = ReturnType<typeof setInterval> & {
 };
 
 type SqliteWalCheckpointMode = "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE";
-// "wal" means the filesystem was positively classified as safe for mmap
-// (a matched mount entry or statfs type that is not NFS/SMB/CIFS/SMB2).
+// "wal" means the filesystem was positively classified as safe for mmap: a
+// matched mount entry or statfs type on LOCAL_DISK_FILESYSTEM_TYPES's
+// allowlist. Not being NFS/SMB/CIFS/SMB2/FUSE is not enough - an unrecognized
+// mount type must fail closed rather than default to mmap-eligible.
 // "wal-unverified" means WAL is still fine to use, but classification was
-// inconclusive (no matching mount entry, no resolvable parent, etc.) - it
-// must never be treated as a positive local result for mmap purposes.
+// inconclusive (no matching mount entry, no resolvable parent, a matched
+// mount entry whose filesystem type is not on the local-disk allowlist,
+// etc.) - it must never be treated as a positive local result for mmap
+// purposes.
 // "wal-mmap-ineligible" means WAL is still fine (a non-SSHFS MacFUSE/OSXFUSE
 // mount is not the network-coordination hazard SSHFS is), but the mount is a
 // FUSE passthrough that can sit in front of an arbitrary, possibly
@@ -275,7 +307,12 @@ function resolveMountTypeJournalPolicy(entry: MountEntry): SqliteFilesystemJourn
     // network-backed store that this classifier cannot positively verify.
     return "wal-mmap-ineligible";
   }
-  return "wal";
+  // A matched mount that is not on the network/FUSE blocklist above is not
+  // proof of mmap safety - it may be a remote or virtual filesystem this
+  // classifier does not recognize (9p, ceph, glusterfs, davfs, autofs, ...).
+  // Only a positive match against known local disk filesystem types is
+  // mmap-eligible; everything else keeps WAL but falls back to unverified.
+  return LOCAL_DISK_FILESYSTEM_TYPES.has(normalized) ? "wal" : "wal-unverified";
 }
 
 function resolveMountEntryJournalPolicy(
@@ -534,13 +571,15 @@ export function configureSqliteWalMaintenance(
   db.exec(`PRAGMA journal_size_limit = ${DEFAULT_SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES};`);
   if (hasVerifiedLocalPath) {
     // journalPolicy === "wal" means resolvePathJournalPolicy positively matched
-    // a mount entry or statfs type that is not NFS/SMB/CIFS/SMB2 - the rollback
-    // and WAL-refused branches above already returned for those. node:sqlite is
-    // synchronous, so each page the OS must serve from disk is event-loop block
-    // time, which memory-mapped reads cut directly. An inconclusive
-    // classification ("wal-unverified": no databasePath, no resolvable parent,
-    // no matching mount entry) keeps mmap off - an unmapped I/O error is
-    // recoverable, but a mapped one raises a signal SQLite cannot catch (#60349).
+    // a mount entry or statfs type on LOCAL_DISK_FILESYSTEM_TYPES's allowlist -
+    // the rollback and WAL-refused branches above already returned for network
+    // and unsupported mounts. node:sqlite is synchronous, so each page the OS
+    // must serve from disk is event-loop block time, which memory-mapped reads
+    // cut directly. An inconclusive classification ("wal-unverified": no
+    // databasePath, no resolvable parent, no matching mount entry, or a
+    // matched mount type not on the local-disk allowlist) keeps mmap off - an
+    // unmapped I/O error is recoverable, but a mapped one raises a signal
+    // SQLite cannot catch (#60349).
     db.exec(`PRAGMA mmap_size = ${DEFAULT_SQLITE_MMAP_SIZE_BYTES};`);
   }
 

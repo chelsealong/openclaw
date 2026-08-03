@@ -551,6 +551,34 @@ describe("sqlite WAL maintenance", () => {
     }
   });
 
+  it("keeps WAL enabled but never memory-maps an unrecognized mount type", () => {
+    // A matched mount type that is not on the network/FUSE blocklist is not
+    // proof of mmap safety - it may be a remote or virtual filesystem this
+    // classifier does not recognize (9p backs VM host-shared folders, e.g.
+    // WSL2/Lima virtiofs, which can point at a remote host path). Only a
+    // positive match against the local-disk allowlist is mmap-eligible.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-unrecognized-"));
+    try {
+      const db = createMockDb();
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(0));
+      vi.spyOn(fs, "readFileSync").mockReturnValue(
+        `42 12 0:41 / ${tempDir} rw,relatime - 9p host rw\n`,
+      );
+
+      configureSqliteWalMaintenance(db, {
+        checkpointIntervalMs: 0,
+        databasePath: path.join(tempDir, "openclaw.sqlite"),
+      });
+
+      expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("parses Linux mount command filesystem names when proc mountinfo is unavailable", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-nfs-"));
     try {
