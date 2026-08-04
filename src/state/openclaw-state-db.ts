@@ -364,6 +364,10 @@ export function repairOpenClawStateDatabaseSchemaIfNeeded(
   let database: DatabaseSync | undefined;
   try {
     database = openNodeSqliteDatabase(pathname, { readOnly: true });
+    // Unset busy_timeout made a momentary writer lock (e.g. a Gateway
+    // checkpoint) fail this probe immediately, forcing every caller into the
+    // exclusive write-mode repair below even when nothing needed repair.
+    database.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
     assertSupportedSchemaVersion(database, pathname);
     needsRepair =
       readSqliteUserVersion(database) !== OPENCLAW_STATE_SCHEMA_VERSION ||
