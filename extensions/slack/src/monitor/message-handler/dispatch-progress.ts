@@ -581,12 +581,17 @@ export function createSlackProgressRuntime(runtimeParams: {
   const onDraftBoundary =
     !shouldUseDraftStream && !useNativeProgressStreaming
       ? undefined
-      : async () => {
+      : async (options?: { preserveDraftMessage?: boolean }) => {
           if (streamMode === "status_final") {
             await beginNewProgressTurn();
             return;
           }
-          if (hasStreamedMessage) {
+          // Reasoning-only boundaries have not delivered any answer content yet,
+          // so rotating into a new message would orphan the reasoning preview as
+          // a stale, un-updatable draft (openclaw#119041). Keep editing the same
+          // message and let the next boundary that actually starts a new
+          // assistant message decide whether to rotate.
+          if (hasStreamedMessage && !options?.preserveDraftMessage) {
             draftStream?.forceNewMessage();
           }
           resetDraftDeliveryState();
