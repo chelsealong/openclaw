@@ -95,7 +95,9 @@ export function createSlackProgressRuntime(runtimeParams: {
         warn: logVerbose,
       })
     : undefined;
-  let hasStreamedMessage = false;
+  // Only real streamed answer text (not progress/reasoning previews) counts
+  // toward "the draft holds a completed answer block" for boundary rotation.
+  let hasStreamedAnswerText = false;
   const streamMode = slackStreaming.draftMode;
   const useNativeProgressStreaming = useStreaming && slackStreaming.mode === "progress";
   const progressDraftActive = Boolean(draftStream) || useNativeProgressStreaming;
@@ -360,7 +362,6 @@ export function createSlackProgressRuntime(runtimeParams: {
           ? { text: previewText, blocks: richProgressBlocks }
           : previewText,
       );
-      hasStreamedMessage = true;
       if (options?.flush) {
         await draftStream.flush();
       }
@@ -448,7 +449,6 @@ export function createSlackProgressRuntime(runtimeParams: {
     });
     if (text) {
       draftStream.update(text);
-      hasStreamedMessage = true;
     }
   };
 
@@ -497,7 +497,7 @@ export function createSlackProgressRuntime(runtimeParams: {
         return;
       }
       draftStream?.update(next.rendered);
-      hasStreamedMessage = true;
+      hasStreamedAnswerText = true;
       return;
     }
 
@@ -508,7 +508,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     previewToolProgressSuppressed = true;
     progressDraft.suppress();
     draftStream?.update(trimmed);
-    hasStreamedMessage = true;
+    hasStreamedAnswerText = true;
   };
   const pushReasoningProgress = async (payload?: {
     text?: string;
@@ -543,7 +543,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     });
   };
   const resetDraftDeliveryState = () => {
-    hasStreamedMessage = false;
+    hasStreamedAnswerText = false;
     appendRenderedText = "";
     appendSourceText = "";
   };
@@ -586,7 +586,10 @@ export function createSlackProgressRuntime(runtimeParams: {
             await beginNewProgressTurn();
             return;
           }
-          if (hasStreamedMessage) {
+          // Rotate only when the prior draft held a completed answer block.
+          // Progress-only or reasoning-only boundaries (e.g. MiniMax's
+          // thinking_end between tool calls) keep editing the same message.
+          if (hasStreamedAnswerText) {
             draftStream?.forceNewMessage();
           }
           resetDraftDeliveryState();

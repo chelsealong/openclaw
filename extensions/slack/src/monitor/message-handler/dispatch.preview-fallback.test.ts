@@ -3637,6 +3637,29 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     expect(draftStream.forceNewMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps editing the same Slack draft across reasoning-only boundaries in partial mode", async () => {
+    const draftStream = createDraftStreamStub();
+    createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
+    mockedSlackStreamingMode = "partial";
+    mockedSlackDraftMode = "replace";
+    mockedDispatchSequence = [];
+    mockedReplyOptionEvents = [
+      { kind: "reasoning", text: "Reading the issue" },
+      { kind: "reasoning_end" },
+      { kind: "item", progressText: "grep repo" },
+      { kind: "assistant_start" },
+      { kind: "reasoning", text: "Checking callers" },
+      { kind: "reasoning_end" },
+      { kind: "item", progressText: "grep again" },
+      { kind: "assistant_start" },
+    ];
+
+    await dispatchPreparedSlackMessage(createPreparedSlackMessage({}));
+
+    expect(draftStream.update).toHaveBeenCalled();
+    expect(draftStream.forceNewMessage).not.toHaveBeenCalled();
+  });
+
   it("starts a new draft delivery target when a queued followup is admitted", async () => {
     const draftStream = createDraftStreamStub();
     createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
