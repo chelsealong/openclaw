@@ -3189,7 +3189,40 @@ describe("subagent registry lifecycle hardening", () => {
         endedAt: 4_000,
         elapsedMs: 2_000,
       },
+      expectsCompletionMessage: false,
     });
+  });
+
+  it("tells completion capture a required-completion run must not accept a diagnostic fallback", async () => {
+    const entry = createRunEntry({
+      expectsCompletionMessage: true,
+      execution: {
+        status: "running",
+        transcriptTarget: {
+          agentId: "main",
+          sessionId: "child-session",
+          sessionKey: "agent:main:subagent:child",
+          storePath: "/tmp/openclaw/agents/main/sessions/sessions.json",
+        },
+      },
+    });
+    const captureSubagentCompletionReply = vi.fn(async () => undefined);
+
+    const controller = createLifecycleController({
+      entry,
+      captureSubagentCompletionReply,
+      runSubagentAnnounceFlow: vi.fn(async () => false),
+    });
+
+    await expect(completeRun(controller, entry)).resolves.toBeUndefined();
+
+    expect(captureSubagentCompletionReply).toHaveBeenCalledWith(
+      entry.childSessionKey,
+      expect.objectContaining({
+        waitForReply: true,
+        expectsCompletionMessage: true,
+      }),
+    );
   });
 
   it("scopes fallback completion capture to the incognito child store", async () => {

@@ -303,6 +303,7 @@ export function createSubagentRegistryLifecycleDelivery(
       const captured = await params.captureSubagentCompletionReply(entry.childSessionKey, {
         waitForReply: entry.expectsCompletionMessage === true,
         outcome,
+        expectsCompletionMessage: entry.expectsCompletionMessage === true,
         ...(sessionTarget ? { sessionTarget } : {}),
       });
       resultText = captured?.trim() ? capFrozenResultText(captured) : null;

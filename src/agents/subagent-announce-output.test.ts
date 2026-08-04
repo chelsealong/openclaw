@@ -191,6 +191,18 @@ describe("readSubagentOutput", () => {
     ).resolves.toBe("2 tool call(s) made without visible output.");
   });
 
+  it("does not synthesize the tool-count fallback for a required-completion run", async () => {
+    installOutputDeps({
+      messages: [{ role: "assistant", content: [{ type: "toolCall", name: "read" }] }],
+    });
+
+    await expect(
+      readSubagentOutput("agent:main:subagent:child", { status: "timeout" }, {
+        expectsCompletionMessage: true,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("keeps an intentional silent reply ahead of timeout tool progress", async () => {
     installOutputDeps({
       messages: [

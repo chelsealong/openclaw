@@ -217,6 +217,7 @@ function summarizeSubagentOutputHistory(messages: Array<unknown>): SubagentOutpu
 function selectSubagentOutputText(
   snapshot: SubagentOutputSnapshot,
   outcome?: SubagentRunOutcome,
+  expectsCompletionMessage?: boolean,
 ): string | undefined {
   if (snapshot.waitingForContinuation) {
     return undefined;
@@ -229,7 +230,12 @@ function selectSubagentOutputText(
   }
   // Tool activity is partial-progress evidence only for a timed-out run. It is
   // not authoritative completion output when producer terminal facts are absent.
+  // A run that requires a real completion message must never accept this
+  // synthesized diagnostic as its frozen resultText: freezeRunResultAtCompletion
+  // captures resultText once, so a diagnostic frozen during a recoverable
+  // timeout would otherwise outlive the run's eventual successful recovery.
   if (
+    !expectsCompletionMessage &&
     outcome?.status === "timeout" &&
     snapshot.latestToolCallCount &&
     snapshot.latestToolCallCount > 0
@@ -242,7 +248,7 @@ function selectSubagentOutputText(
 export async function readSubagentOutput(
   sessionKey: string,
   outcome?: SubagentRunOutcome,
-  options?: { sessionTarget?: SessionTranscriptRuntimeTarget },
+  options?: { sessionTarget?: SessionTranscriptRuntimeTarget; expectsCompletionMessage?: boolean },
 ): Promise<string | undefined> {
   let messages: unknown[] | undefined;
   if (options?.sessionTarget) {
@@ -265,7 +271,7 @@ export async function readSubagentOutput(
       : undefined;
   const sourceMessages = messages ?? (Array.isArray(history?.messages) ? history.messages : []);
   const snapshot = summarizeSubagentOutputHistory(sourceMessages);
-  const selected = selectSubagentOutputText(snapshot, outcome);
+  const selected = selectSubagentOutputText(snapshot, outcome, options?.expectsCompletionMessage);
   if (selected?.trim()) {
     return selected;
   }
@@ -360,6 +366,7 @@ export async function captureSubagentCompletionReply(
     waitForReply?: boolean;
     outcome?: SubagentRunOutcome;
     sessionTarget?: SessionTranscriptRuntimeTarget;
+    expectsCompletionMessage?: boolean;
   },
 ): Promise<string | undefined> {
   return await captureSubagentCompletionReplyUsing({
@@ -370,6 +377,7 @@ export async function captureSubagentCompletionReply(
     readSubagentOutput: async (nextSessionKey) =>
       await readSubagentOutput(nextSessionKey, options?.outcome, {
         sessionTarget: options?.sessionTarget,
+        expectsCompletionMessage: options?.expectsCompletionMessage,
       }),
   });
 }
