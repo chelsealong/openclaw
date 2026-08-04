@@ -3913,9 +3913,10 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     );
 
     expect(draftStream.forceNewMessage).not.toHaveBeenCalled();
-    expect(draftStream.update).toHaveBeenLastCalledWith(
-      expect.stringContaining("Checking the fix"),
-    );
+    // Exact match: the reasoning boundary must clear the prior "Reading the
+    // ticket" preview rather than leaving it concatenated ahead of the next
+    // reasoning burst.
+    expect(draftStream.update).toHaveBeenLastCalledWith("• Checking the fix");
   });
 
   it("keeps preamble headlines and tool progress when commentary is disabled", async () => {
