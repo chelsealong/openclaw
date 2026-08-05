@@ -344,10 +344,12 @@ describe("web monitor inbox delivery and dedupe", () => {
     const closePromise = listener.close().then(() => {
       closed = true;
     });
-    await waitForMessageCalls(onMessage, 3);
+    // The ingress lane releases as soon as "second" defers into the debouncer,
+    // so "third" is admitted into the same open window and the two merge into
+    // one turn instead of each waiting out a fresh debounce cycle.
+    await waitForMessageCalls(onMessage, 2);
     expect(closed).toBe(false);
-    expect(inboundMessage(onMessage, 1).payload.body).toBe("second");
-    expect(inboundMessage(onMessage, 2).payload.body).toBe("third");
+    expect(inboundMessage(onMessage, 1).payload.body).toBe("second\nthird");
 
     releaseFirst?.();
     await closePromise;
@@ -650,7 +652,7 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
-  it("delivery coordinator keeps same-lane follow-up pending until turn adoption", async () => {
+  it("delivery coordinator dispatches a same-lane follow-up without waiting for turn adoption", async () => {
     let adoptFirst: (() => void | Promise<void>) | undefined;
     const onMessage = vi.fn(async (message: WebInboundMessage) => {
       if (!adoptFirst) {
@@ -686,17 +688,20 @@ describe("web monitor inbox delivery and dedupe", () => {
         },
       ],
     });
-    await settleInboundWork();
 
-    expect(onMessage).toHaveBeenCalledTimes(1);
-    expect(inboundMessage(onMessage).payload.body).toBe("ping");
+    // deferredLaneOccupancy: "release" frees the conversation lane as soon as
+    // "ping" defers, so "pong" is admitted and dispatched right away instead
+    // of waiting for "ping" to adopt its reply lane.
+    await waitForMessageCalls(onMessage, 2);
+    expect(inboundMessage(onMessage, 0).payload.body).toBe("ping");
+    expect(inboundMessage(onMessage, 1).payload.body).toBe("pong");
 
     if (!adoptFirst) {
       throw new Error("expected first adoption callback");
     }
     await adoptFirst();
-    await waitForMessageCalls(onMessage, 2);
-    expect(inboundMessage(onMessage, 1).payload.body).toBe("pong");
+    await settleInboundWork();
+    expect(onMessage).toHaveBeenCalledTimes(2);
     await listener.close();
   });
 });
