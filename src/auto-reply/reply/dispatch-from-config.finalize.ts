@@ -28,7 +28,6 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     chatType,
     ctx,
     deliveryChannel,
-    deliberateSilentTerminalReply,
     dispatcher,
     emptyFinalAllowedAsSilent,
     getDispatchAbortSignal,
@@ -265,7 +264,10 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   // Observed delivery is plugin-attested visibility, a trust level the transport
   // ledger intentionally does not own. Directedness gates both the fallback and
   // eligibility: only a turn that positively addressed the bot may surface a
-  // visible failure notice.
+  // visible failure notice. A literal NO_REPLY completion does not bypass this:
+  // emptyFinalAllowedAsSilent is the only sanctioned silence, so a directed turn
+  // (direct chat, mention, command) still gets the fallback even when the model
+  // emitted the silent-reply token (#119401).
   const replyAcceptedByActiveRun = state.replyOperationRunState.admission?.status === "accepted";
   const noVisibleReplyFallbackAllowed = () =>
     noVisibleReplyFallbackDirected &&
@@ -273,7 +275,6 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     !sendPolicyDenied &&
     state.sourceReplyDeliveryMode !== "message_tool_only" &&
     !emptyFinalAllowedAsSilent &&
-    !deliberateSilentTerminalReply &&
     !pendingContinuation &&
     !getObservedReplyDelivery() &&
     !replyAcceptedByActiveRun &&
@@ -290,8 +291,8 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   }
   let counts = dispatcher.getQueuedCounts();
   let noVisibleReplyFallbackDelivered = false;
-  // The agent-result classifier owns deliberate silence and pending continuation;
-  // carry those facts here because filtered reply payloads cannot safely rederive either.
+  // The agent-result classifier owns pending continuation; carry that fact here
+  // because filtered reply payloads cannot safely rederive it.
   // An aborted or timed-out settle leaves delivery state unknown; admission
   // then keeps its legacy trust and the turn ends without a fallback.
   if (queuedSettleResult === "settled" && noVisibleReplyFallbackAllowed()) {
@@ -377,7 +378,6 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
       !getObservedReplyDelivery() &&
       !replyAcceptedByActiveRun &&
       !emptyFinalAllowedAsSilent &&
-      !deliberateSilentTerminalReply &&
       !pendingContinuation
         ? { noVisibleReplyFallbackEligible: true }
         : {}),

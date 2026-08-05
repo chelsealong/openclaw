@@ -65,7 +65,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     waitForPendingDirectBlockReplyDelivery,
     wrapProgressCallback,
   } = state;
-  let deliberateSilentTerminalReply = false;
   let pendingContinuation = false;
   let didDeliverVisiblePartialReply = false;
   const replyResult = await runWithDispatchLifecycleAdmission(
@@ -82,9 +81,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 sourceReplyDeliveryMode,
                 sessionPromptSourceReplyDeliveryMode: state.sessionStableSourceReplyDeliveryMode,
                 ...({
-                  onDeliberateSilentTerminalReply: () => {
-                    deliberateSilentTerminalReply = true;
-                  },
                   onPendingContinuation: () => {
                     pendingContinuation = true;
                   },
@@ -600,7 +596,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     }
   }
   const nextState = extendPreparedDispatchState(state, {
-    deliberateSilentTerminalReply,
     pendingContinuation,
     replyResult,
   });

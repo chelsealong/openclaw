@@ -467,24 +467,32 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
         },
       } as OpenClawConfig,
     },
-  ])("treats explicit NO_REPLY as intentional silence in $name", async ({ ctx, cfg }) => {
-    setNoAbort();
-    const deliver = vi.fn(async () => {});
-    const dispatcher = createReplyDispatcher({ deliver });
-    const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
-      (opts as InternalGetReplyOptions | undefined)?.onDeliberateSilentTerminalReply?.();
-      return undefined;
-    });
+  ])(
+    "delivers the no-visible-reply fallback for explicit NO_REPLY on directed $name (#119401)",
+    async ({ ctx, cfg }) => {
+      // Directed turns (direct chats, mentions) are the one guarantee
+      // emptyFinalAllowedAsSilent protects: silence policy is "disallow", so a
+      // model choosing the NO_REPLY convention must not leave the user with
+      // nothing — it still gets the visible fallback notice.
+      setNoAbort();
+      const deliver = vi.fn(async () => {});
+      const dispatcher = createReplyDispatcher({ deliver });
+      const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        (opts as InternalGetReplyOptions | undefined)?.onDeliberateSilentTerminalReply?.();
+        return undefined;
+      });
 
-    const result = await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
-    dispatcher.markComplete();
-    await dispatcher.waitForIdle();
+      const result = await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+      dispatcher.markComplete();
+      await dispatcher.waitForIdle();
 
-    expect(deliver).not.toHaveBeenCalled();
-    expect(result).toEqual({ queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } });
-    expect(result.noVisibleReplyFallbackDelivered).toBeUndefined();
-    expect(result.noVisibleReplyFallbackEligible).toBeUndefined();
-  });
+      expect(deliver).toHaveBeenCalledWith(
+        expect.objectContaining({ text: NO_VISIBLE_REPLY_FALLBACK_TEXT }),
+        expect.anything(),
+      );
+      expect(result.noVisibleReplyFallbackDelivered).toBe(true);
+    },
+  );
 
   it("does not infer terminal silence from a sibling NO_REPLY payload", async () => {
     setNoAbort();
