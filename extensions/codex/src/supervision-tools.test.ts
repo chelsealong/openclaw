@@ -1034,25 +1034,26 @@ describe("Codex supervision compatibility tools", () => {
     ).resolves.toMatchObject({ details: { summary: "codex steer: turn-1" } });
   });
 
-  it("redacts credential classes beyond the legacy 4-prefix set in ordinary fields", async () => {
+  it("redacts credential classes beyond the legacy 4-prefix set, fully masking legacy classes in ordinary fields", async () => {
     const googleApiKey = "AIzaSyDaBcDeFgHiJkLmNoPqRsTuVwXyZ0123456";
     const finegrainedPat = "github_pat_11ABCDEFGH0abcdefghijklmnopqrstuvwxyz1234567890ABCDEF";
+    const legacy = ["sk-abcdefghijkl0123", "ghp_abcdefghij0123", "abcdefghijklmnopqrst0123"];
     const { request } = createRequest({
       id: "thread-1",
-      status: { type: "idle" },
-      description: `support contact key ${googleApiKey}`,
-      notes: finegrainedPat,
+      description: `${googleApiKey} ${finegrainedPat} ${legacy[0]} ${legacy[1]} Authorization: Bearer ${legacy[2]}`,
     });
-    const tools = createTools(request);
-
-    const result = await toolByName(tools, "codex_session_read").execute("read", {
-      endpoint_id: "local",
-      thread_id: "thread-1",
-    });
-
-    const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain(googleApiKey);
-    expect(serialized).not.toContain(finegrainedPat);
+    const serialized = JSON.stringify(
+      await toolByName(createTools(request), "codex_session_read").execute("read", {
+        endpoint_id: "local",
+        thread_id: "thread-1",
+      }),
+    );
+    for (const secret of [googleApiKey, finegrainedPat, ...legacy]) {
+      expect(serialized).not.toContain(secret);
+    }
+    // maskToken's partial mask always keeps this prefix; its absence for the
+    // legacy classes proves they were fully replaced, not partially disclosed.
+    legacy.forEach((secret) => expect(serialized).not.toContain(secret.slice(0, 6)));
   });
 
   it("fully redacts values under recognized sensitive field names instead of partially masking them", async () => {

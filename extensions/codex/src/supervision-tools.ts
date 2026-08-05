@@ -800,19 +800,53 @@ async function resolveInProgressTurnId(params: {
 
 const SUPERVISION_SENSITIVE_FIELD_RE = /authorization|password|secret|token|api[-_]?key/i;
 
+// Legacy prefix classes this boundary has always fully replaced (not partially
+// masked). The shared core redactor keeps a prefix/suffix for pattern matches,
+// which would be a disclosure regression for these specific classes in
+// ordinary fields, so they are fully replaced here before the shared helper
+// runs its broader, partially-masked classifier over the remainder.
+const LEGACY_FULL_REDACT_PATTERNS: RegExp[] = [
+  /\b(?:sk|glpat|xox[baprs])-[-_a-zA-Z0-9]{12,}\b/g,
+  /\b(?:ghp|gho|ghu|ghs)_[-_a-zA-Z0-9]{12,}\b/g,
+];
+// Also swallows a leading "Authorization:"/"Authorization=" label: the shared
+// helper independently recognizes that label followed by any opaque-looking
+// value (Bearer or not) as an HTTP auth header and re-masks it, so leaving the
+// label text next to a "Bearer [redacted]" replacement would get it
+// reprocessed and corrupted (e.g. "Bearer ***]"). Stand the whole matched span
+// down behind a placeholder the shared helper cannot recognize as a
+// credential, then swap the real legacy-contract text back in afterward.
+const LEGACY_BEARER_RE = /((?:[Aa]uthorization\s*[:=]\s*)?)\bBearer\s+[-._~+/a-zA-Z0-9]+=*/g;
+const LEGACY_BEARER_PLACEHOLDER = "codexSupervisionLegacyBearerPlaceholder";
+const LEGACY_AUTH_BEARER_PLACEHOLDER = "codexSupervisionLegacyAuthBearerPlaceholder";
+
+function redactLegacySupervisionPatterns(value: string): string {
+  let redacted = value;
+  for (const pattern of LEGACY_FULL_REDACT_PATTERNS) {
+    redacted = redacted.replace(pattern, "[redacted]");
+  }
+  return redacted.replace(LEGACY_BEARER_RE, (_match, authPrefix: string) =>
+    authPrefix ? LEGACY_AUTH_BEARER_PLACEHOLDER : LEGACY_BEARER_PLACEHOLDER,
+  );
+}
+
 /**
  * Redacts secret-bearing fields before legacy tool results leave the plugin.
  * Values under recognized sensitive field names are fully replaced, matching
  * this boundary's prior full-redaction contract. Ordinary free-text fields
- * delegate to the core credential-redaction policy (shared with logging) so
- * they stay in sync with the full credential class list instead of a
- * narrower local copy.
+ * first get the legacy prefix classes fully replaced (same contract as
+ * before), then delegate to the core credential-redaction policy (shared
+ * with logging) so the broader credential class list is covered too.
  */
 function redactCodexSupervisionValue(value: unknown, key = ""): unknown {
   if (typeof value === "string") {
-    return SUPERVISION_SENSITIVE_FIELD_RE.test(key)
-      ? "[redacted]"
-      : redactSensitiveFieldValue(key, value);
+    if (SUPERVISION_SENSITIVE_FIELD_RE.test(key)) {
+      return "[redacted]";
+    }
+    const shared = redactSensitiveFieldValue(key, redactLegacySupervisionPatterns(value));
+    return shared
+      .replaceAll(LEGACY_AUTH_BEARER_PLACEHOLDER, "Authorization: Bearer [redacted]")
+      .replaceAll(LEGACY_BEARER_PLACEHOLDER, "Bearer [redacted]");
   }
   if (Array.isArray(value)) {
     return value.map((entry) => redactCodexSupervisionValue(entry));
