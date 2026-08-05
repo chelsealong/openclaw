@@ -1,5 +1,6 @@
 /** Ensures configured channel-to-ACP bindings have live sessions and matching runtime options. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { resolveAgentExplicitModelPrimary } from "../agents/agent-scope.js";
 import type { SessionAcpMeta } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logVerbose } from "../globals.js";
@@ -17,6 +18,7 @@ function sessionMatchesConfiguredBinding(params: {
   cfg: OpenClawConfig;
   spec: ConfiguredAcpBindingSpec;
   meta: SessionAcpMeta;
+  explicitModel: string | undefined;
 }): boolean {
   if (params.meta.state === "error") {
     return false;
@@ -50,6 +52,15 @@ function sessionMatchesConfiguredBinding(params: {
       return false;
     }
   }
+
+  // Only enforce a match when the agent has an explicit model configured, so a stale
+  // session picks up a newly-configured model instead of keeping an env-inherited one.
+  if (params.explicitModel) {
+    const currentModel = (params.meta.runtimeOptions?.model ?? "").trim();
+    if (currentModel !== params.explicitModel) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -60,6 +71,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
 }): Promise<{ ok: true; sessionKey: string } | { ok: false; sessionKey: string; error: string }> {
   const sessionKey = buildConfiguredAcpSessionKey(params.spec);
   const acpManager = getAcpSessionManager();
+  const explicitModel = resolveAgentExplicitModelPrimary(params.cfg, params.spec.agentId);
   try {
     const resolution = acpManager.resolveSession({
       cfg: params.cfg,
@@ -71,6 +83,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
         cfg: params.cfg,
         spec: params.spec,
         meta: resolution.meta,
+        explicitModel,
       })
     ) {
       return {
@@ -97,6 +110,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
       mode: params.spec.mode,
       cwd: params.spec.cwd,
       backendId: params.spec.backend,
+      ...(explicitModel ? { runtimeOptions: { model: explicitModel }, modelExplicit: true } : {}),
     });
 
     return {
