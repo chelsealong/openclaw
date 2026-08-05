@@ -137,6 +137,14 @@ export function createWhatsAppIngressMonitor(params: {
       failedMaxEntries: 450,
     },
     drain: {
+      // WhatsApp's dispatch defers into the channel debouncer while a turn is
+      // still merging. Holding the lane through that window (the "hold"
+      // default) starves the debouncer: a same-lane message admitted while
+      // the first is deferred is refused and waits a fresh full debounce
+      // window instead of joining the open one. Releasing on defer lets the
+      // debouncer actually merge same-conversation bursts, matching the
+      // Telegram spooled drain fix for #101335.
+      deferredLaneOccupancy: "release",
       resolveNonRetryableFailure: resolveWhatsAppIngressNonRetryableFailure,
       deriveLaneKey: (record) => {
         try {
