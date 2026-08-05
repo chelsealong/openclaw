@@ -140,8 +140,7 @@ export async function enrichWhatsAppInboundMessage(params: {
     });
     if (isRetryableWhatsAppInboundMediaError(error)) {
       // Pre-adoption: reject so the durable ingress drain retries the event
-      // instead of permanently degrading media with no text fallback
-      // (mirrors the LINE ingress retry boundary, PR #110921).
+      // instead of permanently degrading media with no text fallback.
       throw error;
     }
     params.logVerbose(`Inbound media download failed: ${String(error)}`);
