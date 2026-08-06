@@ -1,3 +1,4 @@
+import { isPluginProvidersLoadInFlight } from "../../../plugins/providers.runtime.js";
 import { requireActivePluginRegistry } from "../../../plugins/runtime.js";
 import { resolveDefaultAgentDir } from "../../agent-scope.js";
 import { FailoverError } from "../../failover-error.js";
@@ -31,6 +32,20 @@ export async function resolveEmbeddedRunModelSetup(params: {
   preparedModelRuntime?: PreparedModelRuntimeSnapshot;
 }) {
   const runParams = params.runParams;
+  // A miss only qualifies as the transient fresh-boot registry-load race this
+  // retry exists for when the provider-runtime plugin registry is still
+  // loading right now; resolveProviderRuntimePlugin returns "no plugin" (a
+  // cheap no-op) in that case only. Once the registry is loaded, a miss means
+  // the model genuinely isn't in the provider's catalog, and retrying would
+  // re-run prepareDynamicModel (e.g. OpenRouter's catalog fetch) for nothing.
+  const shouldRetryTransientProviderRuntimeMiss = (candidateProvider: string): boolean =>
+    isPluginProvidersLoadInFlight({
+      config: runParams.config,
+      workspaceDir: params.workspaceDir,
+      providerRefs: [candidateProvider],
+      activate: false,
+      bundledProviderVitestCompat: true,
+    });
   const hookSelection = await resolveHookModelSelection({
     prompt: runParams.prompt,
     attachments: buildBeforeModelResolveAttachments(runParams.images),
@@ -135,7 +150,8 @@ export async function resolveEmbeddedRunModelSetup(params: {
           // A fresh gateway boot can race the first provider-runtime plugin
           // registry load; retry once instead of surfacing a transient miss
           // as a user-visible fallback (see model.ts retryTransientProviderRuntimeMiss).
-          retryTransientProviderRuntimeMiss: true,
+          retryTransientProviderRuntimeMiss:
+            shouldRetryTransientProviderRuntimeMiss(candidateProvider),
         },
       );
       firstModelResolution ??= candidateResolution;
@@ -172,7 +188,8 @@ export async function resolveEmbeddedRunModelSetup(params: {
             authProfileId: runParams.authProfileId,
             allowBundledStaticCatalogFallback: true,
             preparedModelRuntime,
-            retryTransientProviderRuntimeMiss: true,
+            retryTransientProviderRuntimeMiss:
+              shouldRetryTransientProviderRuntimeMiss(candidateProvider),
           },
         );
         firstModelResolution ??= candidateResolution;

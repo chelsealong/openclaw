@@ -1,12 +1,20 @@
 // Startup can race the first provider-runtime snapshot load on a fresh gateway
 // boot (see model.startup-retry.test.ts). resolveModelAsync exposes a
 // retryTransientProviderRuntimeMiss option for exactly this case; the embedded
-// run model setup must opt every resolution attempt into it.
+// run model setup must opt a resolution attempt into it only while that race
+// is actually possible (the plugin registry load is in flight), not on every
+// turn for the rest of the process lifetime — otherwise a persistently
+// unknown model would re-run provider prepareDynamicModel hooks (e.g.
+// OpenRouter's catalog fetch) twice on every single turn.
 import { describe, expect, it, vi } from "vitest";
 import type { RunEmbeddedAgentParams } from "./params.js";
 
 const resolveModelAsyncMock = vi.fn();
+const isPluginProvidersLoadInFlightMock = vi.fn(() => false);
 
+vi.mock("../../../plugins/providers.runtime.js", () => ({
+  isPluginProvidersLoadInFlight: (...args: unknown[]) => isPluginProvidersLoadInFlightMock(...args),
+}));
 vi.mock("../../../plugins/runtime.js", () => ({
   requireActivePluginRegistry: () => ({}),
 }));
@@ -73,6 +81,8 @@ describe("resolveEmbeddedRunModelSetup", () => {
 
   it("retries a transient provider-runtime miss on the direct resolution attempt", async () => {
     resolveModelAsyncMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReturnValue(true);
     resolveModelAsyncMock.mockResolvedValueOnce({
       model: { id: "claude-opus-5", provider: "anthropic" },
       authStorage: {},
@@ -90,6 +100,8 @@ describe("resolveEmbeddedRunModelSetup", () => {
 
   it("retries a transient provider-runtime miss on the prepared-runtime fallback attempt", async () => {
     resolveModelAsyncMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReturnValue(true);
     resolveModelAsyncMock
       .mockResolvedValueOnce({ authStorage: {}, modelRegistry: {} })
       .mockResolvedValueOnce({
@@ -105,5 +117,27 @@ describe("resolveEmbeddedRunModelSetup", () => {
     for (const call of resolveModelAsyncMock.mock.calls) {
       expect(call[4]).toMatchObject({ retryTransientProviderRuntimeMiss: true });
     }
+  });
+
+  it("does not opt into the retry once the provider-runtime plugin registry is no longer loading", async () => {
+    // Steady-state misses are a genuinely unknown model, not a boot race. Opting
+    // in here would make resolveModelAsync re-run prepareDynamicModel a second
+    // time on every turn for a persistently misconfigured model id.
+    resolveModelAsyncMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReset();
+    isPluginProvidersLoadInFlightMock.mockReturnValue(false);
+    resolveModelAsyncMock.mockResolvedValueOnce({
+      model: { id: "claude-opus-5", provider: "anthropic" },
+      authStorage: {},
+      modelRegistry: {},
+    });
+
+    const { resolveEmbeddedRunModelSetup } = await import("./model-setup.js");
+    await resolveEmbeddedRunModelSetup(baseParams);
+
+    expect(resolveModelAsyncMock).toHaveBeenCalledTimes(1);
+    expect(resolveModelAsyncMock.mock.calls[0]?.[4]).toMatchObject({
+      retryTransientProviderRuntimeMiss: false,
+    });
   });
 });
