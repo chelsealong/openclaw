@@ -132,6 +132,10 @@ export async function resolveEmbeddedRunModelSetup(params: {
           preparedModelRuntime: params.preparedModelRuntime,
           workspaceDir: params.workspaceDir,
           authProfileId: runParams.authProfileId,
+          // A fresh gateway boot can race the first provider-runtime plugin
+          // registry load; retry once instead of surfacing a transient miss
+          // as a user-visible fallback (see model.ts retryTransientProviderRuntimeMiss).
+          retryTransientProviderRuntimeMiss: true,
         },
       );
       firstModelResolution ??= candidateResolution;
@@ -168,6 +172,7 @@ export async function resolveEmbeddedRunModelSetup(params: {
             authProfileId: runParams.authProfileId,
             allowBundledStaticCatalogFallback: true,
             preparedModelRuntime,
+            retryTransientProviderRuntimeMiss: true,
           },
         );
         firstModelResolution ??= candidateResolution;
