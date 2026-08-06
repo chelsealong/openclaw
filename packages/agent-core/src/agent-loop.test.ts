@@ -2327,6 +2327,60 @@ describe("Agent next-turn preparation", () => {
   });
 });
 
+describe("Agent steer queue ordering", () => {
+  it("delivers a steer message stranded by a race ahead of a newer prompt", async () => {
+    const streamFn: StreamFn = (activeModel) => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "ok" }],
+            api: activeModel.api,
+            provider: activeModel.provider,
+            model: activeModel.id,
+            usage: TEST_USAGE,
+            stopReason: "stop",
+            timestamp: 1,
+          },
+        });
+        stream.end();
+      });
+      return stream;
+    };
+    const agent = new Agent({
+      initialState: { model },
+      convertToLlm: (messages) => messages as Message[],
+      streamFn,
+    });
+
+    await agent.prompt("first");
+
+    // Mirrors the real-world race (#119794): steer() can enqueue a message
+    // after its target run already emitted agent_end, because the run's
+    // final queue poll and the steer() call are not synchronized. The
+    // message is stranded in steeringQueue with no active run left to drain
+    // it.
+    agent.steer({ role: "user", content: "A", timestamp: 2 });
+
+    await agent.prompt("B");
+
+    const userTexts = agent.state.messages
+      .filter((message) => message.role === "user")
+      .map((message) =>
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join(""),
+      );
+    expect(userTexts).toEqual(["first", "A", "B"]);
+  });
+});
+
 describe("agentLoop thinking state", () => {
   function makeAssistantMessage(
     activeModel: Model,

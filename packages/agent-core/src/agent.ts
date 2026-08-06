@@ -402,7 +402,15 @@ export class Agent {
       );
     }
     const messages = this.normalizePromptInput(input, images);
-    await this.runPromptMessages(messages);
+    // A steer() call can land after the run it targeted already emitted
+    // agent_end (the run's final queue poll and steer()'s enqueue can race),
+    // stranding it in steeringQueue with nothing left to drain it. Deliver it
+    // ahead of this new prompt so arrival order is preserved instead of
+    // silently reordering it behind a newer message.
+    const strandedSteeringMessages = this.steeringQueue.drain();
+    await this.runPromptMessages(
+      strandedSteeringMessages.length > 0 ? [...strandedSteeringMessages, ...messages] : messages,
+    );
   }
 
   /** Continue from the current transcript. The last message must be a user or tool-result message. */
