@@ -2,7 +2,7 @@
 import { createCodexSupervisionTools } from "./supervision-tools.js";
 
 type CodexSupervisionToolsOptions = Parameters<typeof createCodexSupervisionTools>[0];
-export type EndpointRequest = NonNullable<CodexSupervisionToolsOptions["request"]>;
+type EndpointRequest = NonNullable<CodexSupervisionToolsOptions["request"]>;
 type EndpointRequestHandler = (...args: Parameters<EndpointRequest>) => unknown;
 type RecordedRequest = { method: string; params?: unknown };
 
