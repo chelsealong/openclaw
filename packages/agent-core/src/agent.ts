@@ -193,6 +193,17 @@ class PendingMessageQueue {
     return [first];
   }
 
+  // Drains every queued message regardless of configured mode. `mode` paces
+  // delivery *into an active run*; it has no say once that run has died and
+  // left the queue stranded, so reviving stranded messages must not leave
+  // any behind for a later run's steering poll to reorder after a newer
+  // prompt (see prompt()'s stranded-steer handling).
+  drainAll(): AgentMessage[] {
+    const drained = this.messages.slice();
+    this.messages = [];
+    return drained;
+  }
+
   clear(): void {
     this.messages = [];
   }
@@ -404,10 +415,16 @@ export class Agent {
     const messages = this.normalizePromptInput(input, images);
     // A steer() call can land after the run it targeted already emitted
     // agent_end (the run's final queue poll and steer()'s enqueue can race),
-    // stranding it in steeringQueue with nothing left to drain it. Deliver it
-    // ahead of this new prompt so arrival order is preserved instead of
-    // silently reordering it behind a newer message.
-    const strandedSteeringMessages = this.steeringQueue.drain();
+    // stranding it in steeringQueue with nothing left to drain it. Deliver
+    // all stranded messages ahead of this new prompt so arrival order is
+    // preserved instead of silently reordering them behind a newer message.
+    // drainAll() (not drain()) because steeringMode's one-at-a-time pacing
+    // governs interleaving into an active run, not how many stray messages
+    // get resurrected from a queue whose run already died; leaving any
+    // behind would surface them mid-run, after the new prompt's own
+    // top-of-loop poll picks them up — the same FIFO violation this fix
+    // exists to prevent.
+    const strandedSteeringMessages = this.steeringQueue.drainAll();
     await this.runPromptMessages(
       strandedSteeringMessages.length > 0 ? [...strandedSteeringMessages, ...messages] : messages,
     );

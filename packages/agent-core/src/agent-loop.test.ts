@@ -2379,6 +2379,59 @@ describe("Agent steer queue ordering", () => {
       );
     expect(userTexts).toEqual(["first", "A", "B"]);
   });
+
+  it("delivers every stranded steer message, not just the first, under default one-at-a-time mode", async () => {
+    const streamFn: StreamFn = (activeModel) => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "ok" }],
+            api: activeModel.api,
+            provider: activeModel.provider,
+            model: activeModel.id,
+            usage: TEST_USAGE,
+            stopReason: "stop",
+            timestamp: 1,
+          },
+        });
+        stream.end();
+      });
+      return stream;
+    };
+    const agent = new Agent({
+      initialState: { model },
+      convertToLlm: (messages) => messages as Message[],
+      streamFn,
+    });
+
+    await agent.prompt("first");
+
+    // Same race as #119794, but stranding two steer() calls instead of one.
+    // steeringQueue defaults to "one-at-a-time" pacing, which governs
+    // delivery into an *active* run; it must not cause the second stranded
+    // message to be left behind for the new run's own steering poll to
+    // reorder after "B".
+    agent.steer({ role: "user", content: "A1", timestamp: 2 });
+    agent.steer({ role: "user", content: "A2", timestamp: 3 });
+
+    await agent.prompt("B");
+
+    const userTexts = agent.state.messages
+      .filter((message) => message.role === "user")
+      .map((message) =>
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join(""),
+      );
+    expect(userTexts).toEqual(["first", "A1", "A2", "B"]);
+  });
 });
 
 describe("agentLoop thinking state", () => {
