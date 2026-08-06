@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { resolveDefaultAgentDir } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { jsonResult, readStringParam, type AnyAgentTool } from "openclaw/plugin-sdk/core";
@@ -815,10 +816,13 @@ const LEGACY_FULL_REDACT_PATTERNS: RegExp[] = [
 // label text next to a "Bearer [redacted]" replacement would get it
 // reprocessed and corrupted (e.g. "Bearer ***]"). Stand the whole matched span
 // down behind a placeholder the shared helper cannot recognize as a
-// credential, then swap the real legacy-contract text back in afterward.
+// credential, then swap the real legacy-contract text back in afterward. The
+// placeholders carry a per-process random suffix so ordinary thread text can
+// never collide with them and get wrongly rewritten into a fake bearer value.
 const LEGACY_BEARER_RE = /((?:[Aa]uthorization\s*[:=]\s*)?)\bBearer\s+[-._~+/a-zA-Z0-9]+=*/g;
-const LEGACY_BEARER_PLACEHOLDER = "codexSupervisionLegacyBearerPlaceholder";
-const LEGACY_AUTH_BEARER_PLACEHOLDER = "codexSupervisionLegacyAuthBearerPlaceholder";
+const LEGACY_PLACEHOLDER_NONCE = randomUUID();
+const LEGACY_BEARER_PLACEHOLDER = `codexSupervisionLegacyBearerPlaceholder:${LEGACY_PLACEHOLDER_NONCE}`;
+const LEGACY_AUTH_BEARER_PLACEHOLDER = `codexSupervisionLegacyAuthBearerPlaceholder:${LEGACY_PLACEHOLDER_NONCE}`;
 
 function redactLegacySupervisionPatterns(value: string): string {
   let redacted = value;
