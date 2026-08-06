@@ -53,6 +53,12 @@ describe("classifyCompactionReason", () => {
     );
   });
 
+  it("classifies the Codex app-server auto-compaction no-op as native-harness-owned", () => {
+    expect(classifyCompactionReason("codex app-server owns automatic compaction")).toBe(
+      "native_harness_owns_compaction",
+    );
+  });
+
   it("classifies safeguard messages as guard-blocked", () => {
     expect(
       classifyCompactionReason(
@@ -67,12 +73,21 @@ describe("classifyCompactionReason", () => {
 });
 
 describe("isBenignCompactionSkipReason", () => {
-  it.each(["already under target", "already compacted"])(
-    "keeps the established %s skip contract",
-    (reason) => {
-      expect(isBenignCompactionSkipReason(reason)).toBe(true);
-    },
-  );
+  it.each([
+    "already under target",
+    "already compacted",
+    "codex app-server owns automatic compaction",
+  ])("keeps the established %s skip contract", (reason) => {
+    expect(isBenignCompactionSkipReason(reason)).toBe(true);
+  });
+
+  it("treats the Codex auto-compaction no-op as a benign skip result (regression for #119971)", () => {
+    // Preflight compaction against a Codex-bound session intentionally
+    // no-ops with this reason; callers must not treat it as a fatal
+    // failure and drop the user's turn.
+    const reason = "codex app-server owns automatic compaction";
+    expect(isBenignCompactionSkipResult({ ok: true, compacted: false, reason })).toBe(true);
+  });
 
   it("requires an explicit successful-result opt-in for empty transcripts", () => {
     const reason = "no real conversation messages";

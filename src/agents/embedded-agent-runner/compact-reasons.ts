@@ -42,6 +42,13 @@ export function classifyCompactionReason(reason?: string): string {
   if (text.includes("already compacted") || text.includes("already_compacted")) {
     return "already_compacted";
   }
+  // Codex app-server manages its own automatic compaction internally; a
+  // preflight compact call against a Codex-bound session intentionally
+  // no-ops with this exact reason. Exact match (not a substring include)
+  // since this is one fixed sentinel string, not a family of phrasings.
+  if (text === "codex app-server owns automatic compaction") {
+    return "native_harness_owns_compaction";
+  }
   if (text.includes("deferred to background")) {
     return "deferred_background";
   }
@@ -79,7 +86,11 @@ export function classifyCompactionReason(reason?: string): string {
 /** Return whether a classified reason represents an intentional compaction no-op. */
 export function isBenignCompactionSkipReason(reason?: string): boolean {
   const classification = classifyCompactionReason(reason);
-  return classification === "below_threshold" || classification === "already_compacted";
+  return (
+    classification === "below_threshold" ||
+    classification === "already_compacted" ||
+    classification === "native_harness_owns_compaction"
+  );
 }
 
 /** Return whether a compaction result is an intentional no-op rather than a failure. */
