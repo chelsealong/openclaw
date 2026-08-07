@@ -1047,6 +1047,42 @@ describe("createChannelProgressDraftCompositor", () => {
     ]);
   });
 
+  it("keeps the resolved tool detail through a detail-less completion update", async () => {
+    const update = vi.fn();
+    const progress = createChannelProgressDraftCompositor({
+      entry: { streaming: { mode: "progress" } },
+      mode: "progress",
+      active: true,
+      seed: "test",
+      update,
+    });
+
+    await progress.start();
+    await progress.pushToolEvent({
+      itemId: "tool-1",
+      name: "grep",
+      phase: "start",
+      args: { pattern: "TODO", path: "src/index.ts" },
+    });
+    const started = progress.getSnapshot().lines[0];
+    const startedDetail = typeof started === "object" ? started.detail : undefined;
+    expect(startedDetail).toBeTruthy();
+
+    // The completion event (onItemEvent) carries only a status, not the
+    // resolved args from the start event; the merge must keep the detail
+    // instead of collapsing the row to name-only.
+    await progress.pushItemEvent({
+      itemId: "tool-1",
+      name: "grep",
+      phase: "end",
+      status: "completed",
+    });
+
+    expect(progress.getSnapshot().lines).toEqual([
+      expect.objectContaining({ id: "tool-1", status: "completed", detail: startedDetail }),
+    ]);
+  });
+
   it("ignores status updates once the final reply started and clears both per turn", async () => {
     const update = vi.fn();
     const progress = createChannelProgressDraftCompositor({

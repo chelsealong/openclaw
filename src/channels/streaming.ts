@@ -1249,7 +1249,10 @@ function mergeProgressDraftLineUpdate<TLine extends string | ChannelProgressDraf
     return line;
   }
   if (
-    line.kind !== "command-output" ||
+    // "item" covers a tool-completion update (onItemEvent) arriving after the
+    // richer "tool" start line (onToolStart); without this it drops the
+    // resolved command/args and renders name-only, same as command-output.
+    (line.kind !== "command-output" && line.kind !== "item") ||
     !line.status ||
     (line.detail && line.detail !== line.status)
   ) {
