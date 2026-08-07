@@ -367,6 +367,42 @@ describe("sqlite WAL maintenance", () => {
     }
   });
 
+  it("never memory-maps a symlinked local mount whose canonical target is unrecognized", () => {
+    // The lexical path can sit on an allowlisted local mount while its
+    // realpath target lands on a different, unrecognized mount (e.g. a
+    // symlink into a 9p share) - both representations describe the same
+    // underlying file, so a positive match on the lexical alias must not
+    // outvote the canonical target's unverified result.
+    if (process.platform === "win32") {
+      return;
+    }
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-alias-"));
+    const localMountDir = path.join(tempDir, "local-mount");
+    const remoteTargetDir = path.join(tempDir, "remote-target");
+    try {
+      fs.mkdirSync(remoteTargetDir);
+      fs.symlinkSync(remoteTargetDir, localMountDir);
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(0));
+      vi.spyOn(fs, "readFileSync").mockReturnValue(
+        `42 12 0:41 / ${localMountDir} rw,relatime - ext4 /dev/sda1 rw\n` +
+          `43 12 0:42 / ${remoteTargetDir} rw,relatime - 9p host rw\n`,
+      );
+      const db = createMockDb();
+
+      configureSqliteWalMaintenance(db, {
+        checkpointIntervalMs: 0,
+        databasePath: path.join(localMountDir, "openclaw.sqlite"),
+      });
+
+      expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses mount command filesystem names on platforms without proc mountinfo", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-nfs-"));
     try {

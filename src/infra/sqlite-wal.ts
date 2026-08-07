@@ -348,10 +348,14 @@ function combineMountEntryJournalPolicies(
   if (policies.has("wal-mmap-ineligible")) {
     return "wal-mmap-ineligible";
   }
-  // Prefer a positive match from either path representation over an
-  // unverified default: the original and canonical paths describe the same
-  // mount, so one matching is enough to trust it.
-  return policies.has("wal") ? "wal" : "wal-unverified";
+  // Require every path representation to positively match a local-disk mount
+  // before trusting "wal": a symlinked lexical path can resolve on an
+  // allowlisted local mount while its realpath target lands on an
+  // unrecognized or unverified mount (or vice versa) - since both describe
+  // the same underlying file, trusting whichever representation says "wal"
+  // would let that alias enable mmap on a target that was never actually
+  // verified as local disk.
+  return policies.size === 1 && policies.has("wal") ? "wal" : "wal-unverified";
 }
 
 function isWindowsUncPath(targetPath: string): boolean {
