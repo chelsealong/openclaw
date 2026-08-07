@@ -20,7 +20,10 @@ import {
   resetGatewaySuspendCoordinatorForLifecycleRestart,
   resumeGatewaySuspend,
 } from "../../infra/gateway-suspend-coordinator.js";
-import { resetGatewayWorkAdmission } from "../../process/gateway-work-admission.js";
+import {
+  resetGatewayWorkAdmission,
+  waitForActiveGatewayRootWork,
+} from "../../process/gateway-work-admission.js";
 import { getDetachedTaskLifecycleRuntime } from "../../tasks/detached-task-runtime.js";
 import { findTaskByRunId } from "../../tasks/task-registry.js";
 import { setDetachedTaskLifecycleRuntime } from "../../tasks/task-runtime.test-helpers.js";
@@ -114,6 +117,7 @@ describe("gateway agent handler", () => {
         phase: "continuing",
         ownerRunId: "cron-media-release-rotates",
       });
+      await expect(waitForActiveGatewayRootWork()).resolves.toEqual({ drained: true, active: 0 });
       const readyPrepare = await invokeGatewaySuspendPrepare(
         context,
         "cron-media-release-rotation-complete",
@@ -208,13 +212,25 @@ describe("gateway agent handler", () => {
         },
         idempotencyKey: "test-public-provenance-accounting",
       },
-      { reqId: "public-provenance-accounting" },
+      {
+        reqId: "public-provenance-accounting",
+        client: { connect: { scopes: ["operator.admin"] } } as AgentHandlerArgs["client"],
+      },
     );
 
     const callArgs = await waitForAgentCommandCall<{
       preserveUserFacingSessionModelState?: boolean;
     }>();
     expect(callArgs.preserveUserFacingSessionModelState).toBe(false);
+    expect(callArgs).toMatchObject({
+      senderIsOwner: true,
+      userTurnTranscriptRecorder: {
+        message: {
+          provenance: { kind: "inter_session" },
+          __openclaw: { senderIsOwner: false },
+        },
+      },
+    });
   });
 
   it("rejects public internal session-effect controls", async () => {
@@ -285,10 +301,71 @@ describe("gateway agent handler", () => {
     expect(callArgs.suppressPromptPersistence).toBe(true);
     expect(mocks.updateSessionStore).not.toHaveBeenCalled();
     expect(context.addChatRun).not.toHaveBeenCalled();
-    expect(mocks.registerAgentRunContext).toHaveBeenCalledWith("test-backend-internal-effects", {
+    const runContext = mockCallArg(mocks.registerAgentRunContext, 0, 1) as {
+      attribution: Record<string, unknown>;
+    };
+    expect(runContext).toEqual({
+      attribution: expect.objectContaining({
+        runId: "test-backend-internal-effects",
+        contextId: expect.any(String),
+        executionId: expect.any(String),
+        createdAt: expect.any(Number),
+        lifecycleGeneration: "test-generation",
+        sessionKey: "agent:main:main",
+        sessionId: "existing-session-id",
+        agentId: "main",
+      }),
+      sessionKey: "agent:main:main",
+      sessionId: "existing-session-id",
+      agentId: "main",
       isControlUiVisible: false,
       lifecycleGeneration: "test-generation",
     });
+    expect(Object.isFrozen(runContext.attribution)).toBe(true);
+  });
+
+  it("preserves the admitted idempotency key exactly in execution attribution", async () => {
+    primeMainAgentRun({ cfg: mocks.loadConfigReturn });
+    mocks.registerAgentRunContext.mockClear();
+    const runId = " padded-agent-run ";
+
+    await invokeAgent({
+      message: "preserve exact run identity",
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      idempotencyKey: runId,
+    });
+
+    await waitForAgentCommandCall();
+    expect(mockCallArg(mocks.registerAgentRunContext, 0, 0)).toBe(runId);
+    expect(mockCallArg(mocks.registerAgentRunContext, 0, 1)).toMatchObject({
+      attribution: { runId },
+    });
+  });
+
+  it("rejects blank idempotency keys before registering run state", async () => {
+    const context = makeContext();
+    const respond = vi.fn();
+    mocks.registerAgentRunContext.mockClear();
+    mocks.agentCommand.mockClear();
+
+    await invokeAgent(
+      {
+        message: "reject blank run identity",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        idempotencyKey: " \t ",
+      },
+      { context, respond },
+    );
+
+    expectRespondError(respond, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "idempotencyKey must not be blank",
+    });
+    expect(context.chatAbortControllers.size).toBe(0);
+    expect(mocks.registerAgentRunContext).not.toHaveBeenCalled();
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
   });
 
   it("allows backend internal runs without a persisted session row", async () => {
@@ -343,7 +420,10 @@ describe("gateway agent handler", () => {
       },
     );
 
-    expect((await waitForAgentCommandCall<{ senderIsOwner?: boolean }>()).senderIsOwner).toBe(true);
+    expect(await waitForAgentCommandCall()).toMatchObject({
+      senderIsOwner: true,
+      userTurnTranscriptRecorder: { message: { __openclaw: { senderIsOwner: true } } },
+    });
 
     mocks.agentCommand.mockClear();
     await invokeAgent(
@@ -359,9 +439,10 @@ describe("gateway agent handler", () => {
       },
     );
 
-    expect((await waitForAgentCommandCall<{ senderIsOwner?: boolean }>()).senderIsOwner).toBe(
-      false,
-    );
+    expect(await waitForAgentCommandCall()).toMatchObject({
+      senderIsOwner: false,
+      userTurnTranscriptRecorder: { message: { __openclaw: { senderIsOwner: false } } },
+    });
   });
 
   it("enables Gateway-bound plugin runtimes for ingress agent runs", async () => {
@@ -582,10 +663,27 @@ describe("gateway agent handler", () => {
     expect(context.broadcastToConnIds).not.toHaveBeenCalled();
     expect(mocks.getLatestSubagentRunByChildSessionKey).not.toHaveBeenCalled();
     expect(mocks.replaceSubagentRunAfterSteer).not.toHaveBeenCalled();
-    expect(mocks.registerAgentRunContext).toHaveBeenCalledWith("test-stateless-model-run", {
+    const runContext = mockCallArg(mocks.registerAgentRunContext, 0, 1) as {
+      attribution: Record<string, unknown>;
+    };
+    expect(runContext).toEqual({
+      attribution: expect.objectContaining({
+        runId: "test-stateless-model-run",
+        contextId: expect.any(String),
+        executionId: expect.any(String),
+        createdAt: expect.any(Number),
+        lifecycleGeneration: "test-generation",
+        sessionKey: "agent:main:explicit:model-run-123e4567-e89b-12d3-a456-426614174000",
+        sessionId: "model-run-123e4567-e89b-12d3-a456-426614174000",
+        agentId: "main",
+      }),
+      sessionKey: "agent:main:explicit:model-run-123e4567-e89b-12d3-a456-426614174000",
+      sessionId: "model-run-123e4567-e89b-12d3-a456-426614174000",
+      agentId: "main",
       isControlUiVisible: false,
       lifecycleGeneration: "test-generation",
     });
+    expect(Object.isFrozen(runContext.attribution)).toBe(true);
   });
 
   it("respects explicit bestEffortDeliver=false for main session runs", async () => {

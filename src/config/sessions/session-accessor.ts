@@ -120,6 +120,7 @@ export type {
 } from "./session-accessor.entry-mutation.js";
 export {
   countSessionEntryRowsReadOnly,
+  ensureSqliteSessionEntrySync as ensureSessionEntrySync,
   copySessionOwnedStateForCanonicalRepair,
   hasSessionEntriesByStatusReadOnly,
   listSessionGenerationIdsForCanonicalRepair,
@@ -245,6 +246,7 @@ export type {
 } from "./session-accessor.sqlite-active-events.js";
 export {
   readSessionTranscriptWatermark,
+  readSessionTranscriptWatermarkBatch,
   type SessionTranscriptWatermark,
 } from "./session-accessor.sqlite-transcript-watermark.js";
 export {

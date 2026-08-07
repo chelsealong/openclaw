@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest"
 // Register shared mocks before imports bind their production exports.
 import "./agent-command.test-mocks.js";
 import { testing as acpManagerTesting } from "../acp/control-plane/manager.js";
+import { executionIdentity } from "../agents/agent-command-execution-identity.js";
 import * as authProfileStoreModule from "../agents/auth-profiles/store.js";
 import * as attemptExecutionRuntime from "../agents/command/attempt-execution.runtime.js";
 import { deliverAgentCommandResult } from "../agents/command/delivery.runtime.js";
@@ -444,6 +445,61 @@ describe("agentCommand", () => {
         runtime,
       ),
     ).rejects.toThrow("allowModelOverride must be explicitly set for ingress agent runs.");
+  });
+
+  it("strips private execution attribution from runtime-shaped public ingress", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store);
+      const record = vi.spyOn(executionIdentity, "record").mockImplementation(() => undefined);
+      const inheritedAttribution = {
+        runId: "public-ingress-run",
+        contextId: "inherited-context",
+        executionId: "inherited-execution",
+        createdAt: 1,
+        lifecycleGeneration: "inherited-generation",
+      };
+      const priorDescriptor = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "executionAttribution",
+      );
+      // oxlint-disable-next-line no-extend-native -- Simulate a hostile JS plugin's prototype pollution.
+      Object.defineProperty(Object.prototype, "executionAttribution", {
+        configurable: true,
+        value: inheritedAttribution,
+      });
+
+      try {
+        await agentCommandFromIngress(
+          {
+            message: "public plugin turn",
+            agentId: "main",
+            runId: "public-ingress-run",
+            allowModelOverride: false,
+            executionAttribution: {
+              runId: "public-ingress-run",
+              contextId: "forged-context",
+              executionId: "forged-execution",
+              createdAt: 1,
+              lifecycleGeneration: "forged-generation",
+            },
+          } as never,
+          runtime,
+        );
+
+        expect(record).toHaveBeenCalledWith(
+          expect.objectContaining({ attribution: undefined, runId: "public-ingress-run" }),
+        );
+      } finally {
+        record.mockRestore();
+        if (priorDescriptor) {
+          // oxlint-disable-next-line no-extend-native -- Restore the exact pre-test prototype descriptor.
+          Object.defineProperty(Object.prototype, "executionAttribution", priorDescriptor);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).executionAttribution;
+        }
+      }
+    });
   });
 
   it("rejects a missing harness-owned session before local CLI dispatch", async () => {
@@ -1111,6 +1167,61 @@ describe("agentCommand", () => {
       expect(prepared).not.toHaveProperty("recoveryCandidateEntry");
       expect(prepared.sessionStore?.[sessionKey]).toBe(prepared.sessionEntry);
       expect(prepared.sessionStore?.["agent:main:other"]).toBeUndefined();
+    });
+  });
+
+  it("keeps synthetic direct-DM delivery mode out of existing CLI binding facts", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      const sessionKey = "agent:main:discord:direct:requester";
+      await writeSessionStoreSeed(store, {
+        [sessionKey]: {
+          sessionId: "requester-session",
+          updatedAt: Date.now(),
+          chatType: "direct",
+          modelProvider: "anthropic",
+          model: "claude-opus-4-6",
+          cliSessionBindings: {
+            "claude-cli": {
+              sessionId: "native-claude-session",
+              messageToolPolicyHash: "automatic-policy-hash",
+            },
+          },
+          delivery: normalizeSessionDeliveryState({
+            context: { channel: "discord", to: "user:requester" },
+            origin: { provider: "discord", chatType: "direct", to: "user:requester" },
+          }),
+        },
+      });
+      const cfg = mockConfig(home, store, {
+        models: {
+          "anthropic/claude-opus-4-6": { agentRuntime: { id: "claude-cli" } },
+        },
+      });
+      cfg.messages = { visibleReplies: "automatic" };
+
+      const prepared = await agentCommandTesting.prepareAgentCommandExecution(
+        {
+          message: "child completed",
+          sessionKey,
+          sourceReplyDeliveryMode: "message_tool_only",
+          inputProvenance: {
+            kind: "inter_session",
+            sourceSessionKey: "agent:main:subagent:child",
+            sourceTool: "subagent_announce",
+          },
+        },
+        runtime,
+      );
+
+      expect(prepared.opts.sourceReplyDeliveryMode).toBe("message_tool_only");
+      expect(prepared.opts.cliSessionBindingFacts).toEqual({
+        sourceReplyDeliveryMode: "automatic",
+      });
+      expect(prepared.sessionEntry?.cliSessionBindings?.["claude-cli"]).toMatchObject({
+        sessionId: "native-claude-session",
+        messageToolPolicyHash: "automatic-policy-hash",
+      });
     });
   });
 

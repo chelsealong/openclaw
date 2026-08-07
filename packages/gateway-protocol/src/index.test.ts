@@ -13,6 +13,7 @@ import {
   validateModelsListParams,
   validateModelsProbeParams,
   validateNodePluginToolsUpdateParams,
+  validateNodeProtocolFeaturesUpdateParams,
   validateNodeSkillsUpdateParams,
   validateNodePresenceActivityPayload,
   validateSessionsListParams,
@@ -27,6 +28,7 @@ import {
   validateSessionsUsageParams,
   validateTasksCancelParams,
   validateTasksListParams,
+  validateTasksRecoveryParams,
   validateTalkConfigResult,
   validateTalkClientCreateParams,
   validateTalkClientSteerParams,
@@ -288,6 +290,24 @@ describe("lazy protocol validators", () => {
         })),
       },
     ]);
+  });
+
+  it("validates bounded transient node protocol features", () => {
+    expect(
+      validateNodeProtocolFeaturesUpdateParams({
+        features: [protocol.NODE_INVOKE_SESSION_KEY_ENVELOPE_PROTOCOL_FEATURE],
+      }),
+    ).toBe(true);
+    expect(
+      validateNodeProtocolFeaturesUpdateParams({
+        features: ["duplicate", "duplicate"],
+      }),
+    ).toBe(false);
+    expect(
+      validateNodeProtocolFeaturesUpdateParams({
+        features: ["x".repeat(129)],
+      }),
+    ).toBe(false);
   });
 
   it("accepts selected-agent scope on chat send, history, and abort params", () => {
@@ -908,6 +928,17 @@ describe("validateTasksListParams", () => {
   it("rejects internal task statuses and unknown fields", () => {
     expectRejected(validateTasksListParams, [{ status: "succeeded" }]);
     expectRejected(validateTasksCancelParams, [{ taskId: "task-1", force: true }]);
+  });
+});
+
+describe("validateTasksRecoveryParams", () => {
+  it("accepts one to ten task ids and rejects unbounded recovery batches", () => {
+    expectAccepted(validateTasksRecoveryParams, [{ taskIds: ["task-1", "task-2"] }]);
+    expectRejected(validateTasksRecoveryParams, [
+      { taskIds: [] },
+      { taskIds: Array.from({ length: 11 }, (_, index) => `task-${index}`) },
+      { taskIds: ["task-1"], force: true },
+    ]);
   });
 });
 

@@ -16,6 +16,7 @@ import type {
   UserTurnInput,
   UserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.types.js";
+import type { AgentExecutionAttribution } from "../agent-execution-attribution.js";
 import type { ExecApprovalContinuationPromptRange } from "../bash-tools.exec-approval-output.js";
 import type { ExecElevatedDefaults } from "../bash-tools.exec-types.js";
 import type { BootstrapContextRunKind } from "../bootstrap-mode.js";
@@ -141,6 +142,8 @@ export type AgentCommandOpts = {
   runId?: string;
   /** Immutable gateway lifecycle ownership captured when this run was admitted. */
   lifecycleGeneration?: string;
+  /** Called once when the selected runtime actually admits the prompt for execution. */
+  onExecutionStarted?: () => void;
   extraSystemPrompt?: string;
   /** Bootstrap workspace context injection mode for this run. */
   bootstrapContextMode?: "full" | "lightweight";
@@ -190,6 +193,8 @@ export type AgentCommandOpts = {
   mainRestartRecoveryOwnerLease?: MainSessionRecoveryOwnerLease;
   /** Gateway already consumed this automatic recovery run's durable reservation. */
   mainRestartRecoveryAdmitted?: boolean;
+  /** Private host-owned execution identity; public ingress callers cannot author it. */
+  executionAttribution?: AgentExecutionAttribution;
   /** Called when the actual run model is selected, including fallback retries. */
   onActiveModelSelected?: (ctx: { provider: string; model: string }) => void | Promise<void>;
   /** Called when every candidate in the run's model fallback chain failed. */
@@ -213,10 +218,14 @@ export type AgentCommandOpts = {
 /** Restricted option surface for external ingress callsites. */
 export type AgentCommandIngressOpts = Omit<
   AgentCommandOpts,
-  "senderIsOwner" | "allowModelOverride"
+  "senderIsOwner" | "allowModelOverride" | "executionAttribution"
 > & {
   /** Trusted sender identity bit for command/channel-action auth; defaults false for ingress. */
   senderIsOwner?: boolean;
   /** Ingress callsites must always pass explicit model-override authorization state. */
   allowModelOverride: boolean;
 };
+
+/** Gateway-only ingress extends the public Plugin SDK surface with private execution correlation. */
+export type AgentCommandGatewayIngressOpts = AgentCommandIngressOpts &
+  Pick<AgentCommandOpts, "executionAttribution">;

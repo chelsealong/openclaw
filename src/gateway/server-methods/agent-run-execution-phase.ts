@@ -246,6 +246,9 @@ export function startAgentRunExecution(params: {
           };
         }
       }
+      const senderIsOwner = params.restoredCronContinuation
+        ? true
+        : clientHasAdminScope(params.client);
       const userTurnTranscriptRecorder =
         params.resolvedSessionKey &&
         params.resolvedSessionId &&
@@ -258,6 +261,7 @@ export function startAgentRunExecution(params: {
                 timestamp: Date.now(),
                 idempotencyKey: buildRunUserTurnIdempotencyKey(params.runId),
                 ...gatewayClientSenderFields(params.client),
+                senderIsOwner,
                 ...(params.inputProvenance ? { provenance: params.inputProvenance } : {}),
               },
               target: () => {
@@ -404,9 +408,7 @@ export function startAgentRunExecution(params: {
           acpTurnSource: params.request.acpTurnSource,
           internalEvents: params.request.internalEvents,
           inputProvenance: params.inputProvenance,
-          senderIsOwner: params.restoredCronContinuation
-            ? true
-            : clientHasAdminScope(params.client),
+          senderIsOwner,
           sessionEffects: params.sessionEffects,
           skipInitialSessionTouch: params.skipAgentInitialSessionTouch,
           preserveUserFacingSessionModelState:
@@ -419,6 +421,7 @@ export function startAgentRunExecution(params: {
           swarmOutputSchema: params.request.swarmOutputSchema,
           forceRestartSafeTools: params.request.forceRestartSafeTools,
           forceCodeModeTools: params.request.forceCodeModeTools,
+          executionAttribution: prepared.attribution,
           internalDeliveryMediaUrls: params.client?.internal?.internalDeliveryMediaUrls,
           internalDeliverySuppressText: params.client?.internal?.internalDeliverySuppressText,
           suppressPromptPersistence:
@@ -431,6 +434,7 @@ export function startAgentRunExecution(params: {
           cleanupBundleMcpOnRunEnd: params.request.cleanupBundleMcpOnRunEnd,
           abortSignal: prepared.activeRunAbort.controller.signal,
           lifecycleGeneration: params.lifecycleGeneration,
+          onExecutionStarted: () => prepared.activeRunAbort.markExecutionStarted(),
           onActiveModelSelected: createAgentRunModelSelectionHandler({
             context: params.context,
             runId: params.runId,

@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerExecApprovalFollowupRuntimeHandoff } from "../../agents/bash-tools.exec-approval-followup-state.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
+import { resolveAgentRunExpiresAtMs } from "../chat-abort.js";
 import { setGatewayDedupeEntry } from "./agent-job.js";
+import { prepareAgentRunDispatch } from "./agent-run-admission-phase.js";
 import {
   getAgentTestMocks,
   makeContext,
   type AgentHandlerArgs,
   waitForAssertion,
+  waitForAgentCommandCall,
   requireValue,
   expectRecordFields,
   mockCallArg,
@@ -1610,9 +1613,92 @@ describe("gateway agent handler chat.abort integration", () => {
     expect(mocks.agentCommand).not.toHaveBeenCalled();
   });
 
+  it("starts the registered timeout only after dispatch admission resolves", async () => {
+    prime();
+    const context = makeContext();
+    const runId = "idem-dispatch-admission-timeout-start";
+    const sessionId = "existing-session-id";
+    let nowMs = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let markAcquireStarted = () => {};
+    const acquireStarted = new Promise<void>((resolve) => {
+      markAcquireStarted = resolve;
+    });
+    let releaseAcquire = () => {};
+    const acquireReleased = new Promise<void>((resolve) => {
+      releaseAcquire = resolve;
+    });
+    type AdmittedRunAbort = Parameters<
+      Parameters<typeof prepareAgentRunDispatch>[0]["setAdmittedRunAbort"]
+    >[0];
+    let registration: AdmittedRunAbort | undefined;
+
+    try {
+      const pending = prepareAgentRunDispatch({
+        request: {
+          message: "wait for dispatch admission",
+          timeout: 120,
+          idempotencyKey: runId,
+        },
+        cfg: {},
+        sessionEntry: { sessionId, updatedAt: nowMs },
+        resolvedSessionKey: "agent:main:main",
+        activeSessionAgentId: "main",
+        delivery: {} as never,
+        allowModelOverride: false,
+        lifecycleGeneration: "test-generation",
+        getAdmittedSessionId: () => sessionId,
+        suppressVisibleSessionEffects: false,
+        isOneShotModelRun: false,
+        isRestartRecoveryResumeRun: false,
+        runId,
+        agentDedupeKeys: [`agent:${runId}`],
+        context,
+        client: null,
+        respond: vi.fn(),
+        abortForLifecycleRotation: () => false,
+        acquireGatewayWorkAdmission: async () => {
+          markAcquireStarted();
+          await acquireReleased;
+        },
+        assertGatewayWorkAdmissionAllowed: () => {},
+        hasGatewayAdmissionOutcome: () => false,
+        respondToGatewayAdmissionOutcome: () => true,
+        admissionAgentId: () => "main",
+        getGatewayWorkAdmission: () => undefined,
+        setAdmittedRunAbort: (value: AdmittedRunAbort) => {
+          registration = value;
+        },
+        getAdmittedRunAbort: () => registration,
+        markAgentRunAccepted: () => {},
+      } as unknown as Parameters<typeof prepareAgentRunDispatch>[0]);
+
+      await acquireStarted;
+      expect(registration).toBeUndefined();
+      nowMs += 90_000;
+      releaseAcquire();
+      await pending;
+
+      const abortEntry = requireValue(registration?.entry, "chat abort entry missing");
+      expect(abortEntry.startedAtMs).toBe(nowMs);
+      expect(abortEntry.expiresAtMs).toBe(
+        resolveAgentRunExpiresAtMs({ now: nowMs, timeoutMs: 120_000 }),
+      );
+    } finally {
+      releaseAcquire();
+      dateNow.mockRestore();
+    }
+  });
+
   it("uses the explicit no-timeout agent expiry instead of the chat 24h cap", async () => {
     prime();
-    mocks.agentCommand.mockImplementation(() => new Promise(() => {}));
+    let onExecutionStarted: (() => void) | undefined;
+    mocks.agentCommand.mockImplementation(
+      (opts: { onExecutionStarted?: () => void }) =>
+        new Promise(() => {
+          onExecutionStarted = opts.onExecutionStarted;
+        }),
+    );
 
     const context = makeContext();
     const respond = vi.fn();
@@ -1631,6 +1717,148 @@ describe("gateway agent handler chat.abort integration", () => {
     const entry = context.chatAbortControllers.get(runId);
     const abortEntry = requireValue(entry, "chat abort entry missing");
     expect(abortEntry.expiresAtMs - abortEntry.startedAtMs).toBeGreaterThan(24 * 60 * 60_000);
+    const startedAtMs = abortEntry.startedAtMs;
+    const executionStartedAtMs = Date.now() + 60_000;
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(executionStartedAtMs);
+    try {
+      requireValue(onExecutionStarted, "execution-start callback missing")();
+      expect(abortEntry.startedAtMs).toBe(startedAtMs);
+      expect(abortEntry.expiresAtMs - executionStartedAtMs).toBeGreaterThan(24 * 60 * 60_000);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it("starts and rearms the agent timeout at the actual gateway execution boundaries", async () => {
+    prime();
+    const sessionKey = "agent:main:main";
+    const sessionId = "existing-session-id";
+    const runId = "idem-agent-execution-timeout-boundaries";
+    let nowMs = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let releaseMutation = () => {};
+    let markMutationStarted = () => {};
+    const mutationStarted = new Promise<void>((resolve) => {
+      markMutationStarted = resolve;
+    });
+    const mutation = runExclusiveSessionLifecycleMutation({
+      scope: "/tmp/sessions.json",
+      identities: [sessionKey, sessionId],
+      run: async () => {
+        markMutationStarted();
+        await new Promise<void>((resolve) => {
+          releaseMutation = resolve;
+        });
+      },
+    });
+    await mutationStarted;
+    let onExecutionStarted: (() => void) | undefined;
+    mocks.agentCommand.mockImplementation(
+      (opts: { onExecutionStarted?: () => void }) =>
+        new Promise(() => {
+          onExecutionStarted = opts.onExecutionStarted;
+        }),
+    );
+    const context = makeContext();
+    const respond = vi.fn();
+    const admissionStartedAtMs = nowMs;
+    const request = invokeAgent(
+      {
+        message: "wait for admission, then preserve a full execution timeout",
+        agentId: "main",
+        sessionKey,
+        idempotencyKey: runId,
+        timeout: 120,
+      },
+      { context, respond, reqId: runId },
+    );
+
+    try {
+      await waitForAssertion(() => expect(context.dedupe.has(`agent:${runId}`)).toBe(true));
+      expect(context.chatAbortControllers.has(runId)).toBe(false);
+      nowMs += 90_000;
+      releaseMutation();
+      await mutation;
+      await request;
+      await waitForAssertion(() => expect(mocks.agentCommand).toHaveBeenCalledTimes(1));
+
+      const abortEntry = requireValue(
+        context.chatAbortControllers.get(runId),
+        "chat abort entry missing",
+      );
+      expect(abortEntry.startedAtMs).toBe(nowMs);
+      expect(abortEntry.startedAtMs).toBeGreaterThan(admissionStartedAtMs);
+      expect(abortEntry.expiresAtMs).toBe(
+        resolveAgentRunExpiresAtMs({ now: abortEntry.startedAtMs, timeoutMs: 120_000 }),
+      );
+
+      nowMs += 120_000;
+      const executionStartedAtMs = nowMs;
+      const executionStarted = requireValue(onExecutionStarted, "execution-start callback missing");
+      executionStarted();
+      expect(abortEntry.startedAtMs).toBe(admissionStartedAtMs + 90_000);
+      expect(abortEntry.expiresAtMs).toBe(
+        resolveAgentRunExpiresAtMs({ now: executionStartedAtMs, timeoutMs: 120_000 }),
+      );
+
+      const firstExecutionExpiryMs = abortEntry.expiresAtMs;
+      nowMs += 120_000;
+      executionStarted();
+      expect(abortEntry.startedAtMs).toBe(admissionStartedAtMs + 90_000);
+      expect(abortEntry.expiresAtMs).toBe(firstExecutionExpiryMs);
+    } finally {
+      releaseMutation();
+      await mutation;
+      dateNow.mockRestore();
+    }
+  });
+
+  it("keeps an elapsed queue deadline terminal before the maintenance sweep", async () => {
+    prime();
+    const runId = "idem-agent-expired-queue-deadline";
+    let nowMs = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let onExecutionStarted: (() => void) | undefined;
+    mocks.agentCommand.mockImplementation(
+      (opts: { onExecutionStarted?: () => void }) =>
+        new Promise(() => {
+          onExecutionStarted = opts.onExecutionStarted;
+        }),
+    );
+    const context = makeContext();
+
+    try {
+      await invokeAgent(
+        {
+          message: "do not revive an expired queue deadline",
+          agentId: "main",
+          sessionKey: "agent:main:main",
+          idempotencyKey: runId,
+          timeout: 120,
+        },
+        { context, respond: vi.fn(), reqId: runId },
+      );
+
+      const abortEntry = requireValue(
+        context.chatAbortControllers.get(runId),
+        "chat abort entry missing",
+      );
+      const startedAtMs = abortEntry.startedAtMs;
+      const queueExpiresAtMs = abortEntry.expiresAtMs;
+      nowMs = queueExpiresAtMs + 1;
+      const executionStarted = requireValue(onExecutionStarted, "execution-start callback missing");
+      executionStarted();
+
+      expect(abortEntry.startedAtMs).toBe(startedAtMs);
+      expect(abortEntry.expiresAtMs).toBe(queueExpiresAtMs);
+      expect(abortEntry.controller.signal.aborted).toBe(false);
+
+      nowMs = queueExpiresAtMs - 1;
+      executionStarted();
+      expect(abortEntry.expiresAtMs).toBe(queueExpiresAtMs);
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("sets the maintenance expiry to the configured agent timeout, not the 24h chat default", async () => {
@@ -2080,6 +2308,192 @@ describe("gateway agent handler chat.abort integration", () => {
           ok === false && (payload as { runId?: string; status?: string })?.runId === runId,
       ),
     ).toBe(true);
+  });
+
+  it("replays restart recovery identity admission failures for the same idempotency key", async () => {
+    const sessionKey = "agent:main:main";
+    const sessionId = "recovery-session";
+    const runId = "recovery-identity-token-unavailable";
+    const storePath = "/tmp/sessions.json";
+    const store: Record<string, SessionEntry> = {
+      [sessionKey]: {
+        sessionId,
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: "cycle-1",
+          revision: 1,
+          chargedAttempts: 1,
+          reservation: {
+            runId,
+            attempt: 1,
+            lifecycleGeneration: "test-generation",
+          },
+        },
+      },
+    };
+    mocks.loadConfigReturn = {
+      logging: {
+        audit: {
+          enabled: true,
+          executionIdentity: true,
+        },
+      },
+    };
+    mocks.loadSessionEntry.mockImplementation(() => ({
+      cfg: mocks.loadConfigReturn,
+      storePath,
+      entry: structuredClone(store[sessionKey]),
+      canonicalKey: sessionKey,
+    }));
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => await updater(store));
+
+    const context = makeContext();
+    const request = {
+      message: "resume after restart",
+      agentId: "main",
+      sessionKey,
+      sessionId,
+      expectedExistingSessionId: sessionId,
+      idempotencyKey: runId,
+      internalExecutionIdentityRetry: false,
+      inputProvenance: {
+        kind: "internal_system" as const,
+        sourceSessionKey: sessionKey,
+        sourceTool: "main_session_restart_recovery",
+      },
+    };
+    const firstRespond = vi.fn();
+    await invokeAgent(request, {
+      client: backendGatewayClient(),
+      context,
+      reqId: runId,
+      respond: firstRespond,
+    });
+
+    const summary = "Error: restart recovery execution identity token is unavailable";
+    expect(firstRespond).toHaveBeenCalledWith(
+      false,
+      { runId, status: "error", summary },
+      expect.objectContaining({ code: "UNAVAILABLE", message: summary }),
+      { runId, error: summary },
+    );
+    expect(context.dedupe.get(`agent:${runId}`)).toMatchObject({
+      ok: false,
+      payload: { runId, status: "error", summary },
+      error: { code: "UNAVAILABLE", message: summary },
+    });
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+
+    const secondRespond = vi.fn();
+    await invokeAgent(request, {
+      client: backendGatewayClient(),
+      context,
+      reqId: `${runId}-retry`,
+      respond: secondRespond,
+    });
+
+    expect(secondRespond).toHaveBeenCalledWith(
+      false,
+      { runId, status: "error", summary },
+      expect.objectContaining({ code: "UNAVAILABLE", message: summary }),
+      { cached: true },
+    );
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+  });
+
+  it("registers attribution only after restart recovery admission persists", async () => {
+    const sessionKey = "agent:main:main";
+    const sessionId = "recovery-session";
+    const runId = "recovery-admission-write-retry";
+    const storePath = "/tmp/sessions.json";
+    const store: Record<string, SessionEntry> = {
+      [sessionKey]: {
+        sessionId,
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: "cycle-1",
+          revision: 1,
+          chargedAttempts: 1,
+          reservation: {
+            runId,
+            attempt: 1,
+            lifecycleGeneration: "test-generation",
+          },
+        },
+      },
+    };
+    mocks.loadSessionEntry.mockImplementation(() => ({
+      cfg: {},
+      storePath,
+      entry: structuredClone(store[sessionKey]),
+      canonicalKey: sessionKey,
+    }));
+    let failRecoveryAdmissionWrite = true;
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      const candidate = structuredClone(store);
+      const result = await updater(candidate);
+      const admittedRecovery =
+        store[sessionKey]?.mainRestartRecovery?.reservation !== undefined &&
+        candidate[sessionKey]?.mainRestartRecovery?.reservation === undefined;
+      if (failRecoveryAdmissionWrite && admittedRecovery) {
+        failRecoveryAdmissionWrite = false;
+        throw new Error("recovery admission write failed");
+      }
+      for (const key of Object.keys(store)) {
+        delete store[key];
+      }
+      Object.assign(store, candidate);
+      return result;
+    });
+    mocks.agentCommand.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 100 },
+    });
+    mocks.agentCommand.mockClear();
+    mocks.registerAgentRunContext.mockClear();
+    const context = makeContext();
+    const request = {
+      message: "resume after restart",
+      agentId: "main",
+      sessionKey,
+      sessionId,
+      expectedExistingSessionId: sessionId,
+      idempotencyKey: runId,
+      inputProvenance: {
+        kind: "internal_system" as const,
+        sourceSessionKey: sessionKey,
+        sourceTool: "main_session_restart_recovery",
+      },
+    };
+    const firstRespond = vi.fn();
+
+    await invokeAgent(request, {
+      client: backendGatewayClient(),
+      context,
+      reqId: runId,
+      respond: firstRespond,
+    });
+
+    expectRespondError(firstRespond, {
+      code: "UNAVAILABLE",
+      message: "Error: recovery admission write failed",
+    });
+    expect(mocks.registerAgentRunContext).not.toHaveBeenCalled();
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+
+    await invokeAgent(request, {
+      client: backendGatewayClient(),
+      context,
+      reqId: `${runId}-retry`,
+    });
+
+    await waitForAgentCommandCall();
+    expect(mocks.registerAgentRunContext).toHaveBeenCalledTimes(1);
+    expect(mockCallArg(mocks.registerAgentRunContext, 0, 0)).toBe(runId);
   });
 
   it("releases a foreground recovery owner if pre-dispatch reactivation fails", async () => {

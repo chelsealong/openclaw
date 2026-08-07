@@ -1,11 +1,14 @@
 // Owns process-local agent run context, ownership, and projection state.
 import { randomUUID } from "node:crypto";
+import type { AgentExecutionAttribution } from "../agents/agent-execution-attribution.js";
 import type { VerboseLevel } from "../auto-reply/thinking.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { clearAgentRunUsage, resetAgentRunUsageForTest } from "./agent-run-usage.js";
 
 /** Per-run metadata used to stamp events and gate Control UI visibility. */
 type AgentRunContext = {
+  /** Immutable admission-owned correlation; later context merges cannot replace it. */
+  readonly attribution?: AgentExecutionAttribution;
   sessionKey?: string;
   /** Resolved agent owner, including for unscoped session keys. */
   agentId?: string;
@@ -42,6 +45,7 @@ type AgentRunContextOwnership = {
 type AgentRunRegistryState = {
   contexts: Map<string, AgentRunContext>;
   owners: Map<string, AgentRunContextOwnership>;
+  queuedRunContextLeases?: WeakMap<AgentRunContext, number>;
   lifecycleGeneration: string;
   sequenceResetHandler?: (runId: string) => void;
   version: number;
@@ -60,6 +64,35 @@ function getAgentRunRegistryState(): AgentRunRegistryState {
 
 function bumpAgentRunIndexVersion(): void {
   getAgentRunRegistryState().version += 1;
+}
+
+function attachAgentExecutionAttribution(
+  context: AgentRunContext,
+  attribution: AgentExecutionAttribution | undefined,
+): void {
+  if (!attribution || context.attribution) {
+    return;
+  }
+  Object.defineProperty(context, "attribution", {
+    value: attribution,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  });
+}
+
+function createAgentRunContext(
+  context: AgentRunContext,
+  lifecycleGeneration: string,
+): AgentRunContext {
+  const { attribution, ...fields } = context;
+  const stored: AgentRunContext = {
+    ...fields,
+    lifecycleGeneration,
+    registeredAt: context.registeredAt ?? Date.now(),
+  };
+  attachAgentExecutionAttribution(stored, attribution);
+  return stored;
 }
 
 /** Reads the process-local version of the active-run projection inputs. */
@@ -104,11 +137,7 @@ export function registerAgentRunContext(
   }
   const existing = state.contexts.get(runId);
   if (!existing) {
-    state.contexts.set(runId, {
-      ...context,
-      lifecycleGeneration,
-      registeredAt: context.registeredAt ?? Date.now(),
-    });
+    state.contexts.set(runId, createAgentRunContext(context, lifecycleGeneration));
     bumpAgentRunIndexVersion();
     return;
   }
@@ -119,6 +148,7 @@ export function registerAgentRunContext(
   ) {
     return;
   }
+  attachAgentExecutionAttribution(existing, context.attribution);
   let runIndexChanged = false;
   if (context.sessionKey && existing.sessionKey !== context.sessionKey) {
     existing.sessionKey = context.sessionKey;
@@ -240,11 +270,7 @@ export function claimAgentRunContext(
     }
     return claimId;
   }
-  state.contexts.set(runId, {
-    ...context,
-    lifecycleGeneration,
-    registeredAt: context.registeredAt ?? Date.now(),
-  });
+  state.contexts.set(runId, createAgentRunContext(context, lifecycleGeneration));
   state.sequenceResetHandler?.(runId);
   clearAgentRunUsage(runId);
   bumpAgentRunIndexVersion();
@@ -254,6 +280,49 @@ export function claimAgentRunContext(
 /** Returns the currently registered context for a run, if it has not been cleared or swept. */
 export function getAgentRunContext(runId: string): AgentRunContext | undefined {
   return getAgentRunRegistryState().contexts.get(runId);
+}
+
+/** Holds an existing run context only while its current execution awaits lane admission. */
+export function retainQueuedAgentRunContext(
+  runId: string,
+  lifecycleGeneration: string,
+): ((outcome: "admitted" | "abandoned") => void) | undefined {
+  const state = getAgentRunRegistryState();
+  const context = state.contexts.get(runId);
+  if (
+    !context ||
+    context.lifecycleGeneration !== lifecycleGeneration ||
+    state.lifecycleGeneration !== lifecycleGeneration
+  ) {
+    return undefined;
+  }
+
+  const leases = (state.queuedRunContextLeases ??= new WeakMap<AgentRunContext, number>());
+  leases.set(context, (leases.get(context) ?? 0) + 1);
+  let released = false;
+
+  return (outcome) => {
+    if (released) {
+      return;
+    }
+    released = true;
+    const remaining = (leases.get(context) ?? 0) - 1;
+    if (remaining > 0) {
+      leases.set(context, remaining);
+    } else {
+      leases.delete(context);
+    }
+
+    // A recycled run id or rotated lifecycle must not inherit the old queue's activity.
+    if (
+      outcome === "admitted" &&
+      state.contexts.get(runId) === context &&
+      context.lifecycleGeneration === lifecycleGeneration &&
+      state.lifecycleGeneration === lifecycleGeneration
+    ) {
+      context.lastActiveAt = Date.now();
+    }
+  };
 }
 
 export function getAgentRunContextOwnership(runId: string): AgentRunContextOwnership | undefined {
@@ -444,6 +513,13 @@ export function sweepStaleRunContexts(maxAgeMs = 30 * 60 * 1000): number {
   const now = Date.now();
   let swept = 0;
   for (const [runId, context] of state.contexts) {
+    // Queue capacity waits are live ownership, but never protect a retired lifecycle.
+    if (
+      context.lifecycleGeneration === state.lifecycleGeneration &&
+      (state.queuedRunContextLeases?.get(context) ?? 0) > 0
+    ) {
+      continue;
+    }
     // Use lastActiveAt (refreshed on every event) to avoid sweeping active runs.
     // Fall back to registeredAt, then treat missing timestamps as infinitely old.
     const lastSeen = context.lastActiveAt ?? context.registeredAt;
@@ -468,6 +544,7 @@ export function resetAgentRunRegistryForTest(): void {
   resetAgentRunUsageForTest();
   state.contexts.clear();
   state.owners.clear();
+  state.queuedRunContextLeases = undefined;
   if (hadRunContexts) {
     bumpAgentRunIndexVersion();
   }

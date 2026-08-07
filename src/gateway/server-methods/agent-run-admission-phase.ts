@@ -1,6 +1,11 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import {
+  createAgentExecutionAttribution,
+  type AgentExecutionIdentityAdmission,
+  type AgentExecutionAttribution,
+} from "../../agents/agent-execution-attribution.js";
+import {
   clearEmbeddedAgentRunAbortabilityForRunId,
   isEmbeddedAgentRunAbortableForRunId,
   retainEmbeddedAgentRunAbortabilityForRunId,
@@ -45,6 +50,7 @@ import type { GatewayRequestHandlerOptions } from "./types.js";
 export type PreparedAgentRunDispatch = {
   activeGatewayWorkAdmission: SessionWorkAdmissionLease;
   activeRunAbort: ReturnType<typeof registerChatAbortController>;
+  attribution: AgentExecutionAttribution;
   effectiveProviderOverride?: string;
   effectiveModelOverride?: string;
   effectiveThinking?: string;
@@ -86,6 +92,7 @@ export async function prepareAgentRunDispatch(params: {
   inputProvenance?: InputProvenance;
   isOneShotModelRun: boolean;
   isRestartRecoveryResumeRun: boolean;
+  executionIdentityAdmission?: AgentExecutionIdentityAdmission;
   runId: string;
   agentDedupeKeys: readonly string[];
   context: GatewayRequestHandlerOptions["context"];
@@ -138,7 +145,6 @@ export async function prepareAgentRunDispatch(params: {
     return undefined;
   }
 
-  const now = Date.now();
   const timeoutMs = resolveAgentTimeoutMs({
     cfg: params.cfgForAgent ?? params.cfg,
     overrideSeconds:
@@ -191,6 +197,7 @@ export async function prepareAgentRunDispatch(params: {
     await params.acquireGatewayWorkAdmission(lifecycleStorePath);
     params.assertGatewayWorkAdmissionAllowed();
     if (!params.hasGatewayAdmissionOutcome()) {
+      const now = Date.now();
       params.setAdmittedRunAbort(
         registerChatAbortController({
           chatAbortControllers: params.context.chatAbortControllers,
@@ -252,6 +259,16 @@ export async function prepareAgentRunDispatch(params: {
     });
     return undefined;
   }
+  const attribution = createAgentExecutionAttribution({
+    runId: params.runId,
+    lifecycleGeneration: params.lifecycleGeneration,
+    sessionKey: params.resolvedSessionKey,
+    sessionId: params.getAdmittedSessionId(),
+    agentId: params.activeSessionAgentId,
+    ...(params.executionIdentityAdmission
+      ? { executionIdentityAdmission: params.executionIdentityAdmission }
+      : {}),
+  });
   if (!activeRunAbort.registered) {
     activeGatewayWorkAdmission.release();
   } else {
@@ -261,17 +278,6 @@ export async function prepareAgentRunDispatch(params: {
         ...params.pendingChatRun,
         clientRunId: params.runId,
       });
-    }
-    if (params.resolvedSessionKey) {
-      claimAgentRunContext(
-        params.runId,
-        params.suppressVisibleSessionEffects
-          ? { isControlUiVisible: false, lifecycleGeneration: params.lifecycleGeneration }
-          : {
-              sessionKey: params.resolvedSessionKey,
-              lifecycleGeneration: params.lifecycleGeneration,
-            },
-      );
     }
   }
 
@@ -308,7 +314,7 @@ export async function prepareAgentRunDispatch(params: {
     }),
     modelRun: params.isOneShotModelRun,
   });
-  let dispatchTaskTrackingMode: PreparedAgentRunDispatch["dispatchTaskTrackingMode"] =
+  const dispatchTaskTrackingMode: PreparedAgentRunDispatch["dispatchTaskTrackingMode"] =
     taskTrackingMode === "cli" ? "cli" : "none";
   if (taskTrackingMode === "plugin_subagent" && params.resolvedSessionKey) {
     try {
@@ -322,9 +328,19 @@ export async function prepareAgentRunDispatch(params: {
       });
     } catch (err) {
       params.context.logGateway.warn(
-        `failed to register plugin subagent run ${params.runId}; falling back to cli task tracking: ${formatForLog(err)}`,
+        `failed to register plugin subagent run ${params.runId}; rejecting untracked dispatch: ${formatForLog(err)}`,
       );
-      dispatchTaskTrackingMode = "cli";
+      activeRunAbort.cleanup({ force: true });
+      activeGatewayWorkAdmission.release();
+      params.respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          `plugin subagent registry persistence failed; run was not started: ${formatForLog(err)}`,
+        ),
+      );
+      return undefined;
     }
   }
   let restoreAdmittedRestartRecoveryInterrupted:
@@ -396,6 +412,18 @@ export async function prepareAgentRunDispatch(params: {
       return undefined;
     }
   }
+  if (activeRunAbort.registered && params.resolvedSessionKey) {
+    // Failed admission must not publish first-writer correlation that a same-key
+    // retry cannot replace. Claim only after every fallible admission gate succeeds.
+    claimAgentRunContext(params.runId, {
+      attribution,
+      ...(attribution.sessionKey ? { sessionKey: attribution.sessionKey } : {}),
+      ...(attribution.sessionId ? { sessionId: attribution.sessionId } : {}),
+      ...(attribution.agentId ? { agentId: attribution.agentId } : {}),
+      ...(params.suppressVisibleSessionEffects ? { isControlUiVisible: false } : {}),
+      lifecycleGeneration: attribution.lifecycleGeneration,
+    });
+  }
   const accepted = {
     runId: params.runId,
     sessionKey: params.resolvedSessionKey,
@@ -424,6 +452,7 @@ export async function prepareAgentRunDispatch(params: {
   return {
     activeGatewayWorkAdmission,
     activeRunAbort,
+    attribution,
     effectiveProviderOverride,
     effectiveModelOverride,
     effectiveThinking,
