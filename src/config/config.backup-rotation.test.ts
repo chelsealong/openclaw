@@ -189,6 +189,22 @@ describe("config backup rotation", () => {
     });
   });
 
+  it("logs before removing an out-of-ring backup so deletion is never silent (#120253)", async () => {
+    await withTempHome(async () => {
+      logVerboseMock.mockClear();
+      const configPath = resolveConfigPathFromTempState();
+      await fs.writeFile(configPath, JSON.stringify({ token: "secret" }), { mode: 0o600 });
+      const manualBackup = `${configPath}.bak.manual`;
+      await fs.writeFile(manualBackup, "manual backup");
+
+      await maintainConfigBackups(configPath, fs);
+
+      await expectPathMissing(manualBackup);
+      const logged = logVerboseMock.mock.calls.map((call) => String(call[0]));
+      expect(logged.some((line) => line.includes(manualBackup))).toBe(true);
+    });
+  });
+
   it("logs an orphan backup cleanup failure instead of swallowing it (#105199)", async () => {
     await withTempHome(async () => {
       logVerboseMock.mockClear();

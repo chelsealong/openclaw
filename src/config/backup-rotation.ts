@@ -94,6 +94,11 @@ async function cleanOrphanBackups(configPath: string, ioFs: BackupRotationFs): P
       continue;
     }
     const orphanPath = path.join(dir, entry);
+    // Any `<config>.bak.<suffix>` outside the numbered ring is pruned here, which
+    // also catches manually placed files that happen to match that pattern (e.g. a
+    // user's own `.bak.manual` copy). Log before deleting so that removal is never
+    // silent, even though it is expected to succeed (#120253).
+    logVerbose(`config orphan backup cleanup removing out-of-ring backup ${orphanPath}`);
     await ioFs.unlink(orphanPath).catch((error: unknown) => {
       // best-effort: log so a locked/undeletable orphan does not accumulate
       // silently and slowly exhaust disk without any operator signal (#105199).
