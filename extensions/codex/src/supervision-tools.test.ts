@@ -1049,4 +1049,25 @@ describe("Codex supervision compatibility tools", () => {
     expect(serialized).not.toContain(apiKey.slice(-4));
     expect(serialized).toContain("[redacted]");
   });
+
+  it("redacts an opaque value inside a sensitive-key array using the array's own key, not just scalar sensitive fields", async () => {
+    // Deliberately opaque: no recognized credential prefix/shape, so only the
+    // "tokens" parent key (not pattern matching) can trigger full redaction.
+    const opaqueSecret = "unshaped-credential-value-without-a-known-prefix";
+    const { request } = createRequest({
+      id: "thread-1",
+      status: { type: "idle" },
+      tokens: [opaqueSecret],
+    });
+    const tools = createTools(request);
+
+    const result = await toolByName(tools, "codex_session_read").execute("read", {
+      endpoint_id: "local",
+      thread_id: "thread-1",
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(opaqueSecret);
+    expect(serialized).toContain("[redacted]");
+  });
 });

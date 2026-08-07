@@ -853,7 +853,7 @@ function redactCodexSupervisionValue(value: unknown, key = ""): unknown {
       .replaceAll(LEGACY_BEARER_PLACEHOLDER, "Bearer [redacted]");
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => redactCodexSupervisionValue(entry));
+    return value.map((entry) => redactCodexSupervisionValue(entry, key));
   }
   if (!isRecord(value)) {
     return value;
