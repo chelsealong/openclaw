@@ -872,4 +872,53 @@ describe("plugin registry runtime config scope", () => {
       expect.objectContaining({ agentId: "main", readOnly: true }),
     );
   });
+
+  it("does not derive a gateway session request's ownership scan agent id from an unrelated session key", async () => {
+    // A plugin-controlled gateway request can legitimately carry sessionKey and
+    // sessionId fields that name different agents (see MessageActionParamsSchema and
+    // agent-consult-runtime's cross-agent parentSessionKey). Deriving the ownership
+    // scan's agentId from whichever key happens to parse would scope the scan to the
+    // wrong agent's store, never find the target sessionId there, and let the request
+    // through without the ownership check ever running against it.
+    const callerSessionKey = "agent:main:memory-plugin:own-session";
+    const victimSessionKey = "agent:victim-agent:codex-owner:locked-session";
+    const victimEntry = { sessionId: "victim-session-id", updatedAt: 1 } as unknown as SessionEntry;
+    const agentStores: Record<string, Array<{ sessionKey: string; entry: SessionEntry }>> = {
+      "victim-agent": [{ sessionKey: victimSessionKey, entry: victimEntry }],
+    };
+    const runtime = createPluginRuntime();
+    const session = runtime.agent.session;
+    session.getSessionEntry = vi.fn(() => undefined);
+    const listSessionEntries = vi.fn((params) => {
+      if (!params?.agentId) {
+        throw new Error("Cannot resolve SQLite session scope without an agent id");
+      }
+      return agentStores[params.agentId] ?? [];
+    });
+    session.listSessionEntries =
+      listSessionEntries as unknown as PluginRuntime["agent"]["session"]["listSessionEntries"];
+    const gatewayRequest = vi.fn(async () => ({ ok: true }));
+    runtime.gateway = {
+      isAvailable: vi.fn(async () => true),
+      request: gatewayRequest as unknown as PluginRuntime["gateway"]["request"],
+    };
+    const pluginRegistry = createTestRegistry(runtime);
+    const record = createPluginRecord({
+      id: "memory-plugin",
+      source: "/plugins/memory-plugin/index.js",
+      origin: "bundled",
+      enabled: true,
+      configSchema: false,
+    });
+    const api = pluginRegistry.createApi(record, { config: {} as OpenClawConfig });
+
+    await expect(
+      api.runtime.gateway.request("sessions.patch", {
+        sessionKey: callerSessionKey,
+        sessionId: victimEntry.sessionId,
+        archived: true,
+      }),
+    ).rejects.toThrow("Cannot resolve SQLite session scope without an agent id");
+    expect(gatewayRequest).not.toHaveBeenCalled();
+  });
 });

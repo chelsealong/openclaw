@@ -269,12 +269,22 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
     const assertSessionIdentitiesOwned = (params: {
       action: string;
       agentId?: unknown;
+      // A single, caller-guaranteed-unambiguous session key to derive a listing
+      // agentId from when `agentId` is absent. Only pass this from call sites that
+      // resolve exactly one session key (e.g. runEmbeddedAgent's target). Leaving it
+      // unset preserves the hard "cannot resolve scope" failure for call sites whose
+      // `sessionKeys` set can legitimately span more than one agent (see
+      // assertGatewaySessionRequestOwned's parentSessionKey), where guessing an agent
+      // id from an arbitrary key could scan the wrong agent's store and silently skip
+      // the sessionId/sessionFile ownership check instead of denying it.
+      agentIdFallbackSessionKey?: unknown;
       sessionFiles?: unknown[];
       sessionIds?: unknown[];
       sessionKeys?: unknown[];
       storePath?: unknown;
     }): void => {
       const agentId = normalizeOptionalString(params.agentId);
+      const agentIdFallbackSessionKey = normalizeOptionalString(params.agentIdFallbackSessionKey);
       const storePath = normalizeOptionalString(params.storePath);
       const sessionKeys = new Set<string>();
       for (const value of params.sessionKeys ?? []) {
@@ -311,13 +321,13 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
       }
       // Session-id/file ownership checks list an agent's whole store, so they need an
       // agentId even when the caller (e.g. a plugin's runEmbeddedAgent target) only
-      // supplied a sessionKey. Fall back to the agent id embedded in that key instead of
-      // failing to resolve a SQLite scope at all.
+      // supplied a sessionKey. Fall back to the agent id embedded in that single key
+      // instead of failing to resolve a SQLite scope at all.
       const listAgentId =
         agentId ??
-        [...sessionKeys]
-          .map((sessionKey) => parseAgentSessionKey(sessionKey)?.agentId)
-          .find((value): value is string => Boolean(value));
+        (agentIdFallbackSessionKey
+          ? parseAgentSessionKey(agentIdFallbackSessionKey)?.agentId
+          : undefined);
       const entries = registryParams.runtime.agent.session.listSessionEntries({
         ...(listAgentId ? { agentId: listAgentId } : {}),
         ...(storePath ? { storePath } : {}),
@@ -464,6 +474,10 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
       assertSessionIdentitiesOwned({
         action: "run",
         agentId: target?.agentId ?? params.agentId,
+        // Safe: `sessionKey` is this function's single resolved session key (target
+        // and direct are asserted equal above when both are present), never a set
+        // that can legitimately span multiple agents.
+        agentIdFallbackSessionKey: sessionKey,
         sessionFiles: [params.sessionFile],
         sessionIds: [target?.sessionId ?? params.sessionId],
         sessionKeys: [target?.sessionKey ?? params.sessionKey],
