@@ -824,4 +824,52 @@ describe("plugin registry runtime config scope", () => {
       otherApi.runtime.gateway.request("voicecall.start", { to: "+15550001234" }),
     ).resolves.toEqual({ ok: true });
   });
+
+  it("derives the session-id ownership scan agent id from the session key when the caller omits one", async () => {
+    const sessionKey = "agent:main:dashboard:incognito-11111111-1111-1111-1111-111111111111";
+    const entry = { sessionId: "embedded-only-session", updatedAt: 1 };
+    const entries = { [sessionKey]: entry } as unknown as Record<string, SessionEntry>;
+    const runtime = createPluginRuntime();
+    const session = runtime.agent.session;
+    session.getSessionEntry = vi.fn((params) => entries[params.sessionKey]);
+    const listSessionEntries = vi.fn(() =>
+      Object.entries(entries).map(([key, value]) => ({ sessionKey: key, entry: value })),
+    );
+    session.listSessionEntries = listSessionEntries;
+    const runEmbeddedAgent = vi.fn(async () => ({
+      ok: true,
+    })) as unknown as PluginRuntime["agent"]["runEmbeddedAgent"];
+    Object.defineProperties(runtime.agent, {
+      runEmbeddedAgent: { configurable: true, value: runEmbeddedAgent },
+      runEmbeddedPiAgent: { configurable: true, value: runEmbeddedAgent },
+    });
+    const pluginRegistry = createTestRegistry(runtime);
+    const record = createPluginRecord({
+      id: "memory-plugin",
+      source: "/plugins/memory-plugin/index.js",
+      origin: "bundled",
+      enabled: true,
+      configSchema: false,
+    });
+    const api = pluginRegistry.createApi(record, { config: {} as OpenClawConfig });
+
+    await expect(
+      api.runtime.agent.runEmbeddedAgent({
+        sessionId: entry.sessionId,
+        sessionKey,
+        workspaceDir: "/tmp",
+        prompt: "extract memories",
+        timeoutMs: 1,
+        runId: "run-embedded-only",
+      } as Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0]),
+    ).resolves.toEqual({ ok: true });
+
+    // The plugin never supplied an agentId, so the session-id ownership scan must
+    // derive one from the sessionKey; otherwise it cannot resolve which agent's
+    // SQLite store to list and the real accessor throws "Cannot resolve SQLite
+    // session scope without an agent id" for exactly this incognito/dashboard shape.
+    expect(listSessionEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "main", readOnly: true }),
+    );
+  });
 });

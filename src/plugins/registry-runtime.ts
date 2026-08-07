@@ -28,6 +28,7 @@ import {
   isAgentHarnessSessionKey,
   isAgentHarnessSessionKeyOwnedBy,
 } from "../sessions/agent-harness-session-key.js";
+import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 import type { PluginRegistryState } from "./registry-state.js";
 import type { PluginRecord } from "./registry-types.js";
 import {
@@ -308,8 +309,17 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
       if (sessionIds.size === 0 && sessionFiles.size === 0) {
         return;
       }
+      // Session-id/file ownership checks list an agent's whole store, so they need an
+      // agentId even when the caller (e.g. a plugin's runEmbeddedAgent target) only
+      // supplied a sessionKey. Fall back to the agent id embedded in that key instead of
+      // failing to resolve a SQLite scope at all.
+      const listAgentId =
+        agentId ??
+        [...sessionKeys]
+          .map((sessionKey) => parseAgentSessionKey(sessionKey)?.agentId)
+          .find((value): value is string => Boolean(value));
       const entries = registryParams.runtime.agent.session.listSessionEntries({
-        ...(agentId ? { agentId } : {}),
+        ...(listAgentId ? { agentId: listAgentId } : {}),
         ...(storePath ? { storePath } : {}),
         readOnly: true,
       });
