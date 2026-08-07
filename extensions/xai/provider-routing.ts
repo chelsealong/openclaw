@@ -1,6 +1,9 @@
+import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { XAI_BASE_URL } from "./model-definitions.js";
 import { isXaiProviderId } from "./provider-id.js";
+
+type XaiRouteConfig = { models?: { providers?: Record<string, ModelProviderConfig | undefined> } };
 
 const XAI_NATIVE_ENDPOINT_HOSTS = new Set(["api.x.ai"]);
 
@@ -18,23 +21,61 @@ function isXaiNativeEndpoint(baseUrl: unknown): boolean {
   );
 }
 
+/** Resolves the authored `models.providers.xai` entry, tolerating the `x-ai` alias key. */
+function resolveAuthoredXaiProviderConfig(
+  config: XaiRouteConfig | undefined,
+  provider: string,
+): ModelProviderConfig | undefined {
+  const providers = Object.entries(config?.models?.providers ?? {});
+  const requestedProvider = provider.trim();
+  const providerKey =
+    providers.find(([providerId]) => providerId.trim() === requestedProvider)?.[0] ??
+    providers.find(([providerId]) => isXaiProviderId(providerId))?.[0];
+  return providers.find(([providerId]) => providerId === providerKey)?.[1];
+}
+
+/** Completions authored directly in config is a current transport contract, not stale state. */
+function resolveAuthoredXaiCompletionsRoute(params: {
+  provider: string;
+  modelId?: string;
+  config?: XaiRouteConfig;
+}): boolean {
+  const providerConfig = resolveAuthoredXaiProviderConfig(params.config, params.provider);
+  if (!providerConfig) {
+    return false;
+  }
+  const modelConfig = providerConfig.models?.find((model) => model.id === params.modelId);
+  const effectiveApi = modelConfig?.api ?? providerConfig.api;
+  return effectiveApi === "openai-completions";
+}
+
 function shouldUseXaiResponsesTransport(params: {
   provider: string;
+  modelId?: string;
   api?: unknown;
   baseUrl?: unknown;
+  config?: XaiRouteConfig;
 }): boolean {
   const hasDefaultXaiRoute =
     isXaiProviderId(params.provider) && !normalizeOptionalString(params.baseUrl);
-  return params.api === "openai-responses"
-    ? hasDefaultXaiRoute
-    : params.api === "openai-completions" &&
-        (isXaiNativeEndpoint(params.baseUrl) || hasDefaultXaiRoute);
+  if (params.api === "openai-responses") {
+    return hasDefaultXaiRoute;
+  }
+  if (params.api !== "openai-completions") {
+    return false;
+  }
+  if (isXaiProviderId(params.provider) && resolveAuthoredXaiCompletionsRoute(params)) {
+    return false;
+  }
+  return isXaiNativeEndpoint(params.baseUrl) || hasDefaultXaiRoute;
 }
 
 export function resolveXaiTransport(params: {
   provider: string;
+  modelId?: string;
   api?: unknown;
   baseUrl?: unknown;
+  config?: XaiRouteConfig;
 }): { api: "openai-responses"; baseUrl?: string } | undefined {
   if (!shouldUseXaiResponsesTransport(params)) {
     return undefined;

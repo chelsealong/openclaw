@@ -276,8 +276,8 @@ export default defineSingleProviderPluginEntry({
       };
     },
     normalizeResolvedModel: ({ model }) => normalizeXaiResolvedModel(model),
-    normalizeTransport: ({ provider, api, baseUrl }) =>
-      resolveXaiTransport({ provider, api, baseUrl }),
+    normalizeTransport: ({ provider, api, baseUrl, modelId, config }) =>
+      resolveXaiTransport({ provider, api, baseUrl, modelId, config }),
     normalizeModelId: ({ modelId }) => normalizeNativeXaiModelId(modelId),
     resolveDynamicModel: (ctx) => resolveXaiForwardCompatModel({ providerId: PROVIDER_ID, ctx }),
     refreshOAuth: refreshXaiOAuthCredential,
