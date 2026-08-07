@@ -90,6 +90,26 @@ describe("xai api helpers", () => {
     ).toBeUndefined();
   });
 
+  it("honors an authored openai-completions model-level override using a documented alias id", () => {
+    expect(
+      resolveXaiTransport({
+        provider: "xai",
+        modelId: "grok-4.5",
+        api: "openai-completions",
+        config: {
+          models: {
+            providers: {
+              xai: {
+                baseUrl: "",
+                models: [{ id: "grok-4.5-latest", api: "openai-completions" }],
+              },
+            },
+          },
+        },
+      } as never),
+    ).toBeUndefined();
+  });
+
   it("still upgrades stale completions when config authors no override", () => {
     expect(
       resolveXaiTransport({

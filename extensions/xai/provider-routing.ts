@@ -1,6 +1,7 @@
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { XAI_BASE_URL } from "./model-definitions.js";
+import { normalizeXaiModelId } from "./model-id.js";
 import { isXaiProviderId } from "./provider-id.js";
 
 type XaiRouteConfig = { models?: { providers?: Record<string, ModelProviderConfig | undefined> } };
@@ -44,7 +45,11 @@ function resolveAuthoredXaiCompletionsRoute(params: {
   if (!providerConfig) {
     return false;
   }
-  const modelConfig = providerConfig.models?.find((model) => model.id === params.modelId);
+  const requestedModelId =
+    params.modelId !== undefined ? normalizeXaiModelId(params.modelId) : undefined;
+  const modelConfig = providerConfig.models?.find(
+    (model) => normalizeXaiModelId(model.id) === requestedModelId,
+  );
   const effectiveApi = modelConfig?.api ?? providerConfig.api;
   return effectiveApi === "openai-completions";
 }
