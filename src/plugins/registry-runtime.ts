@@ -24,6 +24,7 @@ import {
   type PluginStateKeyedStore,
   type PluginStateSyncKeyedStore,
 } from "../plugin-state/plugin-state-store.js";
+import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import {
   isAgentHarnessSessionKey,
   isAgentHarnessSessionKeyOwnedBy,
@@ -451,9 +452,25 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         }
         return ownerPluginId;
       }
+      // runEmbeddedAgent() callers targeting a fresh session (no stored entry yet,
+      // so no agentId above) only pass a sessionKey. Incognito/dashboard/cron
+      // session keys still embed the owning agent id (agent:<id>:...), so recover
+      // it from this call's own sessionKey rather than let the listSessionEntries()
+      // lookup inside assertSessionIdentitiesOwned run with no agent scope, which
+      // throws "Cannot resolve SQLite session scope without an agent id". Resolved
+      // from `sessionKey` specifically (not a broader key set) because it's the one
+      // key guaranteed to describe this same target session.
+      let resolvedAgentId = agentId;
+      if (!resolvedAgentId && sessionKey) {
+        try {
+          resolvedAgentId = resolveAgentIdFromSessionKey(sessionKey);
+        } catch {
+          // No agent id encoded in this session key; leave unresolved.
+        }
+      }
       assertSessionIdentitiesOwned({
         action: "run",
-        agentId: target?.agentId ?? params.agentId,
+        agentId: resolvedAgentId,
         sessionFiles: [params.sessionFile],
         sessionIds: [target?.sessionId ?? params.sessionId],
         sessionKeys: [target?.sessionKey ?? params.sessionKey],
