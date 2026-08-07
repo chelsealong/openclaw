@@ -397,7 +397,7 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
       const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(sql).toContain("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -554,7 +554,7 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
       const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(sql).toContain("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -581,7 +581,7 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
       const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(sql).toContain("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -609,7 +609,7 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
       const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(sql).toContain("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -645,21 +645,22 @@ describe("sqlite WAL maintenance", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
 
     const maintenance = configureSqliteWalMaintenance(db, { checkpointIntervalMs: 100 });
-    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit. No databasePath
-    // is supplied, so mmap_size is not issued (the filesystem was never verified).
-    expect(db["exec"]).toHaveBeenCalledTimes(3);
+    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit, mmap_size = 0.
+    // No databasePath is supplied, so the filesystem was never verified and
+    // mmap_size is explicitly disabled rather than left at the build default.
+    expect(db["exec"]).toHaveBeenCalledTimes(4);
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(PASSIVE);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE);");
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
 
     vi.advanceTimersByTime(200);
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
   });
 
   it("clamps oversized checkpoint intervals before arming timers", () => {
@@ -688,7 +689,7 @@ describe("sqlite WAL maintenance", () => {
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(FULL);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenLastCalledWith("PRAGMA wal_checkpoint(FULL);");
@@ -909,7 +910,7 @@ describe("sqlite WAL maintenance", () => {
 
     const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
     expect(sql).toContain("PRAGMA journal_mode = WAL;");
-    expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    expect(sql).toContain("PRAGMA mmap_size = 0;");
   });
 
   it("never memory-maps a database when no path was supplied to verify the filesystem", () => {
@@ -923,7 +924,20 @@ describe("sqlite WAL maintenance", () => {
     configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
 
     const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-    expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+    expect(sql).toContain("PRAGMA mmap_size = 0;");
+  });
+
+  it("explicitly disables mmap on an ineligible path rather than omitting the pragma", () => {
+    // Omitting the pragma is not equivalent to disabling mmap: SQLite's
+    // default mmap_size is a build-time constant (SQLITE_DEFAULT_MMAP_SIZE)
+    // and some builds compile it nonzero. Skipping the pragma would leave
+    // that build default in effect instead of fail-closing to 0.
+    const db = createMockDb();
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+
+    configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
+
+    expect(db["exec"]).toHaveBeenCalledWith("PRAGMA mmap_size = 0;");
   });
 
   it("never memory-maps a supplied path whose filesystem cannot be classified", () => {
@@ -951,7 +965,7 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA journal_mode = WAL;");
       const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(sql).toContain("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

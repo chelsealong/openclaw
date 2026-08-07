@@ -573,19 +573,20 @@ export function configureSqliteWalMaintenance(
   enableMacosCheckpointFullfsync(db);
   db.exec(`PRAGMA wal_autocheckpoint = ${autoCheckpointPages};`);
   db.exec(`PRAGMA journal_size_limit = ${DEFAULT_SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES};`);
-  if (hasVerifiedLocalPath) {
-    // journalPolicy === "wal" means resolvePathJournalPolicy positively matched
-    // a mount entry or statfs type on LOCAL_DISK_FILESYSTEM_TYPES's allowlist -
-    // the rollback and WAL-refused branches above already returned for network
-    // and unsupported mounts. node:sqlite is synchronous, so each page the OS
-    // must serve from disk is event-loop block time, which memory-mapped reads
-    // cut directly. An inconclusive classification ("wal-unverified": no
-    // databasePath, no resolvable parent, no matching mount entry, or a
-    // matched mount type not on the local-disk allowlist) keeps mmap off - an
-    // unmapped I/O error is recoverable, but a mapped one raises a signal
-    // SQLite cannot catch (#60349).
-    db.exec(`PRAGMA mmap_size = ${DEFAULT_SQLITE_MMAP_SIZE_BYTES};`);
-  }
+  // journalPolicy === "wal" means resolvePathJournalPolicy positively matched
+  // a mount entry or statfs type on LOCAL_DISK_FILESYSTEM_TYPES's allowlist -
+  // the rollback and WAL-refused branches above already returned for network
+  // and unsupported mounts. node:sqlite is synchronous, so each page the OS
+  // must serve from disk is event-loop block time, which memory-mapped reads
+  // cut directly. An inconclusive classification ("wal-unverified": no
+  // databasePath, no resolvable parent, no matching mount entry, or a matched
+  // mount type not on the local-disk allowlist) keeps mmap off. This pragma
+  // is issued either way rather than merely skipped: some SQLite builds
+  // compile a nonzero SQLITE_DEFAULT_MMAP_SIZE, and omitting the pragma would
+  // leave that build default in effect instead of disabling mmap - an
+  // unmapped I/O error is recoverable, but a mapped one raises a signal
+  // SQLite cannot catch (#60349).
+  db.exec(`PRAGMA mmap_size = ${hasVerifiedLocalPath ? DEFAULT_SQLITE_MMAP_SIZE_BYTES : 0};`);
 
   const runCheckpoint = (mode: SqliteWalCheckpointMode): boolean => {
     try {
