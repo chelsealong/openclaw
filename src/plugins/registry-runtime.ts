@@ -1,3 +1,4 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
 import { createChannelIngressDrain } from "../channels/message/ingress-drain.js";
@@ -53,6 +54,7 @@ const PLUGIN_GATEWAY_SESSION_MUTATION_METHODS = new Set([
   "sessions.fork",
   "sessions.create",
   "sessions.delete",
+  "sessions.archiveMany",
   "sessions.patch",
   "sessions.pluginPatch",
   "sessions.reset",
@@ -472,6 +474,19 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         return;
       }
       const request = params ?? {};
+      if (method === "sessions.archiveMany" && Array.isArray(request.targets)) {
+        for (const target of request.targets) {
+          if (!isRecord(target)) {
+            continue;
+          }
+          assertSessionIdentitiesOwned({
+            action: `request gateway method "${method}" for`,
+            agentId: target.agentId,
+            sessionKeys: [target.key],
+          });
+        }
+        return;
+      }
       const sessionKeys = [request.sessionKey, request.key, request.parentSessionKey];
       const sessionIds = [request.sessionId];
       assertSessionIdentitiesOwned({
@@ -540,15 +555,19 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             methodName:
               | "openBlobStore"
               | "openKeyedStore"
+              | "openSyncKeyedStore"
               | "withLease"
+              | "openChannelIngressQueue"
               | "openChannelIngressDrain",
           ) => {
             const record =
               pluginRuntimeRecordById.get(pluginId) ??
               registry.plugins.find((entry) => entry.id === pluginId);
             if (record?.origin !== "bundled" && record?.trustedOfficialInstall !== true) {
+              // Name the denied plugin and its origin: several plugins share this gate, and a
+              // bare capability name cannot tell an operator which install needs replacing.
               throw new Error(
-                `${methodName} is only available for trusted plugins in this release.`,
+                `${methodName} is only available for trusted plugins in this release. Plugin "${pluginId}" loaded with origin "${record?.origin ?? "unknown"}"; reinstall it from its official npm package or ClawHub listing to enable trusted plugin state.`,
               );
             }
           };
@@ -567,7 +586,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             openSyncKeyedStore: <T>(
               options: OpenKeyedStoreOptions,
             ): PluginStateSyncKeyedStore<T> => {
-              assertPluginStateAllowed("openKeyedStore");
+              assertPluginStateAllowed("openSyncKeyedStore");
               return createPluginStateSyncKeyedStore<T>(pluginId, options);
             },
             withLease: <T>(
@@ -580,7 +599,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             openChannelIngressQueue: <TPayload, TMetadata = unknown, TCompletedMetadata = unknown>(
               options?: Omit<Parameters<typeof createChannelIngressQueue>[0], "channelId">,
             ) => {
-              assertPluginStateAllowed("openKeyedStore");
+              assertPluginStateAllowed("openChannelIngressQueue");
               const stateDir = options?.stateDir ?? baseState.resolveStateDir();
               return createChannelIngressQueue<TPayload, TMetadata, TCompletedMetadata>({
                 ...options,

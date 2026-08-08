@@ -103,7 +103,7 @@ private actor CoordinatorDrainSnapshotProbe {
 private actor CoordinatorNodeHostWorkerProbe: MacNodeHostWorking {
     private var stopCount = 0
 
-    func start(command _: [String]) async throws -> MacNodeHostManifest {
+    func start(launch _: MacNodeHostWorkerLaunch) async throws -> MacNodeHostManifest {
         MacNodeHostManifest(version: "test", caps: [], commands: [], pathEnv: "/usr/bin:/bin")
     }
 
@@ -174,6 +174,71 @@ struct MacNodeModeCoordinatorTests {
         try await self.waitUntil("node-host worker restart", timeout: restartTimeout) {
             await worker.stops() == 2
         }
+    }
+
+    @Test @MainActor func `terminal worker failure is reported instead of scheduling another restart`() async throws {
+        let worker = CoordinatorNodeHostWorkerProbe()
+        let session = GatewayNodeSession()
+        let notificationCenter = NotificationCenter()
+        let coordinator = MacNodeModeCoordinator(
+            session: session,
+            runtime: MacNodeRuntime(nodeHostWorker: worker),
+            nodeHostWorker: worker,
+            notificationCenter: notificationCenter,
+            nodeHostWorkerRetryPolicy: MacNodeHostWorkerRetryPolicy(maximumRetryCount: 0))
+
+        try coordinator.prepareNodeHostWorkerRetryForTesting(
+            command: ["/usr/local/bin/openclaw", "node", "worker"])
+        await confirmation("terminal worker failure") { confirmed in
+            let observer = notificationCenter.addObserver(
+                forName: .openclawNodeHostWorkerRetryExhausted,
+                object: coordinator,
+                queue: nil)
+            { notification in
+                #expect(notification.userInfo?["unexpectedExitCount"] as? Int == 1)
+                confirmed()
+            }
+            coordinator.handleNodeHostWorkerFailureForTesting()
+            notificationCenter.removeObserver(observer)
+        }
+        await coordinator.waitForRouteInvalidationForTesting()
+        #expect(await worker.stops() == 0)
+    }
+
+    @Test @MainActor func `worker cannot restart before its crash backoff expires`() async throws {
+        let worker = CoordinatorNodeHostWorkerProbe()
+        let session = GatewayNodeSession()
+        let coordinator = MacNodeModeCoordinator(
+            session: session,
+            runtime: MacNodeRuntime(nodeHostWorker: worker),
+            nodeHostWorker: worker,
+            observeNotifications: false,
+            nodeHostWorkerRetryPolicy: MacNodeHostWorkerRetryPolicy(
+                maximumRetryCount: 1,
+                initialDelayNanoseconds: 50_000_000,
+                maximumDelayNanoseconds: 50_000_000))
+        let command = ["/usr/local/bin/openclaw", "node", "worker"]
+
+        try coordinator.prepareNodeHostWorkerRetryForTesting(command: command)
+        coordinator.handleNodeHostWorkerFailureForTesting()
+        #expect(throws: MacNodeHostWorkerRetryPolicy.RetryBackoffPending.self) {
+            try coordinator.prepareNodeHostWorkerRetryForTesting(command: command)
+        }
+
+        try await self.waitUntil("node-host worker retry backoff") {
+            do {
+                try await MainActor.run {
+                    try coordinator.prepareNodeHostWorkerRetryForTesting(command: command)
+                }
+                return true
+            } catch is MacNodeHostWorkerRetryPolicy.RetryBackoffPending {
+                return false
+            } catch {
+                Issue.record("unexpected retry admission error: \(error)")
+                return false
+            }
+        }
+        await coordinator.waitForRouteInvalidationForTesting()
     }
 
     @Test func `paused node state requires route disconnect`() {
@@ -845,6 +910,29 @@ struct MacNodeModeCoordinatorTests {
         let disabledCommands = MacNodeModeCoordinator.resolvedCommands(caps: disabledCaps)
         #expect(!disabledCaps.contains(OpenClawCapability.computer.rawValue))
         #expect(!disabledCommands.contains(OpenClawComputerCommand.act.rawValue))
+    }
+
+    @Test func `camera cap gates capture and PTZ commands`() {
+        let enabledCaps = MacNodeModeCoordinator.resolvedCaps(
+            browserControlEnabled: false,
+            cameraEnabled: true,
+            computerControlEnabled: false,
+            locationMode: .off,
+            connectionMode: .local)
+        let enabledCommands = MacNodeModeCoordinator.resolvedCommands(caps: enabledCaps)
+        #expect(enabledCommands.contains(OpenClawCameraCommand.list.rawValue))
+        #expect(enabledCommands.contains(OpenClawCameraCommand.ptzStatus.rawValue))
+        #expect(enabledCommands.contains(OpenClawCameraCommand.ptzControl.rawValue))
+
+        let disabledCaps = MacNodeModeCoordinator.resolvedCaps(
+            browserControlEnabled: false,
+            cameraEnabled: false,
+            computerControlEnabled: false,
+            locationMode: .off,
+            connectionMode: .local)
+        let disabledCommands = MacNodeModeCoordinator.resolvedCommands(caps: disabledCaps)
+        #expect(!disabledCommands.contains(OpenClawCameraCommand.ptzStatus.rawValue))
+        #expect(!disabledCommands.contains(OpenClawCameraCommand.ptzControl.rawValue))
     }
 
     @Test func `tls pin store key uses default wss port`() throws {

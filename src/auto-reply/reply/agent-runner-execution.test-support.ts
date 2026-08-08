@@ -20,6 +20,7 @@ import type { TypingSignaler } from "./typing-mode.js";
 type RunEntryParams = Parameters<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>[0];
 type RunEntryResult = Awaited<ReturnType<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>>;
 type RunEntryDelegate = (params: RunEntryParams) => Promise<RunEntryResult>;
+type RunCliAgent = typeof import("../../agents/cli-runner.js").runCliAgent;
 
 export const PROVIDER_AUTHENTICATION_ERROR_USER_MESSAGE = `⚠️ ${AUTH_INVALID_TOKEN_USER_TEXT}`;
 export const PROVIDER_RATE_LIMIT_OR_QUOTA_ERROR_USER_MESSAGE =
@@ -82,7 +83,43 @@ vi.mock("../../agents/cli-runner.js", () => ({
 }));
 
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: (params: unknown) => state.runWithModelFallbackMock(params),
+  runWithModelFallback: async (params: unknown) => {
+    const input = params as {
+      classifyResult?: (classification: { result: unknown; [key: string]: unknown }) => unknown;
+      [key: string]: unknown;
+    };
+    const adapted = input.classifyResult
+      ? {
+          ...input,
+          classifyResult: (classification: { result: unknown; [key: string]: unknown }) => {
+            const candidate = classification.result;
+            const wrappedCandidate =
+              candidate && typeof candidate === "object" && "result" in candidate
+                ? candidate
+                : { result: candidate };
+            return input.classifyResult?.({
+              ...classification,
+              result: wrappedCandidate,
+            });
+          },
+        }
+      : input;
+    const resolved = (await state.runWithModelFallbackMock(adapted)) as {
+      outcome?: "completed" | "exhausted";
+      result?: unknown;
+      [key: string]: unknown;
+    };
+    const candidate = resolved?.result;
+    const wrappedCandidate =
+      candidate && typeof candidate === "object" && "result" in candidate
+        ? candidate
+        : { result: candidate };
+    return {
+      ...resolved,
+      outcome: resolved.outcome ?? "completed",
+      result: wrappedCandidate,
+    };
+  },
 }));
 
 vi.mock("../../agents/model-fallback-attempt.js", () => ({
@@ -102,7 +139,10 @@ vi.mock("../../agents/model-selection.js", async () => {
   };
 });
 
-vi.mock("../../agents/bootstrap-budget.js", () => ({
+vi.mock("../../agents/bootstrap-budget.js", async () => ({
+  ...(await vi.importActual<typeof import("../../agents/bootstrap-budget.js")>(
+    "../../agents/bootstrap-budget.js",
+  )),
   resolveBootstrapWarningSignaturesSeen: () => [],
 }));
 
@@ -111,6 +151,7 @@ vi.mock("../../agents/embedded-agent-helpers.js", async () => {
     "../../agents/embedded-agent-helpers.js",
   );
   return {
+    ...actual,
     BILLING_ERROR_USER_MESSAGE: "billing",
     formatBillingErrorMessage: actual.formatBillingErrorMessage,
     formatRateLimitOrOverloadedErrorCopy: (message: string) => {
@@ -144,7 +185,8 @@ vi.mock("../../config/sessions.js", () => ({
   updateSessionStore: state.updateSessionStoreMock,
 }));
 
-vi.mock("../../globals.js", () => ({
+vi.mock("../../globals.js", async () => ({
+  ...(await vi.importActual<typeof import("../../globals.js")>("../../globals.js")),
   logVerbose: vi.fn(),
 }));
 
@@ -162,6 +204,16 @@ vi.mock("../../infra/agent-events.js", async () => {
     registerAgentRunContext: vi.fn(),
   };
 });
+vi.mock("../../infra/agent-run-registry.js", async () => {
+  const actual = await vi.importActual<typeof import("../../infra/agent-run-registry.js")>(
+    "../../infra/agent-run-registry.js",
+  );
+  return {
+    ...actual,
+    clearAgentRunContext: vi.fn(),
+    registerAgentRunContext: vi.fn(),
+  };
+});
 
 vi.mock("../../runtime.js", () => ({
   defaultRuntime: {
@@ -169,7 +221,10 @@ vi.mock("../../runtime.js", () => ({
   },
 }));
 
-vi.mock("../../utils/message-channel.js", () => ({
+vi.mock("../../utils/message-channel.js", async () => ({
+  ...(await vi.importActual<typeof import("../../utils/message-channel.js")>(
+    "../../utils/message-channel.js",
+  )),
   isMarkdownCapableMessageChannel: () => true,
   resolveMessageChannel: () => "whatsapp",
   isInternalMessageChannel: (value: unknown) => state.isInternalMessageChannelMock(value),
@@ -284,6 +339,12 @@ export async function getExecuteAgentTurnForTest() {
   };
 }
 
+export async function loadActualRunCliAgentForTest(): Promise<RunCliAgent> {
+  return (
+    await vi.importActual<typeof import("../../agents/cli-runner.js")>("../../agents/cli-runner.js")
+  ).runCliAgent;
+}
+
 export type FallbackRunnerParams = {
   provider: string;
   model: string;
@@ -300,6 +361,9 @@ export type FallbackRunnerParams = {
 };
 
 export type EmbeddedAgentParams = {
+  runId: string;
+  sessionId?: string;
+  sessionKey?: string;
   prompt?: string;
   transcriptPrompt?: string;
   lifecycleGeneration?: string;

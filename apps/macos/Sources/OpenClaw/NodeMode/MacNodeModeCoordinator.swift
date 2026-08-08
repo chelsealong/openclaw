@@ -97,10 +97,14 @@ final class MacNodeModeCoordinator: NSObject {
     private var endpointRefreshTask: Task<Void, Never>?
     private var reconnectProbeTask: Task<Void, Never>?
     private var routeInvalidationTask: Task<Void, Never>?
+    private var nodeHostWorkerRetryTask: Task<Void, Never>?
     private var endpointAttemptGeneration: UInt64 = 0
     private var routeAuthorityGeneration: UInt64 = 0
     private var completedRouteAuthorityGeneration: UInt64 = 0
+    private var nodeHostWorkerConfigurationGeneration: UInt64 = 0
+    private var nodeHostWorkerRetryTaskGeneration: UInt64 = 0
     private var pendingEndpoint: GatewayConnection.EndpointSnapshot?
+    private var activeNodeHostWorkerInput: MacNodeHostWorkerRetryPolicy.Input?
     private var lastObservedPaused: Bool
     private var lastObservedComputerControlEnabled: Bool
     private let runtime: MacNodeRuntime
@@ -112,6 +116,7 @@ final class MacNodeModeCoordinator: NSObject {
     private let refreshEvents: AsyncStream<Void>
     private let refreshContinuation: AsyncStream<Void>.Continuation
     private var tlsSessionCache = MacNodeGatewayTLSSessionCache()
+    private var nodeHostWorkerRetryPolicy: MacNodeHostWorkerRetryPolicy
 
     override private convenience init() {
         let session = GatewayNodeSession()
@@ -143,7 +148,8 @@ final class MacNodeModeCoordinator: NSObject {
         observeNotifications: Bool = false,
         initialPaused: Bool? = nil,
         initialComputerControlEnabled: Bool? = nil,
-        routeInvalidationHook: (@Sendable () async -> Void)? = nil)
+        routeInvalidationHook: (@Sendable () async -> Void)? = nil,
+        nodeHostWorkerRetryPolicy: MacNodeHostWorkerRetryPolicy = MacNodeHostWorkerRetryPolicy())
     {
         let refreshEvents = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         self.session = session
@@ -152,11 +158,12 @@ final class MacNodeModeCoordinator: NSObject {
         self.presenceReporter = presenceReporter
         self.notificationCenter = notificationCenter
         self.routeInvalidationHook = routeInvalidationHook
+        self.nodeHostWorkerRetryPolicy = nodeHostWorkerRetryPolicy
         self.refreshEvents = refreshEvents.stream
         self.refreshContinuation = refreshEvents.continuation
         self.lastObservedPaused = initialPaused ?? UserDefaults.standard.bool(forKey: pauseDefaultsKey)
         self.lastObservedComputerControlEnabled = initialComputerControlEnabled ??
-            (UserDefaults.standard.object(forKey: computerControlEnabledKey) as? Bool ?? false)
+            isComputerControlEnabled()
         super.init()
 
         guard observeNotifications else { return }
@@ -241,6 +248,7 @@ final class MacNodeModeCoordinator: NSObject {
         self.endpointRefreshTask = nil
         self.reconnectProbeTask?.cancel()
         self.reconnectProbeTask = nil
+        self.resetNodeHostWorkerRetryState()
     }
 
     func setPreferredGatewayStableID(
@@ -261,8 +269,7 @@ final class MacNodeModeCoordinator: NSObject {
     func refresh() {
         self.refresh(
             isPaused: UserDefaults.standard.bool(forKey: pauseDefaultsKey),
-            computerControlEnabled: UserDefaults.standard.object(
-                forKey: computerControlEnabledKey) as? Bool ?? false)
+            computerControlEnabled: isComputerControlEnabled())
     }
 
     func currentCanvasPluginSurfaceRoute() async -> GatewayCanvasHostRoute? {
@@ -431,6 +438,19 @@ final class MacNodeModeCoordinator: NSObject {
                 // actually change instead of rereading config and TCC state every second.
                 guard await refreshIterator.next() != nil else { return }
             } catch {
+                if error is MacNodeHostWorkerRetryPolicy.RetryBackoffPending {
+                    // The lifecycle-owned delayed wake is the only event allowed
+                    // to admit this same worker input after an unexpected exit.
+                    guard await refreshIterator.next() != nil else { return }
+                    continue
+                }
+                if error is MacNodeHostWorkerRetryPolicy.RetryBudgetExhausted {
+                    // Only a new worker command or startup-scoped configuration
+                    // generation can re-arm a terminally exhausted worker.
+                    guard await refreshIterator.next() != nil else { return }
+                    retryDelay = 1_000_000_000
+                    continue
+                }
                 if let tlsError = error as? GatewayTLSValidationError,
                    let attemptedEndpoint,
                    await GatewayTLSRepairCoordinator.shared.repair(
@@ -727,6 +747,21 @@ final class MacNodeModeCoordinator: NSObject {
             completedRouteAuthorityGeneration: self.completedRouteAuthorityGeneration,
             isPaused: isPaused)
     }
+
+    func prepareNodeHostWorkerRetryForTesting(command: [String]) throws {
+        guard self.nodeHostWorkerRetryTask == nil else {
+            throw MacNodeHostWorkerRetryPolicy.RetryBackoffPending()
+        }
+        let input = MacNodeHostWorkerRetryPolicy.Input(
+            launch: MacNodeHostWorkerLaunch(command: command),
+            configurationGeneration: self.nodeHostWorkerConfigurationGeneration)
+        try self.nodeHostWorkerRetryPolicy.prepareForStart(input)
+        self.activeNodeHostWorkerInput = input
+    }
+
+    func handleNodeHostWorkerFailureForTesting() {
+        self.handleNodeHostWorkerFailure()
+    }
     #endif
 
     private func cancelReconnectProbe() {
@@ -742,12 +777,14 @@ final class MacNodeModeCoordinator: NSObject {
 
     @objc private nonisolated func nodeHostWorkerFailed(_: Notification) {
         Task { @MainActor [weak self] in
-            self?.enqueueRouteInvalidation(yieldRefresh: true)
+            self?.handleNodeHostWorkerFailure()
         }
     }
 
     @objc private nonisolated func nodeHostConfigurationChanged(_: Notification) {
         Task { @MainActor [weak self] in
+            self?.nodeHostWorkerConfigurationGeneration &+= 1
+            self?.resetNodeHostWorkerRetryState()
             // Worker code, plugin availability, and its manifest are startup-scoped.
             // Replace the process before reconnecting so updates cannot leave a stale route.
             self?.enqueueRouteInvalidation(yieldRefresh: true, restartNodeHostWorker: true)
@@ -761,8 +798,7 @@ final class MacNodeModeCoordinator: NSObject {
         claudeSessionCatalogEnabled: Bool) -> [String]
     {
         let rawLocationMode = UserDefaults.standard.string(forKey: locationModeKey) ?? "off"
-        let computerControlEnabled =
-            UserDefaults.standard.object(forKey: computerControlEnabledKey) as? Bool ?? false
+        let computerControlEnabled = isComputerControlEnabled()
         return Self.resolvedCaps(
             browserControlEnabled: browserControlEnabled,
             cameraEnabled: cameraEnabled,
@@ -784,17 +820,82 @@ final class MacNodeModeCoordinator: NSObject {
 
     private func startNodeHostWorkerIfConfigured() async throws -> MacNodeHostManifest? {
         guard let nodeHostWorker else { return nil }
-        let executable: String
-        if let projectExecutable = CommandResolver.projectOpenClawExecutable() {
-            executable = projectExecutable
-        } else {
-            switch await CLIInstaller.status() {
-            case let .ready(location, _): executable = location
-            case let status:
-                throw MacNodeHostWorker.WorkerError.unavailable(status.message)
-            }
+        guard self.nodeHostWorkerRetryTask == nil else {
+            throw MacNodeHostWorkerRetryPolicy.RetryBackoffPending()
         }
-        return try await nodeHostWorker.start(command: [executable, "node", "worker"])
+        let launch: MacNodeHostWorkerLaunch
+        do {
+            if let projectLaunch = try await CommandResolver.projectNodeHostWorkerLaunch() {
+                launch = projectLaunch
+            } else {
+                switch await CLIInstaller.status() {
+                case let .ready(location, _):
+                    launch = MacNodeHostWorkerLaunch(command: [location, "node", "worker"])
+                case let status:
+                    throw MacNodeHostWorker.WorkerError.unavailable(status.message)
+                }
+            }
+        } catch let error as RuntimeResolutionError {
+            throw MacNodeHostWorker.WorkerError.unavailable(RuntimeLocator.describeFailure(error))
+        }
+        let input = MacNodeHostWorkerRetryPolicy.Input(
+            launch: launch,
+            configurationGeneration: self.nodeHostWorkerConfigurationGeneration)
+        try self.nodeHostWorkerRetryPolicy.prepareForStart(input)
+        self.activeNodeHostWorkerInput = input
+        return try await nodeHostWorker.start(launch: launch)
+    }
+
+    private func handleNodeHostWorkerFailure() {
+        guard let input = self.activeNodeHostWorkerInput else {
+            self.logger.error("node-host worker exited without an active startup input")
+            self.enqueueRouteInvalidation(yieldRefresh: false)
+            return
+        }
+
+        self.cancelNodeHostWorkerRetryTask()
+        let invalidation = self.enqueueRouteInvalidation(yieldRefresh: false)
+        switch self.nodeHostWorkerRetryPolicy.recordUnexpectedExit(for: input) {
+        case let .retry(attempt, delayNanoseconds):
+            self.nodeHostWorkerRetryTaskGeneration &+= 1
+            let taskGeneration = self.nodeHostWorkerRetryTaskGeneration
+            let delaySeconds = Double(delayNanoseconds) / 1_000_000_000
+            self.logger.error(
+                "node-host worker retry \(attempt, privacy: .public) in \(delaySeconds, privacy: .public)s")
+            self.nodeHostWorkerRetryTask = Task { @MainActor [weak self] in
+                await invalidation.value
+                do {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                } catch {
+                    return
+                }
+                guard let self,
+                      self.nodeHostWorkerRetryTaskGeneration == taskGeneration,
+                      self.activeNodeHostWorkerInput == input
+                else { return }
+                self.nodeHostWorkerRetryTask = nil
+                self.refreshContinuation.yield()
+            }
+        case let .giveUp(unexpectedExitCount):
+            self.logger.critical(
+                "node-host worker gave up after \(unexpectedExitCount, privacy: .public) unexpected exits")
+            self.notificationCenter.post(
+                name: .openclawNodeHostWorkerRetryExhausted,
+                object: self,
+                userInfo: ["unexpectedExitCount": unexpectedExitCount])
+        }
+    }
+
+    private func cancelNodeHostWorkerRetryTask() {
+        self.nodeHostWorkerRetryTaskGeneration &+= 1
+        self.nodeHostWorkerRetryTask?.cancel()
+        self.nodeHostWorkerRetryTask = nil
+    }
+
+    private func resetNodeHostWorkerRetryState() {
+        self.cancelNodeHostWorkerRetryTask()
+        self.activeNodeHostWorkerInput = nil
+        self.nodeHostWorkerRetryPolicy.reset()
     }
 
     private func buildSessionBox(url: URL, tls: GatewayTLSRoute?) -> WebSocketSessionBox? {
@@ -987,6 +1088,8 @@ extension MacNodeModeCoordinator {
             commands.append(OpenClawCameraCommand.list.rawValue)
             commands.append(OpenClawCameraCommand.snap.rawValue)
             commands.append(OpenClawCameraCommand.clip.rawValue)
+            commands.append(OpenClawCameraCommand.ptzStatus.rawValue)
+            commands.append(OpenClawCameraCommand.ptzControl.rawValue)
         }
         if capsSet.contains(OpenClawCapability.location.rawValue) {
             commands.append(OpenClawLocationCommand.get.rawValue)

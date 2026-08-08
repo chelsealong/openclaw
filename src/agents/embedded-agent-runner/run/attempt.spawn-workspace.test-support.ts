@@ -158,6 +158,7 @@ function createSubscriptionMock(): SubscriptionMock {
     getLastToolError: () => undefined,
     getUsageTotals: () => undefined,
     getLastAssistantUsage: () => undefined,
+    getAssistantTurnCount: () => 0,
     getCompactionCount: () => 0,
     getLastCompactionTokensAfter: () => undefined,
     getItemLifecycle: () => ({ startedCount: 0, completedCount: 0, activeCount: 0 }),
@@ -208,7 +209,7 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
   const hasCompletedBootstrapTurnMock = vi.fn<() => Promise<boolean>>(async () => false);
   const resolveEmbeddedRunSkillEntriesMock = vi.fn(() => ({
     shouldLoadSkillEntries: false,
-    skillEntries: undefined,
+    skillEntries: [],
   }));
   const resolveSkillsPromptForRunMock = vi.fn(() => "");
   const supportsModelToolsMock = vi.fn<(model?: unknown) => boolean>(() => true);
@@ -465,6 +466,8 @@ vi.mock("../../../infra/net/undici-global-dispatcher.js", () => ({
 
 vi.mock("../../../tts/tts-settings.js", () => ({
   buildTtsSystemPromptHint: () => undefined,
+  resolveModelOverridePolicy: () => undefined,
+  setTtsMachinePrefsPathResolver: () => undefined,
 }));
 
 vi.mock("../../bootstrap-files.js", async () => {
@@ -604,6 +607,7 @@ vi.mock("../wait-for-idle-before-flush.js", () => ({
 vi.mock("../runs.js", () => ({
   setActiveEmbeddedRun: () => {},
   clearActiveEmbeddedRun: () => {},
+  markActiveEmbeddedRunAbandoned: () => {},
   updateActiveEmbeddedRunSnapshot: () => {},
 }));
 
@@ -616,8 +620,7 @@ vi.mock("../../system-prompt-params.js", () => ({
   buildSystemPromptParams: () => ({
     runtimeInfo: {},
     userTimezone: "UTC",
-    userTime: "00:00",
-    userTimeFormat: "24h",
+    userDate: "2026-01-05",
   }),
 }));
 
@@ -743,7 +746,8 @@ vi.mock("../../model-auth.js", () => ({
   resolveModelAuthMode: () => undefined,
 }));
 
-vi.mock("../../model-tool-support.js", () => ({
+vi.mock("../../model-tool-support.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../model-tool-support.js")>()),
   supportsModelTools: (...args: unknown[]) => hoisted.supportsModelToolsMock(...args),
 }));
 
@@ -965,6 +969,9 @@ type MutableSession = {
     prompt?: (...args: unknown[]) => Promise<unknown>;
     streamFn?: (...args: unknown[]) => Promise<unknown>;
     transport?: string;
+    subscribe?: (
+      listener: (event: unknown, signal: AbortSignal) => Promise<void> | void,
+    ) => () => void;
     reset: () => void;
     state: {
       messages: unknown[];
@@ -985,6 +992,7 @@ type MutableSession = {
     },
     options?: { deliverAs?: "nextTurn"; triggerTurn?: boolean },
   ) => Promise<void>;
+  getActiveToolNames: () => string[];
   setActiveToolsByName: (toolNames: string[]) => void;
   abort: () => Promise<void>;
   dispose: () => void;
@@ -1103,7 +1111,7 @@ export function resetEmbeddedAttemptHarness(
   hoisted.hasCompletedBootstrapTurnMock.mockReset().mockResolvedValue(false);
   hoisted.resolveEmbeddedRunSkillEntriesMock.mockReset().mockReturnValue({
     shouldLoadSkillEntries: false,
-    skillEntries: undefined,
+    skillEntries: [],
   });
   hoisted.resolveSkillsPromptForRunMock.mockReset().mockReturnValue("");
   hoisted.supportsModelToolsMock.mockReset().mockReturnValue(true);
@@ -1155,6 +1163,7 @@ export function createDefaultEmbeddedSession(params?: {
     options?: { images?: unknown[]; preflightResult?: (submitted: boolean) => void },
   ) => Promise<void>;
 }): MutableSession {
+  let activeToolNames: string[] = [];
   let pendingPrompt:
     | {
         prompt: string;
@@ -1189,6 +1198,9 @@ export function createDefaultEmbeddedSession(params?: {
       reset: () => {
         session.messages = [];
       },
+      // Production cleanup hooks subscribe for lifecycle events; the default
+      // session double never emits them.
+      subscribe: () => () => {},
       state: {
         get messages() {
           return session.messages;
@@ -1198,7 +1210,10 @@ export function createDefaultEmbeddedSession(params?: {
         },
       },
     },
-    setActiveToolsByName: () => {},
+    getActiveToolNames: () => [...activeToolNames],
+    setActiveToolsByName: (toolNames) => {
+      activeToolNames = [...toolNames];
+    },
     setBaseSystemPrompt: (systemPrompt) => {
       session.agent.state.systemPrompt = systemPrompt;
     },

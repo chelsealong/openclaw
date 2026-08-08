@@ -262,7 +262,7 @@ describe("shouldRunMemoryFlush", () => {
   it("requires totalTokens and threshold", () => {
     expect(
       shouldRunMemoryFlush({
-        entry: { totalTokens: 0 },
+        entry: { totalTokens: 0, totalTokensFresh: true, totalTokensVersion: 1 },
         contextWindowTokens: 16_000,
         reserveTokensFloor: 20_000,
         softThresholdTokens: 4_000,
@@ -284,7 +284,7 @@ describe("shouldRunMemoryFlush", () => {
   it("skips when under threshold", () => {
     expect(
       shouldRunMemoryFlush({
-        entry: { totalTokens: 10_000 },
+        entry: { totalTokens: 10_000, totalTokensFresh: true, totalTokensVersion: 1 },
         contextWindowTokens: 100_000,
         reserveTokensFloor: 20_000,
         softThresholdTokens: 10_000,
@@ -295,7 +295,7 @@ describe("shouldRunMemoryFlush", () => {
   it("triggers at the threshold boundary", () => {
     expect(
       shouldRunMemoryFlush({
-        entry: { totalTokens: 85 },
+        entry: { totalTokens: 85, totalTokensFresh: true, totalTokensVersion: 1 },
         contextWindowTokens: 100,
         reserveTokensFloor: 10,
         softThresholdTokens: 5,
@@ -308,8 +308,10 @@ describe("shouldRunMemoryFlush", () => {
       shouldRunMemoryFlush({
         entry: {
           totalTokens: 90_000,
+          totalTokensFresh: true,
+          totalTokensVersion: 1,
           compactionCount: 2,
-          memoryFlushCompactionCount: 2,
+          memoryFlush: { kind: "succeeded", compactionCount: 2 },
         },
         contextWindowTokens: 100_000,
         reserveTokensFloor: 5_000,
@@ -321,7 +323,12 @@ describe("shouldRunMemoryFlush", () => {
   it("runs when above threshold and not flushed", () => {
     expect(
       shouldRunMemoryFlush({
-        entry: { totalTokens: 96_000, compactionCount: 1 },
+        entry: {
+          totalTokens: 96_000,
+          totalTokensFresh: true,
+          totalTokensVersion: 1,
+          compactionCount: 1,
+        },
         contextWindowTokens: 100_000,
         reserveTokensFloor: 5_000,
         softThresholdTokens: 2_000,
@@ -337,9 +344,26 @@ describe("shouldRunMemoryFlush", () => {
     };
 
     for (const entry of [
-      { totalTokens: 95_000, compactionCount: 1 },
-      { totalTokens: 95_000, compactionCount: 2, memoryFlushCompactionCount: 1 },
-      { totalTokens: 95_000, compactionCount: 3, memoryFlushCompactionCount: 2 },
+      {
+        totalTokens: 95_000,
+        totalTokensFresh: true,
+        totalTokensVersion: 1 as const,
+        compactionCount: 1,
+      },
+      {
+        totalTokens: 95_000,
+        totalTokensFresh: true,
+        totalTokensVersion: 1 as const,
+        compactionCount: 2,
+        memoryFlush: { kind: "succeeded" as const, compactionCount: 1 },
+      },
+      {
+        totalTokens: 95_000,
+        totalTokensFresh: true,
+        totalTokensVersion: 1 as const,
+        compactionCount: 3,
+        memoryFlush: { kind: "succeeded" as const, compactionCount: 2 },
+      },
     ]) {
       expect(shouldRunMemoryFlush({ entry, ...params })).toBe(true);
     }
@@ -387,7 +411,7 @@ describe("hasAlreadyFlushedForCurrentCompaction", () => {
     expect(
       hasAlreadyFlushedForCurrentCompaction({
         compactionCount: 3,
-        memoryFlushCompactionCount: 3,
+        memoryFlush: { kind: "succeeded", compactionCount: 3 },
       }),
     ).toBe(true);
   });
@@ -396,7 +420,7 @@ describe("hasAlreadyFlushedForCurrentCompaction", () => {
     expect(
       hasAlreadyFlushedForCurrentCompaction({
         compactionCount: 3,
-        memoryFlushCompactionCount: 2,
+        memoryFlush: { kind: "succeeded", compactionCount: 2 },
       }),
     ).toBe(false);
   });
@@ -412,7 +436,7 @@ describe("hasAlreadyFlushedForCurrentCompaction", () => {
   it("treats missing compactionCount as 0", () => {
     expect(
       hasAlreadyFlushedForCurrentCompaction({
-        memoryFlushCompactionCount: 0,
+        memoryFlush: { kind: "succeeded", compactionCount: 0 },
       }),
     ).toBe(true);
   });

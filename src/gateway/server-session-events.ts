@@ -11,18 +11,19 @@ import {
   loadSessionEntryReadOnly as loadAccessorSessionEntryReadOnly,
   resolveTranscriptSessionKeyBySessionId,
 } from "../config/sessions/session-accessor.js";
-import { hasPluginSessionsChangedSubscribers } from "../plugins/gateway-events.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import type { SessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import type { InternalSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import { projectChatDisplayMessage } from "./chat-display-projection.js";
+import { resolveCurrentUserProfileDisplay } from "./current-user-profile-display.js";
 import type { GatewayBroadcastToConnIdsFn } from "./server-broadcast-types.js";
 import type {
   SessionEventSubscriberRegistry,
   SessionMessageSubscriberRegistry,
 } from "./server-chat.js";
 import { resolveVisibleActiveSessionRunState } from "./server-methods/session-active-runs.js";
+import { hasSessionChangeReceivers } from "./session-change-receivers.js";
 import {
   buildGatewaySessionEventFields,
   buildGatewaySessionEventRow,
@@ -39,10 +40,6 @@ import {
 
 type SessionEventSubscribers = Pick<SessionEventSubscriberRegistry, "getAll">;
 type SessionMessageSubscribers = Pick<SessionMessageSubscriberRegistry, "get">;
-
-function hasSessionsChangedReceiver(connIds: ReadonlySet<string>): boolean {
-  return connIds.size > 0 || hasPluginSessionsChangedSubscribers();
-}
 
 function readMessageIdempotencyKey(message: unknown): string | undefined {
   if (!message || typeof message !== "object" || Array.isArray(message)) {
@@ -62,6 +59,36 @@ function readMessageSenderIsOwner(message: unknown): boolean | undefined {
   }
   const value = (openclaw as Record<string, unknown>).senderIsOwner;
   return typeof value === "boolean" ? value : undefined;
+}
+
+function readTranscriptUpdateLifecycleOwner(
+  update: InternalSessionTranscriptUpdate,
+): { lifecycleRevision?: string } | undefined {
+  const marker = parseSqliteSessionFileMarker(update.sessionFile);
+  const sessionKey =
+    normalizeOptionalString(update.target?.sessionKey) ??
+    normalizeOptionalString(update.sessionKey) ??
+    (marker ? resolveTranscriptSessionKeyBySessionId(marker) : undefined);
+  if (!sessionKey) {
+    return undefined;
+  }
+  const agentId =
+    normalizeOptionalString(update.target?.agentId) ??
+    normalizeOptionalString(update.agentId) ??
+    marker?.agentId;
+  const sessionId =
+    normalizeOptionalString(update.target?.sessionId) ??
+    normalizeOptionalString(update.sessionId) ??
+    marker?.sessionId;
+  const storePath = normalizeOptionalString(update.target?.storePath) ?? marker?.storePath;
+  const entry = storePath
+    ? loadAccessorSessionEntryReadOnly({ agentId, sessionKey, storePath })
+    : loadSessionEntryReadOnly(sessionKey, agentId ? { agentId } : undefined)?.entry;
+  if (!entry || (sessionId && entry.sessionId !== sessionId)) {
+    return undefined;
+  }
+  const lifecycleRevision = normalizeOptionalString(entry.lifecycleRevision);
+  return lifecycleRevision ? { lifecycleRevision } : {};
 }
 
 function resolveSessionMessageBroadcastKeys(sessionKey: string, agentId?: string): string[] {
@@ -138,12 +165,20 @@ export function createTranscriptUpdateBroadcastHandler(params: {
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
 }) {
   let broadcastQueue = Promise.resolve();
-  return (update: InternalSessionTranscriptUpdate): void => {
+  return (update: InternalSessionTranscriptUpdate): Promise<void> => {
+    // Capture legacy ownership before the async queue can cross a same-id reset;
+    // committed producer ownership always wins over a later session-store read.
+    const lifecycleRevision =
+      normalizeOptionalString(update.lifecycleRevision) ??
+      (update.message !== undefined
+        ? readTranscriptUpdateLifecycleOwner(update)?.lifecycleRevision
+        : undefined);
+    const queuedUpdate = lifecycleRevision ? { ...update, lifecycleRevision } : update;
     // Preserve transcript update order even when counting messages requires an
     // async read from the session file.
-    broadcastQueue = broadcastQueue
-      .then(() => handleTranscriptUpdateBroadcast(params, update))
-      .catch(() => undefined);
+    const task = broadcastQueue.then(() => handleTranscriptUpdateBroadcast(params, queuedUpdate));
+    broadcastQueue = task.catch(() => undefined);
+    return task;
   };
 }
 
@@ -212,7 +247,7 @@ async function handleTranscriptUpdateBroadcast(
       ? candidateSessionKey
       : markerSessionKey
     : candidateSessionKey;
-  if (!sessionKey || update.message === undefined) {
+  if (!sessionKey) {
     return;
   }
   const effectiveAgentId = compatibleLegacyMarker?.agentId ?? targetAgentId ?? update.agentId;
@@ -232,12 +267,15 @@ async function handleTranscriptUpdateBroadcast(
     }
   }
   if (connIds.size === 0) {
-    if (!hasPluginSessionsChangedSubscribers() || projectChatDisplayMessage(update.message)) {
+    if (
+      !hasSessionChangeReceivers(connIds) ||
+      (update.message !== undefined && projectChatDisplayMessage(update.message))
+    ) {
       return;
     }
   }
   let messageSeq = asPositiveSafeInteger(update.messageSeq);
-  if (messageSeq === undefined) {
+  if (update.message !== undefined && messageSeq === undefined) {
     // Updates from raw transcript events may not carry seq; fall back to the
     // current transcript line count for cursor-compatible live history.
     const updateStorePath = targetStorePath ?? compatibleLegacyMarker?.storePath;
@@ -269,6 +307,19 @@ async function handleTranscriptUpdateBroadcast(
         )
       : undefined;
   }
+  const lifecycleRevision = normalizeOptionalString(update.lifecycleRevision);
+  if (lifecycleRevision) {
+    // A reset can retain sessionId, so validate the captured owner after every
+    // awaited transcript read before projecting the current session snapshot.
+    const currentLifecycleOwner = readTranscriptUpdateLifecycleOwner(update);
+    if (
+      !currentLifecycleOwner ||
+      (currentLifecycleOwner.lifecycleRevision &&
+        currentLifecycleOwner.lifecycleRevision !== lifecycleRevision)
+    ) {
+      return;
+    }
+  }
   const sessionRow = loadGatewaySessionRow(sessionKey, {
     agentId: routingAgentId,
     transcriptUsageMaxBytes: 64 * 1024,
@@ -290,6 +341,22 @@ async function handleTranscriptUpdateBroadcast(
     hasActiveRun: activeRunState?.active,
     activeRunIds: activeRunState?.runIds,
   });
+  if (update.message === undefined) {
+    // A committed batch without individually proven cursors must invalidate
+    // both session-list and targeted transcript subscribers exactly once.
+    params.broadcastToConnIds(
+      "sessions.changed",
+      {
+        sessionKey,
+        ...(visibleAgentId ? { agentId: visibleAgentId } : {}),
+        phase: "message",
+        ts: Date.now(),
+        ...sessionSnapshot,
+      },
+      connIds,
+    );
+    return;
+  }
   const idempotencyKey = readMessageIdempotencyKey(update.message);
   const senderIsOwner = readMessageSenderIsOwner(update.message);
   const rawMessage = attachOpenClawTranscriptMeta(update.message, {
@@ -297,7 +364,7 @@ async function handleTranscriptUpdateBroadcast(
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(messageSeq !== undefined ? { seq: messageSeq } : {}),
   });
-  const message = projectChatDisplayMessage(rawMessage);
+  const message = projectChatDisplayMessage(rawMessage, { resolveCurrentUserProfileDisplay });
   if (message) {
     params.broadcastToConnIds(
       "session.message",
@@ -311,7 +378,6 @@ async function handleTranscriptUpdateBroadcast(
         ...sessionSnapshot,
       },
       connIds,
-      { dropIfSlow: true },
     );
     return;
   }
@@ -319,7 +385,7 @@ async function handleTranscriptUpdateBroadcast(
   // Messages suppressed from display can still change transcript state, so
   // notify broad session listeners even when no session.message is emitted.
   const sessionEventConnIds = params.sessionEventSubscribers.getAll();
-  if (!hasSessionsChangedReceiver(sessionEventConnIds)) {
+  if (!hasSessionChangeReceivers(sessionEventConnIds)) {
     return;
   }
   params.broadcastToConnIds(
@@ -351,7 +417,7 @@ export function createLifecycleEventBroadcastHandler(params: {
       text?: string;
     };
     const connIds = params.sessionEventSubscribers.getAll();
-    if (!hasSessionsChangedReceiver(connIds)) {
+    if (!hasSessionChangeReceivers(connIds)) {
       return;
     }
     const sessionRow = loadGatewaySessionRow(event.sessionKey);

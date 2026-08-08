@@ -43,6 +43,10 @@ describe("classifyCompactionReason", () => {
     expect(classifyCompactionReason("already under target")).toBe("below_threshold");
   });
 
+  it('classifies "already compacted" without implying recency', () => {
+    expect(classifyCompactionReason("already compacted")).toBe("already_compacted");
+  });
+
   it("classifies deferred background maintenance as a skip-like reason", () => {
     expect(classifyCompactionReason("deferred to background context-engine maintenance")).toBe(
       "deferred_background",
@@ -57,13 +61,21 @@ describe("classifyCompactionReason", () => {
     ).toBe("guard_blocked");
   });
 
+  it("classifies transcript persistence failures without losing them as unknown", () => {
+    expect(
+      classifyCompactionReason(
+        "Session transcript entry was not persisted: compaction-1: session-rebound",
+      ),
+    ).toBe("transcript_persistence_failed");
+  });
+
   it("keeps unclassified provider errors in the stable unknown bucket", () => {
     expect(classifyCompactionReason("No API provider registered for api: ollama")).toBe("unknown");
   });
 });
 
 describe("isBenignCompactionSkipReason", () => {
-  it.each(["already under target", "already compacted recently"])(
+  it.each(["already under target", "already compacted"])(
     "keeps the established %s skip contract",
     (reason) => {
       expect(isBenignCompactionSkipReason(reason)).toBe(true);
