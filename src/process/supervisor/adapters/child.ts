@@ -76,15 +76,45 @@ function isServiceManagedRuntime(): boolean {
   return Boolean(process.env.OPENCLAW_SERVICE_MARKER?.trim());
 }
 
-// Linux gateway services ship with KillMode=control-group (systemd-unit.ts), so the
-// cgroup reaps every descendant on stop/restart regardless of process-group
-// membership. Detaching each tool child into its own group there lets a per-run
-// abort kill just that child's tree via its own -pgid instead of skipping tree
-// termination to avoid signaling the gateway's shared group (#120386). launchd has
-// no cgroup equivalent, so non-Linux service runtimes still need children kept in
-// the daemon's process group to be swept on stop/restart (#38463).
+// systemd stamps every unit process it starts with one of these itself; a process
+// missing all three is not actually supervised by systemd right now (e.g. a
+// leftover marker under plain nohup/pm2), so the cgroup sweep this predicate
+// relies on cannot be assumed even if a service marker is present (#120398 review).
+function isConfirmedUnderSystemdSupervision(): boolean {
+  const env = process.env;
+  return Boolean(
+    env.INVOCATION_ID?.trim() || env.SYSTEMD_EXEC_PID?.trim() || env.JOURNAL_STREAM?.trim(),
+  );
+}
+
+// Only the gateway's own generated systemd unit (systemd-unit.ts) is proven to ship
+// KillMode=control-group, so the cgroup reaps every descendant on stop/restart
+// regardless of process-group membership. "openclaw"/"gateway" mirror
+// GATEWAY_SERVICE_MARKER/GATEWAY_SERVICE_KIND (daemon/constants.ts); a generic or
+// foreign marker (e.g. the "node" service kind, or a hand-set env var) does not
+// carry that guarantee, so it keeps children attached instead of assuming it.
+function hasConfirmedLinuxControlGroupLifecycle(): boolean {
+  const env = process.env;
+  return (
+    env.OPENCLAW_SERVICE_MARKER?.trim() === "openclaw" &&
+    env.OPENCLAW_SERVICE_KIND?.trim() === "gateway" &&
+    isConfirmedUnderSystemdSupervision()
+  );
+}
+
+// Detaching each tool child into its own process group lets a per-run abort
+// group-kill just that child's tree via its own -pgid instead of skipping tree
+// termination to avoid signaling the gateway's shared group (#120386). Outside a
+// confirmed Linux control-group lifecycle, keep children attached so the service
+// manager can stop the full process tree reliably (#38463, #71662).
 function requiresAttachedChildrenForServiceLifecycle(): boolean {
-  return isServiceManagedRuntime() && process.platform !== "linux";
+  if (!isServiceManagedRuntime()) {
+    return false;
+  }
+  if (process.platform !== "linux") {
+    return true;
+  }
+  return !hasConfirmedLinuxControlGroupLifecycle();
 }
 
 export async function createChildAdapter(params: {
