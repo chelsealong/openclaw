@@ -25,6 +25,7 @@ import {
   resolveClaudeOpus5ModelIdentity,
   resolveClaudeSonnet5ModelIdentity,
   supportsClaudeAdaptiveThinking,
+  supportsClaudeVisionInput,
 } from "openclaw/plugin-sdk/provider-model-shared";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -196,12 +197,7 @@ function resolveKnownMaxTokens(modelId: string): number | undefined {
 }
 
 function resolveKnownInput(modelId: string): ModelDefinitionConfig["input"] | undefined {
-  return resolveClaudeFable5ModelIdentity({ id: modelId }) ||
-    resolveClaudeMythos5ModelIdentity({ id: modelId }) ||
-    resolveClaudeSonnet5ModelIdentity({ id: modelId }) ||
-    resolveClaudeOpus5ModelIdentity({ id: modelId })
-    ? ["text", "image"]
-    : undefined;
+  return supportsClaudeVisionInput({ id: modelId }) ? ["text", "image"] : undefined;
 }
 
 const DEFAULT_COST = {
@@ -349,7 +345,11 @@ function toModelDefinition(
     id,
     name: summary.modelName?.trim() || id,
     reasoning: inferReasoningSupport(summary),
-    input: mapInputModalities(summary),
+    // Bedrock's ListFoundationModels metadata lags newly released Claude
+    // models and can omit IMAGE from inputModalities even though the model
+    // accepts image input via Converse/InvokeModel (#71921). The known-vision
+    // override takes precedence over that possibly-incomplete live value.
+    input: resolveKnownInput(id) ?? mapInputModalities(summary),
     cost: DEFAULT_COST,
     contextWindow: resolveKnownContextWindow(id) ?? defaults.contextWindow,
     maxTokens: resolveKnownMaxTokens(id) ?? defaults.maxTokens,
@@ -482,7 +482,7 @@ function resolveInferenceProfiles(
       reasoning:
         baseModel?.reasoning ??
         supportsClaudeAdaptiveThinking({ id: baseModelId ?? profile.inferenceProfileId }),
-      input: baseModel?.input ?? resolveKnownInput(contractModelId) ?? ["text"],
+      input: resolveKnownInput(contractModelId) ?? baseModel?.input ?? ["text"],
       cost: baseModel?.cost ?? DEFAULT_COST,
       contextWindow:
         baseModel?.contextWindow ??

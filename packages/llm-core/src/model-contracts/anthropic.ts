@@ -134,6 +134,18 @@ export function supportsClaude1MContext(ref: ClaudeModelRef): boolean {
   );
 }
 
+/** Return whether a Claude model accepts image input alongside text. */
+export function supportsClaudeVisionInput(ref: ClaudeModelRef): boolean {
+  const modelId = resolveClaudeModelIdentity(ref);
+  return (
+    resolveClaudeFable5ModelIdentity(ref) !== undefined ||
+    resolveClaudeMythos5ModelIdentity(ref) !== undefined ||
+    resolveClaudeSonnet5ModelIdentity(ref) !== undefined ||
+    resolveClaudeOpus5ModelIdentity(ref) !== undefined ||
+    /(?:^|-)claude-(?:mythos-preview|opus-4-(?:6|7|8)|sonnet-4-6)(?=$|[^a-z0-9])/.test(modelId)
+  );
+}
+
 /** Return whether a Claude model supports Anthropic's native fast mode. */
 export function supportsClaudeFastMode(ref: ClaudeModelRef): boolean {
   const modelId = resolveClaudeModelIdentity(ref);

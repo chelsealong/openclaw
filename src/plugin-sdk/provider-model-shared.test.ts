@@ -21,6 +21,7 @@ import {
   supportsClaudeFastMode,
   supportsClaudeNativeMaxEffort,
   supportsClaudeNativeXhighEffort,
+  supportsClaudeVisionInput,
 } from "./provider-model-shared.js";
 
 const EXPECTED_COST = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 };
@@ -106,6 +107,21 @@ describe("Claude model contracts", () => {
     expect(supportsClaude1MContext({ id: "us.anthropic.claude-sonnet-4-6-v1:0" })).toBe(true);
     expect(supportsClaude1MContext({ id: "claude-opus-50" })).toBe(false);
     expect(supportsClaude1MContext({ id: "claude-haiku-4-5" })).toBe(false);
+  });
+
+  it("recognizes vision-capable Claude model families independently (#71921)", () => {
+    expect(supportsClaudeVisionInput({ id: "claude-opus-5" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "claude-sonnet-5" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "claude-fable-5" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "claude-mythos-5" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "us.anthropic.claude-opus-4-7" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "anthropic.claude-opus-4-6-v1" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "global.anthropic.claude-opus-4-8" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "us.anthropic.claude-sonnet-4-6-v1:0" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "claude-mythos-preview" })).toBe(true);
+    expect(supportsClaudeVisionInput({ id: "claude-haiku-4-5" })).toBe(false);
+    expect(supportsClaudeVisionInput({ id: "claude-opus-50" })).toBe(false);
+    expect(supportsClaudeVisionInput({ id: "claude-sonnet-4-60" })).toBe(false);
   });
 
   it("recognizes native fast-mode Claude models", () => {

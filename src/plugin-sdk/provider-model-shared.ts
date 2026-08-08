@@ -149,6 +149,7 @@ export {
   supportsClaudeFastMode,
   supportsClaudeNativeMaxEffort,
   supportsClaudeNativeXhighEffort,
+  supportsClaudeVisionInput,
 } from "@openclaw/llm-core";
 export type {
   UnifiedModelCatalogEntry,

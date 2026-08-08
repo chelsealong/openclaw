@@ -110,6 +110,49 @@ describe("bedrock discovery", () => {
     expect(destroyMock).toHaveBeenCalledTimes(1);
   });
 
+  it("overrides incomplete AWS modality metadata for known-vision Claude models (#71921)", async () => {
+    // Bedrock's ListFoundationModels metadata has lagged newly released Claude
+    // models and can report TEXT-only inputModalities even though the model
+    // accepts image input via Converse/InvokeModel. The known-vision override
+    // must win regardless of what the live summary reports.
+    sendMock
+      .mockResolvedValueOnce({
+        modelSummaries: [
+          {
+            modelId: "anthropic.claude-opus-4-7",
+            modelName: "Claude Opus 4.7",
+            providerName: "anthropic",
+            inputModalities: ["TEXT"],
+            outputModalities: ["TEXT"],
+            responseStreamingSupported: true,
+            modelLifecycle: { status: "ACTIVE" },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        inferenceProfileSummaries: [
+          {
+            inferenceProfileId: "us.anthropic.claude-opus-4-7",
+            inferenceProfileName: "US Anthropic Claude Opus 4.7",
+            status: "ACTIVE",
+            type: "SYSTEM_DEFINED",
+            models: [
+              {
+                modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-7",
+              },
+            ],
+          },
+        ],
+      });
+
+    const models = await discoverBedrockModels({ region: "us-east-1", clientFactory });
+
+    const foundationModel = models.find((m) => m.id === "anthropic.claude-opus-4-7");
+    const profile = models.find((m) => m.id === "us.anthropic.claude-opus-4-7");
+    expectModelFields(foundationModel, { input: ["text", "image"] });
+    expectModelFields(profile, { input: ["text", "image"] });
+  });
+
   it("applies provider filter", async () => {
     mockSingleActiveSummary();
 
@@ -772,7 +815,9 @@ describe("bedrock discovery", () => {
       id: "us.my-prod-profile",
       contextWindow: 1_000_000,
       maxTokens: 4096,
-      input: ["text"],
+      // claude-opus-4-6-v1 is a known-vision model (#71921); the override
+      // applies even with no foundation-model summary to inherit from.
+      input: ["text", "image"],
       params: { canonicalModelId: "claude-opus-4-6-v1" },
       thinkingLevelMap: { xhigh: null, max: "max" },
     });
