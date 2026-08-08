@@ -12,11 +12,20 @@ import { SessionToolOverridesSchema } from "./sessions-row.js";
 
 export { SessionsCreateParamsSchema };
 export {
+  SESSIONS_ARCHIVE_MANY_MAX_TARGETS,
+  SessionsArchiveManyParamsSchema,
+  SessionsArchiveManyResultSchema,
+  SessionsArchiveManyTargetSchema,
+  type SessionsArchiveManyParams,
+  type SessionsArchiveManyResult,
+} from "./sessions-archive-many.js";
+export {
   SessionCreatedActorSchema,
   SessionRowSchema,
   SessionToolOverridesSchema,
   type SessionCreatedActor,
   type SessionRow,
+  type SessionRunStatus,
   type SessionToolOverrides,
 } from "./sessions-row.js";
 
@@ -154,6 +163,7 @@ export const SessionCompactionCheckpointSchema = closedObject({
   reason: SessionCompactionCheckpointReasonSchema,
   tokensBefore: Type.Optional(Type.Integer({ minimum: 0 })),
   tokensAfter: Type.Optional(Type.Integer({ minimum: 0 })),
+  tokensVersion: Type.Optional(Type.Literal(1)),
   summary: Type.Optional(Type.String()),
   firstKeptEntryId: Type.Optional(NonEmptyString),
   preCompaction: SessionCompactionTranscriptReferenceSchema,

@@ -140,9 +140,6 @@ export const validateNodeRenameParams = compile(S.NodeRenameParamsSchema);
 export const validateNodeListParams = compile(S.NodeListParamsSchema);
 export const validateNodePluginToolsUpdateParams = compile(S.NodePluginToolsUpdateParamsSchema);
 export const validateNodeSkillsUpdateParams = compile(S.NodeSkillsUpdateParamsSchema);
-export const validateNodeProtocolFeaturesUpdateParams = compile(
-  S.NodeProtocolFeaturesUpdateParamsSchema,
-);
 export const validateEnvironmentsCreateParams = compile(S.EnvironmentsCreateParamsSchema);
 export const validateEnvironmentsDestroyParams = compile(S.EnvironmentsDestroyParamsSchema);
 export const validateEnvironmentsListParams = compile(S.EnvironmentsListParamsSchema);
@@ -217,6 +214,7 @@ export const validateSessionsViewerPresenceSetParams = compile(
 );
 export const validateSessionsAbortParams = compile(S.SessionsAbortParamsSchema);
 export const validateSessionsPatchParams = compile(S.SessionsPatchParamsSchema);
+export const validateSessionsArchiveManyParams = compile(S.SessionsArchiveManyParamsSchema);
 export const validateSessionsPluginPatchParams = compile(S.SessionsPluginPatchParamsSchema);
 export const validateSessionsResetParams = compile(S.SessionsResetParamsSchema);
 export const validateSessionsDeleteParams = compile(S.SessionsDeleteParamsSchema);
