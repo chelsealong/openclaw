@@ -348,4 +348,38 @@ describe("draft-stream-controls", () => {
     expect(sendOrEditStreamMessage).not.toHaveBeenCalledWith("second");
     expect(sendOrEditStreamMessage).toHaveBeenCalledTimes(1);
   });
+
+  it("seal makes the raw loop permanently terminal, not just for the racing update", async () => {
+    // The `loop` seal() returns is public SDK surface (createDraftStreamLoop is
+    // re-exported via plugin-sdk/channel-outbound.ts), so a third-party plugin can call
+    // loop.update() directly. seal() must keep that escape hatch inert for the rest of
+    // the draft's lifetime, not only during the in-flight send it awaits.
+    const state = { stopped: false, final: false };
+    let messageId: string | undefined = "m-7";
+    const sendOrEditStreamMessage = vi.fn(async () => true);
+    const deleteMessage = vi.fn(async () => {});
+
+    const lifecycle = createFinalizableDraftLifecycle({
+      throttleMs: 250,
+      state,
+      sendOrEditStreamMessage,
+      readMessageId: () => messageId,
+      clearMessageId: () => {
+        messageId = undefined;
+      },
+      isValidMessageId: (value): value is string => typeof value === "string",
+      deleteMessage,
+      warnPrefix: "cleanup failed",
+    });
+
+    lifecycle.update("stale");
+    await lifecycle.seal();
+    sendOrEditStreamMessage.mockClear();
+
+    lifecycle.loop.update("resurrected");
+    await lifecycle.loop.flush();
+
+    expect(sendOrEditStreamMessage).not.toHaveBeenCalled();
+    expect(state.stopped).toBe(true);
+  });
 });
