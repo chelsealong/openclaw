@@ -63,10 +63,10 @@ describe("sqlite WAL maintenance", () => {
 
       expect(statfs).toHaveBeenCalledWith(fs.realpathSync(tempDir));
       expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-      expect(db["exec"]).not.toHaveBeenCalled();
+      expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
       expect(maintenance.checkpoint()).toBe(true);
       expect(maintenance.close()).toBe(true);
-      expect(db["exec"]).not.toHaveBeenCalled();
+      expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -109,7 +109,7 @@ describe("sqlite WAL maintenance", () => {
     });
 
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-    expect(db["exec"]).not.toHaveBeenCalled();
+    expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
   });
 
   it("uses rollback journaling for mapped Windows network drives", () => {
@@ -127,7 +127,7 @@ describe("sqlite WAL maintenance", () => {
 
     expect(realpath).toHaveBeenCalledWith(databasePath);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-    expect(db["exec"]).not.toHaveBeenCalled();
+    expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
   });
 
   it("does not treat namespaced Windows local drives as UNC paths", () => {
@@ -160,7 +160,7 @@ describe("sqlite WAL maintenance", () => {
     });
 
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-    expect(db["exec"]).not.toHaveBeenCalled();
+    expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
   });
 
   it("refuses network-backed databases when SQLite keeps WAL active", () => {
@@ -450,7 +450,7 @@ describe("sqlite WAL maintenance", () => {
     });
 
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-    expect(db["exec"]).not.toHaveBeenCalled();
+    expect(db["exec"]).toHaveBeenCalledExactlyOnceWith("PRAGMA mmap_size = 0;");
   });
 
   it("preserves WAL policy when mount classification fails without timing out", () => {
@@ -867,7 +867,8 @@ describe("sqlite WAL maintenance", () => {
 
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA busy_timeout = 5000;");
       expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
-      expect(db["exec"]).toHaveBeenNthCalledWith(2, "PRAGMA synchronous = NORMAL;");
+      expect(db["exec"]).toHaveBeenNthCalledWith(2, "PRAGMA mmap_size = 0;");
+      expect(db["exec"]).toHaveBeenNthCalledWith(3, "PRAGMA synchronous = NORMAL;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -979,8 +980,9 @@ describe("sqlite WAL maintenance", () => {
   ])("never memory-maps a database on a %s volume", (_label, fsType) => {
     // mmap over a network filesystem is what produced the SIGBUS crashes in
     // #60349: an I/O error on a mapped page raises a signal SQLite cannot
-    // catch. These volumes take the rollback branch and must never reach the
-    // mmap pragma.
+    // catch. These volumes take the rollback branch and must explicitly zero
+    // the pragma rather than merely omit it, since some SQLite builds compile
+    // a nonzero SQLITE_DEFAULT_MMAP_SIZE.
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-mmap-net-"));
     try {
       const db = createMockDb();
@@ -994,8 +996,7 @@ describe("sqlite WAL maintenance", () => {
         synchronous: "NORMAL",
       });
 
-      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
-      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
+      expect(db["exec"]).toHaveBeenCalledWith("PRAGMA mmap_size = 0;");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

@@ -559,6 +559,11 @@ export function configureSqliteWalMaintenance(
   }
   if (journalPolicy === "rollback") {
     requireRollbackJournalMode(db, options);
+    // SQLite's default mmap_size is a build-time constant
+    // (SQLITE_DEFAULT_MMAP_SIZE) that can be nonzero; omitting this pragma
+    // would leave that default in effect on a network-backed connection,
+    // which is exactly the mmap-over-network exposure #60349 reports.
+    db.exec("PRAGMA mmap_size = 0;");
     return {
       checkpoint: () => true,
       close: () => true,
