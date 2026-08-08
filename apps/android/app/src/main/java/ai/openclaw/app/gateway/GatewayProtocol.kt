@@ -505,6 +505,10 @@ enum class GatewayMethod(
   SkillsProposalsEventsList("skills.proposals.events.list"),
   SkillsProposalsEvaluate("skills.proposals.evaluate"),
   HooksStatus("hooks.status"),
+  TasksRetry("tasks.retry"),
+  TasksDismiss("tasks.dismiss"),
+  AuditRunInspect("audit.run.inspect"),
+  SessionsArchiveMany("sessions.archiveMany"),
 }
 
 enum class GatewayEvent(

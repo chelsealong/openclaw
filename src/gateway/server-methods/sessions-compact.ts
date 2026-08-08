@@ -10,6 +10,7 @@ import { resolveEmbeddedSessionLane } from "../../agents/embedded-agent-runner/l
 import { hasPendingFollowupQueueWork } from "../../auto-reply/reply/queue/state.js";
 import {
   resolveSessionWorkStartError,
+  SESSION_TOTAL_TOKENS_VERSION,
   SESSION_LIFECYCLE_CHANGED_ERROR_REASON,
 } from "../../config/sessions.js";
 import {
@@ -25,7 +26,7 @@ import {
   runExclusiveSessionLifecycleMutation,
 } from "../../sessions/session-lifecycle-admission.js";
 import { recordSessionCompacted } from "../../sessions/session-state-events.js";
-import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-create-service.js";
+import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import { resolveCanonicalGatewaySessionStoreKey } from "../session-utils.js";
 import { asWorkerInferenceControl } from "../worker-environments/inference-control.js";
 import { hasVisibleActiveSessionRun } from "./session-active-runs.js";
@@ -434,9 +435,11 @@ export const sessionCompactHandlers: GatewayRequestHandlers = {
                   ) {
                     entryToUpdate.totalTokens = result.result.tokensAfter;
                     entryToUpdate.totalTokensFresh = true;
+                    entryToUpdate.totalTokensVersion = SESSION_TOTAL_TOKENS_VERSION;
                   } else {
                     delete entryToUpdate.totalTokens;
                     delete entryToUpdate.totalTokensFresh;
+                    delete entryToUpdate.totalTokensVersion;
                   }
                   return { ok: true, entry: entryToUpdate };
                 },

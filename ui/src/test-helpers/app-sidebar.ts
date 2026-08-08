@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, vi } from "vitest";
 import type {
   SessionCatalogPullRequestSummary,
+  SessionsArchiveManyParams,
+  SessionsArchiveManyResult,
   SessionsCatalogListResult,
 } from "../../../packages/gateway-protocol/src/index.ts";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
@@ -71,6 +73,8 @@ export type SidebarLifecycleState = HTMLElement & {
   updateAvailable: { currentVersion: string; latestVersion: string; channel: string } | null;
   updateRunning: boolean;
   onUpdate: () => void;
+  refreshRequired: boolean;
+  onRefresh: () => void;
   onRetryConnect?: () => void;
   onOpenNewSession?: (agentId: string, target?: { catalogId: string }) => void;
   variant: "panel" | "drawer";
@@ -241,6 +245,18 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     Promise.resolve(),
   );
   const refreshReplacement = vi.fn(() => Promise.resolve());
+  const archiveMany = vi.fn(
+    async (
+      targets: SessionsArchiveManyParams["targets"],
+      _archived: boolean,
+    ): Promise<SessionsArchiveManyResult> => ({
+      outcomes: targets.map((target) => ({
+        ok: true,
+        key: target.key,
+        ...(target.agentId ? { agentId: target.agentId } : {}),
+      })),
+    }),
+  );
   const setCreatorFilter = vi.fn(() => Promise.resolve());
   const subscribeMessages = vi.fn((key: string, options?: { agentId?: string | null }) =>
     Promise.resolve({ key, agentId: options?.agentId ?? null }),
@@ -293,6 +309,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     groupsDelete,
     create,
     patch,
+    archiveMany,
     delete: deleteSession,
     deleteMany,
     list,
@@ -347,6 +364,10 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
           if (method === "sessions.subscribe") {
             return { subscribed: true } as T;
           }
+          if (method === "sessions.archiveMany") {
+            const { targets, archived } = params as SessionsArchiveManyParams;
+            return (await archiveMany(targets, archived)) as T;
+          }
           if (method !== "sessions.list") {
             return client.request<T>(method, params);
           }
@@ -390,6 +411,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     groupsDelete,
     create,
     patch,
+    archiveMany,
     deleteSession,
     deleteMany,
     list,
@@ -489,7 +511,7 @@ export async function mountSidebar(
 export const TWO_AGENTS = {
   defaultId: "main",
   mainKey: "main",
-  scope: "agent",
+  scope: "per-sender",
   agents: [{ id: "main", identity: { name: "Molty" } }, { id: "research" }],
 } as AgentsListResult;
 
@@ -497,7 +519,7 @@ export const manyAgents = (count: number) =>
   ({
     defaultId: "agent-1",
     mainKey: "main",
-    scope: "agent",
+    scope: "per-sender",
     agents: Array.from({ length: count }, (_, index) => ({ id: `agent-${index + 1}` })),
   }) as AgentsListResult;
 

@@ -44,11 +44,15 @@ const ROOT_TEST_ENTRY_GLOBS = [
   "test/non-isolated-runner.ts!",
   "test/vitest/*-runtime.ts!",
   "test/vitest/vitest*.config.ts!",
+  "test/vitest/vitest*.setup.ts!",
+  "test/vitest/vitest*.global-setup.ts!",
   // Test drivers and Docker fixtures are executed by path from package scripts
   // and the test-project registry.
   "test/e2e/qa-lab/runtime/agent-bundle-mcp-tools-docker-client.ts!",
   "test/e2e/qa-lab/runtime/docker-e2e-lane.ts!",
   "test/e2e/qa-lab/runtime/mcp-channels-docker-client.ts!",
+  // The identity scenario spawns this process-isolated repeated-turn driver by path.
+  "test/e2e/qa-lab/runtime/agent-run-identity-repeated-turn-child.ts!",
   // Invoked directly by the Docker image-auth scenario.
   "test/e2e/qa-lab/runtime/openai-image-auth-docker-client.ts!",
   "test/e2e/qa-lab/runtime/system-agent-first-run-docker-client.ts!",
@@ -89,10 +93,11 @@ const workspaces = Object.fromEntries(
           ? [".agents/skills/**/scripts/**/*.{js,mjs,cjs,ts,mts,cts}!", ...ROOT_TEST_ENTRY_GLOBS]
           : [
               TEST_ENTRY_GLOB,
-              // QA Lab loads this plugin fixture by path during the Gateway E2E.
-              ...(workspace === "extensions/qa-lab"
-                ? ["test-fixtures/current-requester-subagent-plugin/index.js!"]
-                : []),
+              // QA Lab loads these plugin fixtures by path during the Gateway
+              // E2E, so nothing imports their entry files. Matched as a group:
+              // a per-fixture list silently rots into a knip failure the next
+              // time a scenario needs its own fixture plugin.
+              ...(workspace === "extensions/qa-lab" ? ["test-fixtures/*/index.js!"] : []),
             ]),
       ],
       project:

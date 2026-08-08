@@ -180,6 +180,16 @@ describe("ensureConfigReady", () => {
       expectedDoctorCalls: 0,
     },
     {
+      name: "skips doctor flow for config set",
+      commandPath: ["config", "set"],
+      expectedDoctorCalls: 0,
+    },
+    {
+      name: "skips doctor flow for config patch",
+      commandPath: ["config", "patch"],
+      expectedDoctorCalls: 0,
+    },
+    {
       name: "skips doctor flow for agent without legacy state",
       commandPath: ["agent"],
       expectedDoctorCalls: 0,
@@ -202,6 +212,7 @@ describe("ensureConfigReady", () => {
         migrateState: true,
         migrateLegacyConfig: false,
         invalidConfigNote: false,
+        requireStateMigrationCheckpoint: true,
       });
     }
   });
@@ -238,6 +249,7 @@ describe("ensureConfigReady", () => {
       migrateLegacyConfig: false,
       invalidConfigNote: false,
       observe: false,
+      requireStateMigrationCheckpoint: true,
     });
   });
 
@@ -273,6 +285,7 @@ describe("ensureConfigReady", () => {
         migrateLegacyConfig: false,
         invalidConfigNote: false,
         observe: false,
+        requireStateMigrationCheckpoint: true,
       });
     },
   );
@@ -288,6 +301,7 @@ describe("ensureConfigReady", () => {
       migrateLegacyConfig: false,
       invalidConfigNote: false,
       observe: false,
+      requireStateMigrationCheckpoint: true,
     });
   });
 
@@ -323,13 +337,14 @@ describe("ensureConfigReady", () => {
     expect(runtime.exit).toHaveBeenCalledWith(78);
   });
 
-  it("does not require a startup migration checkpoint for gateway probes", async () => {
+  it("uses only the state migration checkpoint for gateway probes", async () => {
     await runEnsureConfigReady(["gateway", "health"]);
 
     expect(loadAndMaybeMigrateDoctorConfigMock).toHaveBeenCalledWith({
       migrateState: true,
       migrateLegacyConfig: false,
       invalidConfigNote: false,
+      requireStateMigrationCheckpoint: true,
     });
   });
 
@@ -353,6 +368,21 @@ describe("ensureConfigReady", () => {
       migrateState: true,
       migrateLegacyConfig: false,
       invalidConfigNote: false,
+      requireStateMigrationCheckpoint: true,
+    });
+  });
+
+  it("checkpoints migration discovery for established canonical agent state", async () => {
+    const root = useTempOpenClawHome();
+    writeStateMarker(root, "agents/main/sessions/sessions.json");
+
+    await runEnsureConfigReady(["agent"]);
+
+    expect(loadAndMaybeMigrateDoctorConfigMock).toHaveBeenCalledWith({
+      migrateState: true,
+      migrateLegacyConfig: false,
+      invalidConfigNote: false,
+      requireStateMigrationCheckpoint: true,
     });
   });
 
@@ -377,6 +407,7 @@ describe("ensureConfigReady", () => {
       migrateState: true,
       migrateLegacyConfig: false,
       invalidConfigNote: false,
+      requireStateMigrationCheckpoint: true,
     });
     expect(setRuntimeConfigSnapshotMock).toHaveBeenCalledWith(
       migratedSnapshot.runtimeConfig,

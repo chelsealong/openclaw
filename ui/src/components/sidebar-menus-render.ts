@@ -45,6 +45,19 @@ function sessionMenuActionDisabledReasons(
     method: "sessions.patch",
     params: { key: session.key, label: null },
   });
+  const archiveManyAccess = batchRows
+    ? readSessionMethodAccess(snapshot, {
+        method: "sessions.archiveMany",
+        requiredScope: "operator.write",
+      })
+    : null;
+  const archiveReason = archiveManyAccess
+    ? archiveManyAccess.allowed
+      ? undefined
+      : archiveManyAccess.cause === "method-unavailable"
+        ? patchReason
+        : archiveManyAccess.reason
+    : patchReason;
   const groupReason = reason({
     method: "sessions.groups.put",
     requiredScope: "operator.write",
@@ -66,9 +79,9 @@ function sessionMenuActionDisabledReasons(
           "toggle-unread": patchReason,
           rename: patchReason,
           "move-to-group": patchReason,
-          "toggle-archived": patchReason,
         }
       : {}),
+    ...(archiveReason ? { "toggle-archived": archiveReason } : {}),
     ...(groupReason || patchReason ? { "new-group": groupReason ?? patchReason } : {}),
     ...(deleteReason ? { delete: deleteReason } : {}),
     ...(batchRows
@@ -104,6 +117,7 @@ export function renderSidebarCustomizeMenuForController(controller: SidebarMenus
   return renderSidebarCustomizeMenu({
     position,
     sidebarEntries: host.sidebarEntries,
+    preferencesBrowserOnly: host.preferencesBrowserOnly,
     isRouteEnabled: (routeId) => controller.isRouteEnabled(routeId),
     workboardBoards: host.workboardBoards,
     workboardRenderers: host.workboardRenderers,

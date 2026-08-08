@@ -122,3 +122,26 @@ export function getLatestSubagentRunByChildSessionKey(
     ) ?? null
   );
 }
+
+/**
+ * Returns the authoritative process-local run for mutation ownership checks.
+ *
+ * `matches` restricts the search to a row class the caller owns; see
+ * `getLatestSubagentRunByChildSessionKeyFromRuns`.
+ */
+export function getLatestLiveSubagentRunByChildSessionKey(
+  childSessionKey: string,
+  matches?: (entry: SubagentRunRecord) => boolean,
+): SubagentRunRecord | null {
+  const key = childSessionKey.trim();
+  if (!key) {
+    return null;
+  }
+  return (
+    getLatestSubagentRunByChildSessionKeyFromRuns(
+      getSubagentRunsForChildSession(key),
+      key,
+      matches,
+    ) ?? null
+  );
+}
