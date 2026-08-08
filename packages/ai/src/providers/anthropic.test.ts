@@ -863,6 +863,61 @@ describe("Anthropic provider", () => {
     ]);
   });
 
+  it("drops a redacted thinking block missing its signature instead of throwing", async () => {
+    let capturedPayload: unknown;
+    const stream = streamAnthropic(
+      makeAnthropicModel(),
+      {
+        messages: [
+          { role: "user", content: "hello", timestamp: 0 },
+          {
+            role: "assistant",
+            provider: "anthropic",
+            api: "anthropic-messages",
+            model: "claude-sonnet-4-6",
+            stopReason: "stop",
+            timestamp: 0,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
+            content: [
+              {
+                type: "thinking",
+                thinking: "[Reasoning redacted]",
+                thinkingSignature: undefined,
+                redacted: true,
+              },
+              { type: "text", text: "Visible answer." },
+            ],
+          },
+          { role: "user", content: "again", timestamp: 0 },
+        ],
+      },
+      {
+        apiKey: "sk-ant-provider",
+        thinkingEnabled: true,
+        onPayload: (payload) => {
+          capturedPayload = payload;
+          throw new Error("stop before network");
+        },
+      },
+    );
+
+    await stream.result();
+
+    const payload = capturedPayload as {
+      messages: Array<{ role: string; content: unknown[] }>;
+    };
+    expect(payload.messages.find((message) => message.role === "assistant")?.content).toEqual([
+      { type: "text", text: "Visible answer." },
+    ]);
+  });
+
   it("does not infer prompt tokens when clamping the output limit", async () => {
     let capturedPayload: unknown;
     const model = makeAnthropicModel({

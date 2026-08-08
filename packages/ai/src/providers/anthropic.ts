@@ -1187,10 +1187,14 @@ async function convertMessages(
             omittedThinking = true;
             continue;
           }
-          // Redacted thinking: pass the opaque payload back as redacted_thinking
+          // Redacted thinking: pass the opaque payload back as redacted_thinking.
+          // A signature-less redacted block can't be replayed (Anthropic rejects
+          // it), but the content is opaque anyway, so drop it instead of throwing
+          // and permanently wedging every future turn in the session.
           if (block.redacted) {
             if (!block.thinkingSignature) {
-              throw new Error("redacted thinking block is missing its opaque signature");
+              omittedThinking = true;
+              continue;
             }
             blocks.push({
               type: "redacted_thinking",
