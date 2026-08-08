@@ -109,7 +109,10 @@ export type {
   AgentHarnessUserInputQuestion,
 } from "../agents/harness/user-input-bridge.js";
 export type { AgentHarnessQuestionGatewayCall } from "../agents/harness/gateway-question.js";
-export type EmbeddedRunAttemptParams = Omit<CoreEmbeddedRunAttemptParams, "trajectoryRecorder">;
+export type EmbeddedRunAttemptParams = Omit<
+  CoreEmbeddedRunAttemptParams,
+  "contextEngineLogicalTurnLease" | "onContextEngineTurnCandidate" | "trajectoryRecorder"
+>;
 export type { EmbeddedRunAttemptResult };
 export type {
   ContextEngine as HarnessContextEngine,
@@ -336,6 +339,7 @@ export async function loadCodexBundleMcpThreadConfig(
 }
 
 export type { McpToolCatalog, SessionMcpRuntime } from "../agents/agent-bundle-mcp-types.js";
+export { assignSafeServerNames as assignMcpCatalogSafeServerNames } from "../agents/agent-bundle-mcp-names.js";
 
 /**
  * Materialize an MCP App view for a tool executed by a harness-native MCP client.
@@ -421,7 +425,7 @@ export {
   resolveSessionWriteLockAcquireTimeoutMs,
   resolveSessionWriteLockOptions,
   type SessionWriteLockAcquireTimeoutConfig,
-} from "../agents/session-write-lock.js";
+} from "./session-write-lock-runtime.js";
 export {
   consumeAdjustedParamsForToolCall,
   consumePreExecutionBlockedToolCall,

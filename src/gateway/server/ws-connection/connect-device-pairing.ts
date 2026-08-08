@@ -35,6 +35,7 @@ import { formatForLog } from "../../ws-log.js";
 import { truncateCloseReason } from "../close-reason.js";
 import { resolveTrustedProxyControlUiScopes } from "./connect-admission.js";
 import {
+  isControlUiOwnerBootstrapProfile,
   isControlUiOperatorBootstrapProfile,
   isMobileNodeBootstrapConnect,
   isSetupCodeHandoffBootstrapClient,
@@ -251,6 +252,7 @@ export async function authorizeGatewayConnectDevice(
       const allowSilentLocalPairing =
         allowSilentExistingNonOperatorPairing &&
         shouldAllowSilentLocalPairing({
+          autoApproveLocal: configSnapshot.gateway?.nodes?.pairing?.autoApproveLocal,
           locality: pairingLocality,
           hasBrowserOriginHeader,
           isControlUi,
@@ -300,7 +302,7 @@ export async function authorizeGatewayConnectDevice(
           (isSetupCodeMobileNodeConnect || (isControlUi && role === "operator"))) ||
         (reason === "scope-upgrade" &&
           Boolean(existingPairedDevice) &&
-          isSetupCodeMobileNodeConnect);
+          (isSetupCodeMobileNodeConnect || (isControlUi && role === "operator")));
       const boundBootstrapProfile =
         authMethod === "bootstrap-token" &&
         bootstrapTokenCandidate &&
@@ -321,10 +323,19 @@ export async function authorizeGatewayConnectDevice(
       const setupCodeHandoffBootstrapProfile = allowSetupCodeHandoffBootstrapPairing
         ? boundBootstrapProfile
         : null;
-      const allowControlUiOperatorBootstrapPairing = isControlUiOperatorBootstrapProfile({
-        profile: boundBootstrapProfile,
-        requestedScopes: scopes,
-      });
+      const allowControlUiOwnerBootstrapPairing =
+        reason === "scope-upgrade" &&
+        isControlUiOwnerBootstrapProfile({
+          profile: boundBootstrapProfile,
+          requestedScopes: scopes,
+        });
+      const allowControlUiOperatorBootstrapPairing =
+        (reason === "not-paired" &&
+          isControlUiOperatorBootstrapProfile({
+            profile: boundBootstrapProfile,
+            requestedScopes: scopes,
+          })) ||
+        allowControlUiOwnerBootstrapPairing;
       const controlUiOperatorBootstrapProfile = allowControlUiOperatorBootstrapPairing
         ? boundBootstrapProfile
         : null;
@@ -372,7 +383,9 @@ export async function authorizeGatewayConnectDevice(
             }
           : {}),
         silent:
-          reason === "scope-upgrade" && !allowSetupCodeHandoffBootstrapPairing
+          reason === "scope-upgrade" &&
+          !allowSetupCodeHandoffBootstrapPairing &&
+          !allowControlUiOwnerBootstrapPairing
             ? false
             : allowSilentLocalPairing ||
               allowSilentTrustedCidrsNodePairing ||

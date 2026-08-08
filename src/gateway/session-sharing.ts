@@ -32,7 +32,7 @@ import type {
   GatewaySessionStoreDiscoveryCache,
 } from "./session-utils-store-lookup.js";
 import {
-  resolveFreshestSessionStoreMatchFromStoreKeys,
+  resolveCanonicalSessionStoreMatchFromStoreKeys,
   resolveGatewaySessionStoreTargetWithStore,
 } from "./session-utils.js";
 
@@ -117,7 +117,7 @@ export function resolveSessionSharingTarget(params: {
     ...(params.storeCache ? { storeCache: params.storeCache } : {}),
     ...(params.targetDiscoveryCache ? { targetDiscoveryCache: params.targetDiscoveryCache } : {}),
   });
-  const match = resolveFreshestSessionStoreMatchFromStoreKeys(target.store, target.storeKeys);
+  const match = resolveCanonicalSessionStoreMatchFromStoreKeys(target.store, target.storeKeys);
   return match
     ? {
         agentId: target.agentId,
@@ -412,6 +412,16 @@ function resolveSessionMutationTargets(params: {
   context: GatewayRequestContext;
   getCfg: () => OpenClawConfig;
 }): SessionMutationTarget[] | undefined {
+  if (params.method === "sessions.archiveMany") {
+    const targets = (params.requestParams as { targets?: unknown } | null)?.targets;
+    return Array.isArray(targets)
+      ? targets.slice(0, 101).flatMap((target): SessionMutationTarget[] => {
+          const sessionKey = readStringParam(target, "key");
+          const agentId = readStringParam(target, "agentId");
+          return sessionKey ? [{ sessionKey, ...(agentId ? { agentId } : {}) }] : [];
+        })
+      : undefined;
+  }
   if (params.method === "sessions.groups.rename" || params.method === "sessions.groups.delete") {
     return resolveSessionGroupMutationTargets({
       getCfg: params.getCfg,
@@ -532,7 +542,15 @@ export function resolveSessionMutationAuthorization(params: {
       agentId: targetRef.agentId,
       ...lookupCaches,
     });
-    const error = target ? authorizeSessionSharingTarget({ client: params.client, target }) : null;
+    const error =
+      (params.method === "sessions.archiveMany"
+        ? authorizeIncognitoSessionTarget({
+            client: params.client,
+            sessionKey: targetRef.sessionKey,
+            target,
+          })
+        : null) ??
+      (target ? authorizeSessionSharingTarget({ client: params.client, target }) : null);
     if (error) {
       return { error };
     }

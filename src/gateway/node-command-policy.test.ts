@@ -8,11 +8,7 @@ import {
 } from "../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
-import {
-  pinActivePluginChannelRegistry,
-  resetPluginRuntimeStateForTest,
-  setActivePluginRegistry,
-} from "../plugins/runtime.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import {
   isForegroundRestrictedPluginNodeCommand,
   isNodeCommandAllowed,
@@ -20,7 +16,10 @@ import {
   resolveNodeCommandAllowlist,
   resolveNodePairingCommandAllowlist,
 } from "./node-command-policy.js";
-import { filterLegacyNodeProtocolFeatures } from "./node-legacy-protocol-filter.js";
+import {
+  filterLegacyNodeProtocolFeatures,
+  normalizeLegacyNodeHostClientMetadata,
+} from "./node-legacy-protocol-filter.js";
 
 describe("gateway/node-command-policy", () => {
   afterEach(() => {
@@ -104,6 +103,46 @@ describe("gateway/node-command-policy", () => {
     expect(allowlist.has("canvas.snapshot")).toBe(false);
   });
 
+  it("keeps safe PTZ status Mac-only and requires an explicit allow for control", () => {
+    const macNode = {
+      platform: "macos",
+      deviceFamily: "Mac",
+      commands: ["camera.ptz.status", "camera.ptz.control"],
+    };
+    const defaultAllowlist = resolveNodeCommandAllowlist({} as OpenClawConfig, macNode);
+    expect(defaultAllowlist.has("camera.ptz.status")).toBe(true);
+    expect(defaultAllowlist.has("camera.ptz.control")).toBe(false);
+
+    for (const platform of ["ios", "android", "windows", "linux", "unknown"]) {
+      const allowlist = resolveNodeCommandAllowlist({} as OpenClawConfig, { platform });
+      expect(allowlist.has("camera.ptz.status")).toBe(false);
+      expect(allowlist.has("camera.ptz.control")).toBe(false);
+    }
+
+    const explicitAllow = resolveNodeCommandAllowlist(
+      {
+        gateway: { nodes: { commands: { allow: ["camera.ptz.control"] } } },
+      } as OpenClawConfig,
+      macNode,
+    );
+    expect(explicitAllow.has("camera.ptz.control")).toBe(true);
+
+    const denied = resolveNodeCommandAllowlist(
+      {
+        gateway: {
+          nodes: {
+            commands: {
+              allow: ["camera.ptz.control"],
+              deny: ["camera.ptz.control"],
+            },
+          },
+        },
+      } as OpenClawConfig,
+      macNode,
+    );
+    expect(denied.has("camera.ptz.control")).toBe(false);
+  });
+
   it("adds canvas commands from the active canvas plugin node policy", () => {
     installCanvasPluginDefaults();
 
@@ -138,6 +177,8 @@ describe("gateway/node-command-policy", () => {
       "camera.list",
       "camera.snap",
       "camera.clip",
+      "camera.ptz.status",
+      "camera.ptz.control",
       "location.get",
       "remote.echo",
     ]) {
@@ -158,6 +199,8 @@ describe("gateway/node-command-policy", () => {
           "camera.list",
           "camera.snap",
           "camera.clip",
+          "camera.ptz.status",
+          "camera.ptz.control",
           "location.get",
           "remote.echo",
           "device.info",
@@ -171,38 +214,45 @@ describe("gateway/node-command-policy", () => {
         "camera.list",
         "camera.snap",
         "camera.clip",
+        "camera.ptz.status",
+        "camera.ptz.control",
         "location.get",
         "device.info",
       ],
     });
   });
 
-  it("keeps plugin node defaults from the pinned Gateway registry", () => {
-    const startupRegistry = installCanvasPluginDefaults();
-    pinActivePluginChannelRegistry(startupRegistry);
-    const transientRegistry = createEmptyPluginRegistry();
-    const startupPolicy = startupRegistry.nodeInvokePolicies[0];
-    if (!startupPolicy) {
-      throw new Error("expected canvas node policy");
-    }
-    transientRegistry.nodeInvokePolicies.push({
-      ...startupPolicy,
-      pluginId: "transient",
-      policy: {
-        ...startupPolicy.policy,
-        commands: ["transient.read"],
-      },
-    });
-    setActivePluginRegistry(transientRegistry);
+  it.each([
+    ["darwin", "macos", "Mac"],
+    ["linux", "linux", "Linux"],
+    ["win32", "windows", "Windows"],
+  ])("normalizes shipped protocol-v3 node-host metadata for %s", (platform, expected, family) => {
+    expect(
+      normalizeLegacyNodeHostClientMetadata({
+        id: GATEWAY_CLIENT_IDS.NODE_HOST,
+        version: "2026.5.7",
+        platform,
+        mode: GATEWAY_CLIENT_MODES.NODE,
+      }),
+    ).toMatchObject({ platform: expected, deviceFamily: family });
+  });
 
-    const allowlist = resolveNodeCommandAllowlist({} as OpenClawConfig, {
-      platform: "macos",
-      deviceFamily: "Mac",
-    });
+  it("does not normalize non-node-host or conflicting legacy metadata", () => {
+    const conflicting = {
+      id: GATEWAY_CLIENT_IDS.NODE_HOST,
+      version: "2026.5.7",
+      platform: "linux",
+      deviceFamily: "iPhone",
+      mode: GATEWAY_CLIENT_MODES.NODE,
+    } as const;
+    expect(normalizeLegacyNodeHostClientMetadata(conflicting)).toBe(conflicting);
 
-    expect(allowlist.has("canvas.snapshot")).toBe(true);
-    expect(allowlist.has("canvas.present")).toBe(true);
-    expect(allowlist.has("transient.read")).toBe(false);
+    const otherClient = {
+      ...conflicting,
+      id: GATEWAY_CLIENT_IDS.LINUX_APP,
+      deviceFamily: undefined,
+    };
+    expect(normalizeLegacyNodeHostClientMetadata(otherClient)).toBe(otherClient);
   });
 
   it("adds explicitly defaulted plugin node-host agent tools from the active registry", () => {
@@ -445,10 +495,11 @@ describe("gateway/node-command-policy", () => {
       connId: "conn-1",
       platform: "linux",
       deviceFamily: "Linux",
-      commands: ["browser.proxy", "system.run"],
+      commands: ["browser.proxy", "browser.proxy.upload.v1", "system.run"],
     });
 
     expect(allowlist.has("browser.proxy")).toBe(true);
+    expect(allowlist.has("browser.proxy.upload.v1")).toBe(true);
     expect(allowlist.has("system.run")).toBe(true);
   });
 
@@ -612,6 +663,59 @@ describe("gateway/node-command-policy", () => {
     const macNode = { platform: "macos", deviceFamily: "Mac", commands: ["computer.act"] };
     expect(resolveNodePairingCommandAllowlist(cfg, macNode).has("computer.act")).toBe(false);
     expect(resolveNodeCommandAllowlist(cfg, macNode).has("computer.act")).toBe(false);
+  });
+
+  it("requires an explicit allow for the dangerous cua-computer plugin command", () => {
+    const registry = createEmptyPluginRegistry();
+    registry.nodeHostCommands.push({
+      pluginId: "cua-computer",
+      pluginName: "CUA Computer",
+      source: "/extensions/cua-computer/index.ts",
+      rootDir: "/extensions/cua-computer",
+      command: {
+        command: "computer.act",
+        cap: "computer",
+        dangerous: true,
+        handle: async () => "{}",
+      },
+    });
+    registry.nodeInvokePolicies.push({
+      pluginId: "cua-computer",
+      pluginName: "CUA Computer",
+      source: "/extensions/cua-computer/index.ts",
+      rootDir: "/extensions/cua-computer",
+      pluginConfig: {},
+      policy: {
+        commands: ["computer.act"],
+        dangerous: true,
+        handle: async (ctx) => await ctx.invokeNode(),
+      },
+    });
+    setActivePluginRegistry(registry);
+
+    const node = {
+      platform: "windows",
+      deviceFamily: "Windows",
+      commands: ["computer.act"],
+      approvedCommands: ["computer.act"],
+    };
+    expect(resolveNodeCommandAllowlist({} as OpenClawConfig, node).has("computer.act")).toBe(false);
+
+    const allowlist = resolveNodeCommandAllowlist(
+      {
+        gateway: {
+          nodes: { commands: { allow: ["computer.act"] } },
+        },
+      } as OpenClawConfig,
+      node,
+    );
+    expect(
+      isNodeCommandAllowed({
+        command: "computer.act",
+        declaredCommands: node.commands,
+        allowlist,
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("allows node-enabled and paired mobile UI without a persistent allow", () => {

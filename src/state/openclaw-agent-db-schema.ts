@@ -1,6 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { SessionRunStatus } from "../../packages/gateway-protocol/src/schema/sessions-row.js";
 import {
-  ensureMemoryRecallMetadataColumns,
+  ensureMemoryChunkProvenance,
+  ensureMemoryRecallMetadataSchema,
+  hasLegacyMemoryRecallMetadataColumns,
   migrateMemoryIndexSourcesIdentity,
 } from "../../packages/memory-host-sdk/src/host/memory-schema.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
@@ -28,11 +31,13 @@ import {
   assertOpenClawAgentSchemaContains,
   assertOpenClawAgentCurrentRuntimeSchema,
   assertSupportedAgentSchemaVersion,
+  ensureSessionKeyContractSchemaInTransaction,
   readExistingAgentSchemaMeta,
   repairAndAssertOpenClawAgentV14SchemaForMigration,
 } from "./openclaw-agent-db-schema-helpers.js";
 import {
   backfillSessionConversations,
+  ensureSessionEntryValidityProjection,
   migrateConversationDeliveryTargetColumn,
   migrateSessionEntryStatusProjection,
   readSqliteTableColumns,
@@ -45,7 +50,7 @@ import {
 } from "./openclaw-agent-db-session-provenance.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "./openclaw-agent-db.generated.js";
 import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
-import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.generated.js";
+import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db.js";
 
 type OpenClawAgentMetadataDatabase = Pick<OpenClawAgentKyselyDatabase, "schema_meta">;
@@ -91,6 +96,38 @@ function dropLegacyMemoryIndexSchema(db: DatabaseSync): void {
     DROP TABLE IF EXISTS memory_index_chunks;
     DROP TABLE IF EXISTS memory_index_sources;
   `);
+}
+
+function hasLegacyMemoryChunkProvenanceTrigger(db: DatabaseSync): boolean {
+  return Boolean(
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'trigger' AND name = 'memory_index_chunk_provenance_after_insert'",
+      )
+      .get(),
+  );
+}
+
+function hasPendingMemoryChunkMetadataMigration(db: DatabaseSync): boolean {
+  return hasLegacyMemoryRecallMetadataColumns(db) || hasLegacyMemoryChunkProvenanceTrigger(db);
+}
+
+function hasPendingSessionKeyContractSchemaMigration(db: DatabaseSync): boolean {
+  const sessionNodeColumns = readSqliteTableColumns(db, "session_nodes");
+  if (!sessionNodeColumns) {
+    return false;
+  }
+  const hasContractTable = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'session_key_contract'")
+      .get(),
+  );
+  return !sessionNodeColumns.has("entry_valid") || !hasContractTable;
+}
+
+function migrateMemoryChunkMetadataSchema(db: DatabaseSync): void {
+  ensureMemoryRecallMetadataSchema(db);
+  ensureMemoryChunkProvenance(db);
 }
 
 function migrateOpenClawAgentSchema(db: DatabaseSync): void {
@@ -310,9 +347,7 @@ function migratedChatType(value: unknown): "direct" | "group" | "channel" | null
   return null;
 }
 
-function migratedStatus(
-  value: unknown,
-): "running" | "done" | "failed" | "killed" | "timeout" | null {
+function migratedStatus(value: unknown): SessionRunStatus | null {
   if (
     value === "running" ||
     value === "done" ||
@@ -476,7 +511,15 @@ export function assertAgentDatabaseIntegrityBeforeMutation(
       toVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
     });
   }
-  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION) {
+  const hasPendingMemoryMigration =
+    userVersion === OPENCLAW_AGENT_SCHEMA_VERSION &&
+    hasPendingMemoryChunkMetadataMigration(database);
+  const hasPendingSessionContractMigration =
+    userVersion === OPENCLAW_AGENT_SCHEMA_VERSION &&
+    hasPendingSessionKeyContractSchemaMigration(database);
+  const hasPendingAdditiveMigration =
+    hasPendingMemoryMigration || hasPendingSessionContractMigration;
+  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION && !hasPendingAdditiveMigration) {
     verifyAndRepairCanonicalSqliteIndexes(database, pathname, OPENCLAW_AGENT_SCHEMA_SQL, {
       allowMissingColumns: true,
       validateAfterRepair: () =>
@@ -486,7 +529,9 @@ export function assertAgentDatabaseIntegrityBeforeMutation(
     // Every physical open proves the full file before schema mutation or exposure.
     assertSqliteIntegrity(database, pathname);
   }
-  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION) {
+  // Current-version additive surfaces are installed atomically by ensureAgentSchema below.
+  // Validating them here would make the same-version repair path unreachable after an update.
+  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION && !hasPendingAdditiveMigration) {
     assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname });
   }
 }
@@ -531,6 +576,12 @@ function ensureAgentSchema(
         );
       }
       if (previousVersion === targetVersion) {
+        ensureSessionEntryValidityProjection(db);
+        ensureSessionKeyContractSchemaInTransaction(db);
+        if (hasPendingMemoryChunkMetadataMigration(db)) {
+          migrateMemoryChunkMetadataSchema(db);
+          db.exec(OPENCLAW_AGENT_SCHEMA_SQL);
+        }
         // Repeat index repair before the transactional schema assertion so a
         // concurrent opener cannot turn repairable drift into a hard refusal.
         repairCanonicalSqliteIndexes(db, pathname, OPENCLAW_AGENT_SCHEMA_SQL, {
@@ -558,8 +609,9 @@ function ensureAgentSchema(
       }
       backfillSessionEntryProvenance(db, previousVersion);
       migrateSessionNodesAndWindows(db, previousVersion);
+      ensureSessionEntryValidityProjection(db);
       db.exec(OPENCLAW_AGENT_SCHEMA_SQL);
-      ensureMemoryRecallMetadataColumns(db);
+      migrateMemoryChunkMetadataSchema(db);
       if (previousVersion < targetVersion) {
         ensureOpenClawAgentBoardSchemaInTransaction(db);
       }
@@ -636,7 +688,7 @@ export function migrateOpenClawAgentDatabaseToMediaPrerequisiteSchema(
 ): void {
   const targetVersion = OPENCLAW_AGENT_SCHEMA_VERSION - 1;
   const userVersion = readSqliteUserVersion(db);
-  if (userVersion >= targetVersion) {
+  if (userVersion > targetVersion) {
     return;
   }
   const agentId = normalizeAgentId(options.agentId);

@@ -66,7 +66,7 @@ describe("listGatewayMethods", () => {
   });
 
   it("appends new methods after model probing without shifting older method indices", () => {
-    expect(listGatewayMethods().slice(-27)).toEqual([
+    expect(listGatewayMethods().slice(-32)).toEqual([
       "models.probe",
       "migrations.memory.plan",
       "migrations.memory.apply",
@@ -94,6 +94,11 @@ describe("listGatewayMethods", () => {
       "memory.search",
       "skills.proposals.events.list",
       "skills.proposals.evaluate",
+      "hooks.status",
+      "tasks.retry",
+      "tasks.dismiss",
+      "audit.run.inspect",
+      "sessions.archiveMany",
     ]);
     const methods = listGatewayMethods();
     expect(methods.indexOf("node.pluginSurface.refresh")).toBe(
@@ -115,7 +120,12 @@ describe("listGatewayMethods", () => {
   });
 
   it("advertises Control UI session pull request detection", () => {
-    expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests");
+    expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests.subscribe");
+    expect(GATEWAY_EVENTS).toContain("controlUi.sessionPullRequests.changed");
+  });
+
+  it("advertises explicit session viewer presence", () => {
+    expect(listGatewayMethods()).toContain("sessions.viewers.set");
   });
 
   it("advertises session workspace reveal", () => {
@@ -126,6 +136,8 @@ describe("listGatewayMethods", () => {
   it("advertises the versioned activity audit method", () => {
     expect(listGatewayMethods()).toContain("audit.activity.list");
     expect(coreGatewayHandlers["audit.activity.list"]).toBeTypeOf("function");
+    expect(listGatewayMethods()).toContain("audit.run.inspect");
+    expect(coreGatewayHandlers["audit.run.inspect"]).toBeTypeOf("function");
   });
 
   it("does not advertise hidden core handlers", () => {
@@ -154,7 +166,7 @@ describe("listGatewayMethods", () => {
       "exec.approval.get",
     ]);
     expect(methods).toContain("tts.speak");
-    expect(coreMethods.slice(-34)).toEqual([
+    expect(coreMethods.slice(-39)).toEqual([
       "sessions.catalog.continue",
       "sessions.catalog.archive",
       "approval.get",
@@ -189,9 +201,16 @@ describe("listGatewayMethods", () => {
       "memory.search",
       "skills.proposals.events.list",
       "skills.proposals.evaluate",
+      "hooks.status",
+      "tasks.retry",
+      "tasks.dismiss",
+      "audit.run.inspect",
+      "sessions.archiveMany",
     ]);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
     expect(methods.indexOf("approval.resolve")).toBe(methods.indexOf("approval.get") + 1);
+    expect(methods.indexOf("audit.run.inspect")).toBe(methods.indexOf("tasks.dismiss") + 1);
+    expect(methods.indexOf("sessions.archiveMany")).toBe(methods.indexOf("audit.run.inspect") + 1);
   });
 
   it("advertises the versioned Talk session RPCs", () => {

@@ -66,9 +66,10 @@ channel is the communication surface.
 
 - The official `@openclaw/codex` plugin installed. Include `codex` in
   `plugins.allow` if your config uses an allowlist.
-- A stable Codex app-server from `0.143.0` through `0.145.0`. The plugin manages a compatible
-  binary by default, so a `codex` command on `PATH` does not affect normal
-  startup.
+- Codex app-server `0.147.0`. The plugin ships and manages `@openai/codex`
+  `0.147.0` by default, so a `codex` command on `PATH` does not affect normal
+  startup. Explicit custom, remote, and macOS desktop-owned app-servers must
+  report the same exact stable `0.147.0` version.
 - Node.js on the remote Codex app-server host when `remoteWorkspaceRoot` is set
   and cross-machine workspace attachments must be transferred.
 - Codex auth through `openclaw models auth login --provider openai`, an
@@ -374,9 +375,8 @@ context limits as native Codex app-server arguments:
 Replace `openai:api-key` with the actual API-key profile id if needed. The
 agent-scoped app-server receives only that prepared key; the operator's native
 `~/.codex` ChatGPT login, plugins, connectors, and thread store remain
-untouched. Codex app-server `0.144.6` does not attach a command-auth custom
-provider's bearer on app-server turns, so use the injected API-key path above
-rather than `homeScope: "user"` for this route.
+untouched. Use the injected agent-scoped API-key path above for this route
+rather than relying on `homeScope: "user"` to provide the intended credential.
 
 After changing the catalog or app-server arguments, restart the Gateway and
 start a fresh chat. Existing native threads preserve their recorded provider
@@ -593,6 +593,17 @@ already running elsewhere:
 }
 ```
 
+WebSocket transport proactively establishes the app-server connection at
+gateway startup and limits the opening handshake to 10 seconds. An idle
+connection sends a WebSocket ping every 20 seconds and allows 20 seconds for its
+matching pong. A healthy app-server message or pong resets the missed-heartbeat
+count; five consecutive missed pongs close the connection. Transient failures
+reconnect automatically with bounded, jittered exponential backoff. Authentication
+failures and unsupported app-server versions stop reconnecting and report that
+operator action is required. Ping and pong frames are transport-level health
+checks: they do not start a Codex turn or invoke a model. Local stdio and Unix
+transports do not perform these remote connection checks.
+
 Local stdio app-server sessions default to the trusted local operator
 posture: `approvalPolicy: "never"`, `approvalsReviewer: "user"`, and
 `sandbox: "danger-full-access"`. If local Codex requirements disallow that
@@ -731,21 +742,43 @@ for the same Codex run. When the reset time passes, the subscription
 profile becomes eligible again without changing the selected `openai/gpt-*`
 model or Codex runtime.
 
-When native Codex plugins are configured, OpenClaw installs or refreshes
-those plugins through the connected app-server before exposing plugin-owned
-apps to the Codex thread. `app/installed` supplies app IDs and runtime
-accessibility; `app/read` supplies app metadata. Callable apps with authorized
-metadata can be enabled directly. When a modern `app/installed` response marks
-an explicitly configured plugin-owned app base-disabled, OpenClaw may enable
-it provisionally in `thread/start`, then immediately re-read thread-scoped
-inventory. The thread is discarded before its first turn unless that app is
-enabled and callable there. Account-wide disabled apps and revoked,
-unauthenticated, policy-blocked, or missing apps remain excluded. Supported
-older app-server versions use `app/list` when they do not implement
-`app/installed`; that fallback never enables a disabled app provisionally.
-This path does not invent app
-installation for unknown ids; OpenClaw only activates marketplace plugins
-with `plugin/install` and then refreshes inventory.
+When native Codex plugins are configured, OpenClaw reads and caches one
+runtime-and-workspace-scoped `plugin/installed` snapshot. That one snapshot
+covers both curated and workspace plugins, including disabled plugin ownership.
+`plugin/read` resolves only explicitly configured plugin details; `plugin/list`
+is reserved for finding or repairing an explicitly enabled missing curated
+plugin. OpenClaw never installs, enables, or authenticates workspace plugins.
+
+`app/installed` supplies the installed app runtime snapshot, and `app/read`
+supplies authenticated app metadata in batches of at most 100 app IDs. OpenClaw
+force-refreshes a cold snapshot once and consolidates successful curated
+installations into one app-inventory refresh. Ordinary cached reads do not
+force a connector refresh for every thread.
+
+An authorized app can initially appear disabled or non-callable because Codex
+has not yet applied the target thread's restrictive app configuration.
+OpenClaw provisionally admits only explicitly allowed, ownership-proven apps,
+starts the thread with `_default.enabled = false`, and reads `app/installed`
+once with that thread's ID and `forceRefresh: false`. An app is exposed only
+after Codex confirms it is enabled and callable for the actual thread. Missing
+metadata, revoked auth, managed restrictions, workspace policy, and unavailable
+tools remain fail-closed.
+
+The check runs before OpenClaw starts a turn or commits a thread binding. A
+failed persistent provisional thread is deleted; an ephemeral thread is
+unsubscribed. If cleanup cannot be confirmed, OpenClaw retires the app-server
+connection instead of reusing an unsafe thread.
+
+Account-wide app access never overrides an explicitly disabled configured
+workspace plugin. When `app/read` omits that plugin's ownership, OpenClaw uses
+the `plugin/installed` snapshot and reads only the exact configured plugin's
+details to keep its apps denied. This check never installs, enables, or
+authenticates the plugin.
+
+OpenClaw does not install unknown apps; it activates only explicitly configured
+marketplace plugins with `plugin/install` and refreshes their installed
+inventory. Missing inventory methods, authentication errors, transport
+failures, and connector refresh failures fail closed.
 
 ### Environment isolation
 
@@ -1148,10 +1181,11 @@ instead of a plain OpenAI API-key failure.
 Doctor rewrites legacy model refs to `openai/*`, removes stale session and
 whole-agent runtime pins, and preserves existing auth-profile overrides.
 
-**The app-server is rejected:** use a stable Codex app-server from `0.143.0`
-through the bundled `0.145.0`. Prereleases, build-suffixed versions, and newer
-unvalidated releases are rejected because OpenClaw validates generated schemas
-against the bundled app-server version.
+**The app-server is rejected:** use exactly stable Codex `0.147.0`. Older or
+newer versions, prereleases, build-suffixed versions, and unversioned servers
+are rejected because OpenClaw validates generated schemas and runtime contracts
+against the Codex version it ships. Update or remove custom, remote, or desktop
+binary overrides that select another version.
 
 **`/codex status` cannot connect:** check that the `codex` plugin
 is enabled, that `plugins.allow` includes it when an allowlist is
@@ -1168,8 +1202,17 @@ for Gateway pressure, and inspect host or container memory for the Codex child.
 
 The bundled Codex has no heap or RSS limit and no configurable idle-unload
 delay. After the last client unsubscribes, an inactive thread can remain loaded
-for up to 30 minutes. On constrained hosts, reduce native Codex subagent fan-out
-before increasing the Gateway heap:
+for up to 30 minutes. OpenClaw independently keeps up to 64 idle conversation
+threads subscribed on each Codex app-server for 30 minutes after their last
+activity. This preserves warm sessions and session-scoped approvals when several
+conversations alternate. Active turns and parents with unfinished native
+subagents are protected from idle eviction; session reset or deletion releases
+its own thread immediately. Idle-limit eviction unsubscribes the least recently
+used conversation, after which Codex applies its separate unloading delay and a
+later resumed session can require approvals again.
+
+On constrained hosts, reduce native Codex subagent fan-out before increasing the
+Gateway heap:
 
 ```json5
 {
