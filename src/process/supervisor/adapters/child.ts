@@ -76,6 +76,17 @@ function isServiceManagedRuntime(): boolean {
   return Boolean(process.env.OPENCLAW_SERVICE_MARKER?.trim());
 }
 
+// Linux gateway services ship with KillMode=control-group (systemd-unit.ts), so the
+// cgroup reaps every descendant on stop/restart regardless of process-group
+// membership. Detaching each tool child into its own group there lets a per-run
+// abort kill just that child's tree via its own -pgid instead of skipping tree
+// termination to avoid signaling the gateway's shared group (#120386). launchd has
+// no cgroup equivalent, so non-Linux service runtimes still need children kept in
+// the daemon's process group to be swept on stop/restart (#38463).
+function requiresAttachedChildrenForServiceLifecycle(): boolean {
+  return isServiceManagedRuntime() && process.platform !== "linux";
+}
+
 export async function createChildAdapter(params: {
   argv: string[];
   cwd?: string;
@@ -97,10 +108,11 @@ export async function createChildAdapter(params: {
 
   const stdinMode = params.stdinMode ?? (params.input !== undefined ? "pipe-closed" : "inherit");
 
-  // In service-managed mode keep children attached so systemd/launchd can
-  // stop the full process tree reliably. Outside service mode preserve the
-  // existing POSIX detached behavior.
-  const useDetached = process.platform !== "win32" && !isServiceManagedRuntime();
+  // In service-managed mode keep children attached so launchd can stop the full
+  // process tree reliably. Outside that mode, and on Linux service runtimes where
+  // the cgroup already owns tree cleanup, preserve the POSIX detached behavior.
+  const useDetached =
+    process.platform !== "win32" && !requiresAttachedChildrenForServiceLifecycle();
 
   const stdio: SpawnStdioEntry[] = [stdinMode === "inherit" ? "inherit" : "pipe", "pipe", "pipe"];
   addSecretInputStdio(stdio, params.secretInput);
