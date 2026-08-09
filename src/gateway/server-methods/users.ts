@@ -49,6 +49,23 @@ function profileError(error: unknown) {
   return errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error));
 }
 
+// The durable profile write has already succeeded and been reported by the time this
+// runs; a stale-presence race (e.g. a concurrent profile merge) must not turn an
+// already-successful save into a reported failure, so this is its own boundary.
+function refreshPresenceBestEffort(
+  context: GatewayRequestHandlerOptions["context"],
+  profileId: string,
+  method: string,
+): void {
+  try {
+    context.refreshPresenceForProfile?.(profileId);
+  } catch (error) {
+    context.logGateway?.warn(
+      `presence refresh failed after ${method} profile=${profileId}: ${formatErrorMessage(error)}`,
+    );
+  }
+}
+
 function resolveAuthenticatedProfileId(
   client: GatewayRequestHandlerOptions["client"],
 ): string | undefined {
@@ -169,8 +186,8 @@ export const usersHandlers: GatewayRequestHandlers = {
         return;
       }
       const profile = setDisplayName(params.profileId, params.displayName);
-      context.refreshPresenceForProfile?.(profile.id);
       respond(true, { profile });
+      refreshPresenceBestEffort(context, profile.id, "users.setDisplayName");
     } catch (error) {
       respond(false, undefined, profileError(error));
     }
@@ -202,8 +219,8 @@ export const usersHandlers: GatewayRequestHandlers = {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, result.error.code));
         return;
       }
-      context.refreshPresenceForProfile?.(result.value.id);
       respond(true, { profile: result.value });
+      refreshPresenceBestEffort(context, result.value.id, "users.setAvatar");
     } catch (error) {
       respond(false, undefined, profileError(error));
     }

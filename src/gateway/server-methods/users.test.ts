@@ -210,6 +210,42 @@ describe("users gateway methods", () => {
     expect(refreshPresenceForProfile).toHaveBeenCalledWith(profile.id);
   });
 
+  it("still reports a successful display name save when the presence refresh throws", async () => {
+    setDisplayName.mockReturnValue(profile);
+    const logGateway = { warn: vi.fn() };
+    refreshPresenceForProfile.mockImplementation(() => {
+      throw new Error("profile-1 has since been merged");
+    });
+
+    const respond = await runUsersHandler(
+      "users.setDisplayName",
+      { profileId: "profile-1", displayName: "Ada" },
+      adminClient,
+      { refreshPresenceForProfile, logGateway },
+    );
+
+    expect(respond).toHaveBeenCalledWith(true, { profile });
+    expect(logGateway.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports a successful avatar save when the presence refresh throws", async () => {
+    setAvatar.mockReturnValue({ ok: true, value: profile });
+    const logGateway = { warn: vi.fn() };
+    refreshPresenceForProfile.mockImplementation(() => {
+      throw new Error("profile-1 has since been merged");
+    });
+
+    const respond = await runUsersHandler(
+      "users.setAvatar",
+      { profileId: "profile-1", mime: "image/png", avatarBase64: "AQ==" },
+      adminClient,
+      { refreshPresenceForProfile, logGateway },
+    );
+
+    expect(respond).toHaveBeenCalledWith(true, { profile });
+    expect(logGateway.warn).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects blank email aliases as invalid requests", async () => {
     expect(
       await runUsersHandler("users.linkEmail", {
