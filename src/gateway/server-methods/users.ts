@@ -155,7 +155,7 @@ export const usersHandlers: GatewayRequestHandlers = {
       respond(false, undefined, profileError(error));
     }
   },
-  "users.setDisplayName": ({ client, params, respond }) => {
+  "users.setDisplayName": ({ client, params, context, respond }) => {
     if (!validateUsersSetDisplayNameParams(params)) {
       respond(
         false,
@@ -168,12 +168,14 @@ export const usersHandlers: GatewayRequestHandlers = {
       if (!requireProfileMutationAccess(client, params.profileId, respond)) {
         return;
       }
-      respond(true, { profile: setDisplayName(params.profileId, params.displayName) });
+      const profile = setDisplayName(params.profileId, params.displayName);
+      context.refreshPresenceForProfile?.(profile.id);
+      respond(true, { profile });
     } catch (error) {
       respond(false, undefined, profileError(error));
     }
   },
-  "users.setAvatar": ({ client, params, respond }) => {
+  "users.setAvatar": ({ client, params, context, respond }) => {
     if (!validateUsersSetAvatarParams(params)) {
       respond(
         false,
@@ -200,6 +202,7 @@ export const usersHandlers: GatewayRequestHandlers = {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, result.error.code));
         return;
       }
+      context.refreshPresenceForProfile?.(result.value.id);
       respond(true, { profile: result.value });
     } catch (error) {
       respond(false, undefined, profileError(error));

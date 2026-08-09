@@ -7,17 +7,22 @@ import {
   type GatewayClientId,
 } from "../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { upsertPresence } from "../infra/system-presence.js";
+import { getUserProfileDisplay } from "../state/user-profiles.js";
 import type { GatewayServerLiveState } from "./server-live-state.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import { disconnectAllSharedGatewayAuthClients } from "./server-shared-auth-generation.js";
+import { broadcastPresenceSnapshot } from "./server/presence-events.js";
 import type { SessionCompanionService } from "./session-companion.js";
 import type { SessionObserverService } from "./session-observer-contract.js";
+import { formatUserProfileAvatarPath } from "./user-profiles-http-path.js";
 
 type GatewayRequestContextClient = GatewayClient & {
   socket: { close: (code: number, reason: string) => void };
   usesSharedGatewayAuth?: boolean;
   invalidated?: boolean;
   invalidatedReason?: string;
+  presenceKey?: string;
 };
 
 type GatewayRequestContextParams = {
@@ -303,6 +308,49 @@ export function createGatewayRequestContext(
     },
     disconnectClientsUsingSharedGatewayAuth: () => {
       disconnectAllSharedGatewayAuthClients(params.clients);
+    },
+    refreshPresenceForProfile: (profileId: string) => {
+      let display: ReturnType<typeof getUserProfileDisplay> | undefined;
+      let refreshedPresence = false;
+      for (const gatewayClient of params.clients) {
+        if (
+          gatewayClient.invalidated ||
+          gatewayClient.authenticatedUserProfile?.profileId !== profileId
+        ) {
+          continue;
+        }
+        // Own-profile mutations must reach every live connection for that profile
+        // (multi-tab/device), not only the connection that issued the RPC.
+        display ??= getUserProfileDisplay(profileId);
+        gatewayClient.authenticatedUserProfile = {
+          profileId: display.id,
+          displayName: display.displayName,
+          hasAvatar: display.hasAvatar,
+          updatedAt: Date.now(),
+        };
+        if (!gatewayClient.presenceKey) {
+          continue;
+        }
+        upsertPresence(gatewayClient.presenceKey, {
+          user: {
+            id: display.id,
+            ...(gatewayClient.authenticatedUserId &&
+            !gatewayClient.authenticatedUserIsTailscaleProvider
+              ? { email: gatewayClient.authenticatedUserId }
+              : {}),
+            ...(display.displayName ? { name: display.displayName } : {}),
+            avatarUrl: formatUserProfileAvatarPath(display.id, display.avatarRevision),
+          },
+        });
+        refreshedPresence = true;
+      }
+      if (refreshedPresence) {
+        broadcastPresenceSnapshot({
+          broadcast: params.broadcast,
+          incrementPresenceVersion: params.incrementPresenceVersion,
+          getHealthVersion: params.getHealthVersion,
+        });
+      }
     },
     enforceSharedGatewayAuthGenerationForConfigWrite:
       params.enforceSharedGatewayAuthGenerationForConfigWrite,

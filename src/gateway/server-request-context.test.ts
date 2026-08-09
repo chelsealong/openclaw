@@ -11,6 +11,20 @@ import { createChatRunState } from "./server-chat-state.js";
 import type { GatewayServerLiveState } from "./server-live-state.js";
 import { createGatewayRequestContext } from "./server-request-context.js";
 
+const { getUserProfileDisplayMock, upsertPresenceMock } = vi.hoisted(() => ({
+  getUserProfileDisplayMock: vi.fn(),
+  upsertPresenceMock: vi.fn(),
+}));
+
+vi.mock("../state/user-profiles.js", () => ({
+  getUserProfileDisplay: getUserProfileDisplayMock,
+}));
+
+vi.mock("../infra/system-presence.js", () => ({
+  upsertPresence: upsertPresenceMock,
+  listSystemPresence: vi.fn(() => []),
+}));
+
 type GatewayRequestContextParams = Parameters<typeof createGatewayRequestContext>[0];
 
 function makeContextParams(
@@ -388,5 +402,42 @@ describe("createGatewayRequestContext", () => {
 
     expect((primary as { invalidated?: boolean }).invalidated).toBe(true);
     expect((secondary as { invalidated?: boolean }).invalidated).toBeUndefined();
+  });
+
+  it("refreshPresenceForProfile reprojects a saved profile into the live connection that owns it", () => {
+    getUserProfileDisplayMock.mockReturnValue({
+      id: "profile-1",
+      displayName: "Ada Lovelace",
+      avatarRevision: "rev-2",
+      hasAvatar: true,
+    });
+    const matching = {
+      connId: "conn-1",
+      presenceKey: "conn-1",
+      connect: {},
+      socket: { close: vi.fn() },
+      authenticatedUserId: "ada@example.com",
+      authenticatedUserProfile: { profileId: "profile-1", displayName: "Ada", hasAvatar: false },
+    };
+    const broadcast = vi.fn();
+
+    const context = createGatewayRequestContext(
+      makeContextParams({ clients: new Set([matching]) as never, broadcast }),
+    );
+    context.refreshPresenceForProfile?.("profile-1");
+
+    expect(matching.authenticatedUserProfile).toMatchObject({
+      displayName: "Ada Lovelace",
+      hasAvatar: true,
+    });
+    expect(upsertPresenceMock).toHaveBeenCalledWith("conn-1", {
+      user: {
+        id: "profile-1",
+        email: "ada@example.com",
+        name: "Ada Lovelace",
+        avatarUrl: "/api/users/profile-1/avatar?v=rev-2",
+      },
+    });
+    expect(broadcast).toHaveBeenCalledTimes(1);
   });
 });

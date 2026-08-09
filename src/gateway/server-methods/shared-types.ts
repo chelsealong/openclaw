@@ -258,6 +258,8 @@ export type GatewayRequestContext = {
     record?: ExecApprovalRecord<TPayload>;
   }) => ReadonlySet<string>;
   disconnectClientsForDevice?: (deviceId: string, opts?: { role?: string }) => void;
+  /** Re-projects a mutated durable profile into every live connection's cached identity and presence row. */
+  refreshPresenceForProfile?: (profileId: string) => void;
   invalidateClientsForDevice?: (
     deviceId: string,
     opts?: { role?: string; reason?: string },

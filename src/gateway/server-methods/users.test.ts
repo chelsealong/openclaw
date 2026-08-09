@@ -27,16 +27,19 @@ vi.mock("../../state/user-profiles.js", () => ({
   UserProfileNotFoundError: class UserProfileNotFoundError extends Error {},
 }));
 
+const refreshPresenceForProfile = vi.fn();
+
 async function runUsersHandler(
   method: keyof typeof usersHandlers,
   params: object,
   client?: object,
+  context: object = { refreshPresenceForProfile },
 ) {
   const respond = vi.fn();
   await expectDefined(
     usersHandlers[method],
     `${method} test invariant`,
-  )({ client, params, respond } as never);
+  )({ client, params, context, respond } as never);
   return respond;
 }
 
@@ -65,6 +68,7 @@ describe("users gateway methods", () => {
     listProfiles.mockReset();
     setAvatar.mockReset();
     setDisplayName.mockReset();
+    refreshPresenceForProfile.mockReset();
   });
 
   it("lists profiles through the read method", async () => {
@@ -170,7 +174,7 @@ describe("users gateway methods", () => {
     expect(linkEmail).toHaveBeenCalledWith("ada@example.com", "profile-1");
   });
 
-  it("returns protocol-complete display name mutations", async () => {
+  it("returns protocol-complete display name mutations and refreshes live presence", async () => {
     setDisplayName.mockReturnValue(profile);
 
     const respond = await runUsersHandler(
@@ -183,9 +187,10 @@ describe("users gateway methods", () => {
     );
 
     expect(validateUsersSetDisplayNameResult(respond.mock.calls[0]?.[1])).toBe(true);
+    expect(refreshPresenceForProfile).toHaveBeenCalledWith(profile.id);
   });
 
-  it("returns protocol-complete avatar mutations", async () => {
+  it("returns protocol-complete avatar mutations and refreshes live presence", async () => {
     setAvatar.mockReturnValue({
       ok: true,
       value: { ...profile, avatarMime: "image/png", hasAvatar: true },
@@ -202,6 +207,7 @@ describe("users gateway methods", () => {
     );
 
     expect(validateUsersSetAvatarResult(respond.mock.calls[0]?.[1])).toBe(true);
+    expect(refreshPresenceForProfile).toHaveBeenCalledWith(profile.id);
   });
 
   it("rejects blank email aliases as invalid requests", async () => {
