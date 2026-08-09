@@ -53,13 +53,14 @@ import {
   resolveProviderEndpoint,
 } from "./host-policy.js";
 import { resolveMaxTokensParam } from "./model-max-tokens-params.js";
-import { emitModelTransportDebug } from "./model-transport-debug.js";
+import { emitModelTransportDebug, resolveModelPayloadDebugMode } from "./model-transport-debug.js";
 import { hasOpenAICompatibleConversationTurn } from "./openai-compatible-conversation-turn.js";
 import { detectOpenAICompletionsCompat } from "./openai-completions-compat.js";
 import {
   flattenCompletionMessagesToStringContent,
   stripCompletionMessagesToRoleContent,
 } from "./openai-completions-string-content.js";
+import { safeDebugValue, stringifyRedactedPayload } from "./openai-responses-debug.js";
 import {
   assertCodeModeResponsesToolSurface,
   buildOpenAIClientHeaders,
@@ -103,6 +104,44 @@ function hasToolHistory(messages: Context["messages"]): boolean {
         Array.isArray(message.content) &&
         message.content.some((block) => block.type === "toolCall")),
   );
+}
+
+function summarizeOpenAICompletionsToolNames(tools: unknown): string {
+  if (!Array.isArray(tools)) {
+    return "count=0";
+  }
+  const names = tools
+    .map((tool) => (isRecord(tool) && isRecord(tool.function) ? tool.function.name : undefined))
+    .filter((name): name is string => typeof name === "string");
+  const mode = resolveModelPayloadDebugMode();
+  const maxNames = mode === "tools" || mode === "full-redacted" ? names.length : 12;
+  const label = maxNames >= names.length ? "names" : "sample";
+  const shown = names.slice(0, maxNames).join(",");
+  return `count=${tools.length}${shown ? ` ${label}=${shown}` : ""}`;
+}
+
+/** Mirrors `summarizeResponsesPayload` so completions requests get the same
+ *  `OPENCLAW_DEBUG_MODEL_PAYLOAD` diagnostics as the Responses API transport. */
+function summarizeOpenAICompletionsPayload(params: unknown): string {
+  if (!isRecord(params)) {
+    return "payload=non-object";
+  }
+  const messages = params.messages;
+  const parts = [
+    `fields=${Object.keys(params).toSorted().join(",")}`,
+    `model=${safeDebugValue(params.model)}`,
+    `stream=${safeDebugValue(params.stream)}`,
+    `messageCount=${Array.isArray(messages) ? messages.length : typeof messages}`,
+    `tools=${summarizeOpenAICompletionsToolNames(params.tools)}`,
+    `reasoningEffort=${safeDebugValue(params.reasoning_effort)}`,
+    `store=${safeDebugValue(params.store)}`,
+    `maxTokens=${safeDebugValue(params.max_completion_tokens ?? params.max_tokens)}`,
+    `promptCacheKey=${params.prompt_cache_key === undefined ? "absent" : "present"}`,
+  ];
+  if (resolveModelPayloadDebugMode() === "full-redacted") {
+    parts.push(`payload=${stringifyRedactedPayload(params)}`);
+  }
+  return parts.join(" ");
 }
 
 function assertOpenAICompletionsPayloadHasConversationTurn(
@@ -342,6 +381,11 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
           options as OpenAICompletionsOptions | undefined,
         );
         firstEventAbort = createFirstStreamEventAbortController(options?.signal);
+        emitModelTransportDebug(
+          log,
+          `[completions] start provider=${model.provider} api=${model.api} model=${model.id} ` +
+            summarizeOpenAICompletionsPayload(params),
+        );
         const responseStream = (await client.chat.completions.create(
           params as never,
           buildOpenAISdkRequestOptions(model, firstEventAbort.signal, {
@@ -2101,6 +2145,7 @@ const completionsTesting = {
   parseTransportChunkUsage: parseOpenAICompletionsUsage,
   processOpenAICompletionsStream,
   shouldEmitOpenAICompletionsReasoningForModel,
+  summarizeOpenAICompletionsPayload,
 };
 
 declare global {

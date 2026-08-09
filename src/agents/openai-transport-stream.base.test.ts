@@ -958,6 +958,51 @@ describe("openai transport stream", () => {
     }
   });
 
+  it("summarizes chat completions payload tool names when requested", () => {
+    const previous = process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD;
+    process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD = "tools";
+    try {
+      expect(
+        testing.summarizeOpenAICompletionsPayload({
+          model: "zai-glm-4.7",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+          tools: [{ type: "function", function: { name: "exec" } }],
+        }),
+      ).toContain("tools=count=1 names=exec");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD;
+      } else {
+        process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD = previous;
+      }
+    }
+  });
+
+  it("redacts full chat completions payload debug summaries", () => {
+    const previous = process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD;
+    process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD = "full-redacted";
+    try {
+      const apiKey = "test-api-key";
+      const summary = testing.summarizeOpenAICompletionsPayload({
+        model: "zai-glm-4.7",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ type: "function", function: { name: "exec" } }],
+        apiKey,
+      });
+      expect(summary).toContain("payload=");
+      expect(summary).toContain('"apiKey":"***"');
+      expect(summary).not.toContain(apiKey);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD;
+      } else {
+        process.env.OPENCLAW_DEBUG_MODEL_PAYLOAD = previous;
+      }
+    }
+  });
+
   it("enforces the code mode responses tool surface before requests leave OpenClaw", () => {
     const visibleToolNames = new Set(["exec", "wait", "computer"]);
     const payload = {
