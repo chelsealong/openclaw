@@ -16,6 +16,7 @@ import { getLoadedChannelPlugin, normalizeChannelId } from "../../channels/plugi
 import { normalizeChatChannelId } from "../../channels/registry.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
 import { normalizeAccountId } from "../../routing/account-id.js";
@@ -196,12 +197,12 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       })
     : undefined;
 
+  const effectiveAgentId = resolvedAgentId ?? resolveSessionAgentId({ config: cfg });
   // Debug: `pnpm test src/auto-reply/reply/route-reply.test.ts`
-  const responsePrefix = resolveEffectiveMessagesConfig(
-    cfg,
-    resolvedAgentId ?? resolveSessionAgentId({ config: cfg }),
-    { channel: normalizedChannel, accountId },
-  ).responsePrefix;
+  const responsePrefix = resolveEffectiveMessagesConfig(cfg, effectiveAgentId, {
+    channel: normalizedChannel,
+    accountId,
+  }).responsePrefix;
   const normalized = normalizeReplyPayload(payload, {
     responsePrefix,
     responsePrefixContext: params.responsePrefixContext,
@@ -329,6 +330,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       channel: channelId,
       to,
       accountId: accountId ?? undefined,
+      identity: resolveAgentOutboundIdentity(cfg, effectiveAgentId),
       payloads: [deliveryPayload],
       replyPayloadSendingHook: {
         kind: params.replyKind,

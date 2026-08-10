@@ -746,6 +746,38 @@ describe("routeReply", () => {
     expect(lastDeliveryPayload().text).toBe("hi");
   });
 
+  it("forwards the configured agent identity to outbound delivery", async () => {
+    const cfg = {
+      agents: {
+        list: [
+          {
+            id: "rich",
+            identity: { name: "Richbot", emoji: ":lion:" },
+          },
+        ],
+      },
+    } as unknown as OpenClawConfig;
+    await routeTestReply({
+      payload: { text: "hi" },
+      channel: "slack",
+      to: "channel:C123",
+      sessionKey: "agent:rich:main",
+      cfg,
+    });
+    expectLastDeliveryFields({
+      identity: { name: "Richbot", emoji: ":lion:" },
+    });
+  });
+
+  it("omits identity from outbound delivery when the agent has none configured", async () => {
+    await routeTestReply({
+      payload: { text: "hi" },
+      channel: "slack",
+      to: "channel:C123",
+    });
+    expectLastDeliveryFields({ identity: undefined });
+  });
+
   it("uses threadId for Slack when replyToId is missing", async () => {
     await routeTestReply({
       payload: { text: "hi" },
