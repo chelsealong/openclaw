@@ -834,6 +834,21 @@ function redactLegacySupervisionPatterns(value: string): string {
   );
 }
 
+// The shared classifier recognizes more sensitive key names (cookie, session,
+// jwt, credential, privateKey, ...) than the local regex above. For those
+// keys it masks the *whole* value with maskToken instead of pattern-matching
+// substrings, which would also consume and mangle a legacy Bearer placeholder
+// before it can be restored below. Probe with an inert canary value: if the
+// shared classifier changes it, this key is core-sensitive and the value must
+// skip the placeholder dance entirely and go straight to full redaction.
+const FIELD_SENSITIVITY_PROBE_VALUE = "codexSupervisionFieldSensitivityProbe";
+
+function isSensitiveToSharedClassifier(key: string): boolean {
+  return (
+    redactSensitiveFieldValue(key, FIELD_SENSITIVITY_PROBE_VALUE) !== FIELD_SENSITIVITY_PROBE_VALUE
+  );
+}
+
 /**
  * Redacts secret-bearing fields before legacy tool results leave the plugin.
  * Values under recognized sensitive field names are fully replaced, matching
@@ -844,7 +859,7 @@ function redactLegacySupervisionPatterns(value: string): string {
  */
 function redactCodexSupervisionValue(value: unknown, key = ""): unknown {
   if (typeof value === "string") {
-    if (SUPERVISION_SENSITIVE_FIELD_RE.test(key)) {
+    if (SUPERVISION_SENSITIVE_FIELD_RE.test(key) || isSensitiveToSharedClassifier(key)) {
       return "[redacted]";
     }
     const shared = redactSensitiveFieldValue(key, redactLegacySupervisionPatterns(value));

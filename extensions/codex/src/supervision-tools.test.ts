@@ -1028,13 +1028,15 @@ describe("Codex supervision compatibility tools", () => {
     expect(serialized).not.toContain("Bearer [redacted]");
   });
 
-  it("fully redacts values under recognized sensitive field names instead of partially masking them", async () => {
+  it("fully redacts values under recognized sensitive field names instead of partially masking them, including a legacy bearer token under a core-only sensitive key the local regex misses", async () => {
     const apiKey = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+    const bearerToken = "abcdefghijklmnopqrstuvwxyz0123456789";
     const { request } = createRequest({
       id: "thread-1",
       status: { type: "idle" },
       token: apiKey,
       apiKey,
+      cookie: `session=abc; Authorization: Bearer ${bearerToken}`,
     });
     const tools = createTools(request);
 
@@ -1047,6 +1049,8 @@ describe("Codex supervision compatibility tools", () => {
     expect(serialized).not.toContain(apiKey);
     expect(serialized).not.toContain(apiKey.slice(0, 6));
     expect(serialized).not.toContain(apiKey.slice(-4));
+    expect(serialized).not.toContain(bearerToken);
+    expect(serialized).toContain('"cookie":"[redacted]"');
     expect(serialized).toContain("[redacted]");
   });
 
