@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import SQLite3
 import Testing
@@ -73,6 +74,30 @@ private func deviceAuthEntry(
 
 @Suite(.serialized)
 struct DeviceIdentityStoreTests {
+    @Test func `process state root configures once before identity use`() {
+        var state = DeviceIdentityStateRootState()
+        let work = URL(fileURLWithPath: "/Users/test/.openclaw-work", isDirectory: true)
+        let other = URL(fileURLWithPath: "/Users/test/.openclaw-other", isDirectory: true)
+        let configuredWork = state.configure(work)
+        let reconfiguredWork = state.configure(work)
+        let configuredOther = state.configure(other)
+        let resolvedWork = state.resolve()
+        let configuredWorkAfterUse = state.configure(work)
+        let configuredOtherAfterUse = state.configure(other)
+        #expect(configuredWork)
+        #expect(reconfiguredWork)
+        #expect(!configuredOther)
+        #expect(resolvedWork == work)
+        #expect(configuredWorkAfterUse)
+        #expect(!configuredOtherAfterUse)
+
+        var usedDefault = DeviceIdentityStateRootState()
+        let resolvedDefault = usedDefault.resolve()
+        let configuredDefaultAfterUse = usedDefault.configure(work)
+        #expect(resolvedDefault == nil)
+        #expect(!configuredDefaultAfterUse)
+    }
+
     @Test
     func `task scoped state directories isolate concurrent identity stores`() async throws {
         let fixture = DeviceIdentityMigrationFixture()
@@ -442,6 +467,22 @@ struct DeviceIdentityStoreTests {
             FileManager.default.attributesOfItem(atPath: fixture.databaseURL.path)[.posixPermissions] as? NSNumber)
         #expect(directoryMode.intValue & 0o777 == 0o700)
         #expect(databaseMode.intValue & 0o777 == 0o600)
+
+        let coordinatorURLs = DeviceIdentitySQLiteStore.resolveDeviceIdentityCoordinatorURLs(
+            databaseURL: fixture.databaseURL,
+            destinationStateDirURL: fixture.destination,
+            temporaryDirectory: FileManager.default.temporaryDirectory,
+            uid: getuid())
+        #expect(coordinatorURLs.count == 2)
+        for coordinatorURL in coordinatorURLs {
+            let coordinatorDirectoryMode = try #require(
+                FileManager.default.attributesOfItem(
+                    atPath: coordinatorURL.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber)
+            let coordinatorFileMode = try #require(
+                FileManager.default.attributesOfItem(atPath: coordinatorURL.path)[.posixPermissions] as? NSNumber)
+            #expect(coordinatorDirectoryMode.intValue & 0o777 == 0o700)
+            #expect(coordinatorFileMode.intValue & 0o777 == 0o600)
+        }
     }
 
     @Test

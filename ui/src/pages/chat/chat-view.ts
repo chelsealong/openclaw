@@ -196,6 +196,7 @@ export type ChatProps = {
   readSignal?: AbortSignal;
   onPendingReadsChange?: (delta: 1 | -1) => void;
   onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
+  onRemoveAttachment?: (attachment: ChatAttachment) => void;
   onAssistantAttachmentLoaded?: () => void;
   onRequestOpenImage?: () => number;
   onOpenImage?: (item: ImageLightboxItem, requestVersion?: number) => void;
@@ -253,9 +254,11 @@ export type ChatProps = {
   backgroundTasks?: BackgroundTasksProps;
   taskSuggestions?: TaskSuggestion[];
   taskSuggestionBusyIds?: ReadonlySet<string>;
+  taskSuggestionCloudProfiles?: Array<{ id: string }>;
   canAcceptTaskSuggestions?: boolean;
+  canAcceptTaskSuggestionModes?: boolean;
   canDismissTaskSuggestions?: boolean;
-  onAcceptTaskSuggestion?: (suggestion: TaskSuggestion) => void;
+  onAcceptTaskSuggestion?: Parameters<typeof renderChatTaskSuggestions>[0]["onAccept"];
   onDismissTaskSuggestion?: (suggestion: TaskSuggestion) => void;
   sessionSuggestions?: readonly SessionSuggestion[];
   sessionSuggestionRole?: SessionSharingRole;
@@ -412,7 +415,6 @@ export function renderChat(props: ChatProps) {
             showThinking: props.showThinking,
             showToolCalls: props.showToolCalls,
             persistCommentary: props.persistCommentary,
-            readOnly: true,
             sessions: props.sessions,
             sessionHost: props.sessionHost,
             gatewayUrl: props.gatewayUrl,
@@ -516,6 +518,7 @@ export function renderChat(props: ChatProps) {
     onNewSession: props.onNewSession,
     onClearReply: props.onClearReply,
     onAttachmentsChange: props.onAttachmentsChange,
+    onRemoveAttachment: props.onRemoveAttachment,
   });
   const scrollToBottomButton =
     props.showNewMessages && props.onScrollToBottom
@@ -627,7 +630,7 @@ export function renderChat(props: ChatProps) {
                 : ""}"
             >
               <div class="chat-main__conversation">
-                ${thread}
+                ${thread} ${scrollToBottomButton}
                 ${props.inlineApproval && props.onApprovalDecision
                   ? html`<div class="chat-inline-approval">
                       ${renderExecApprovalCard({
@@ -643,9 +646,12 @@ export function renderChat(props: ChatProps) {
                 ${renderChatTaskSuggestions({
                   suggestions: props.taskSuggestions ?? [],
                   busyIds: props.taskSuggestionBusyIds ?? new Set(),
+                  cloudProfiles: props.taskSuggestionCloudProfiles ?? [],
                   canAccept: props.canAcceptTaskSuggestions === true,
+                  canAcceptModes: props.canAcceptTaskSuggestionModes === true,
                   canDismiss: props.canDismissTaskSuggestions === true,
-                  onAccept: (suggestion) => props.onAcceptTaskSuggestion?.(suggestion),
+                  onAccept: (suggestion, mode, cloudProfileId) =>
+                    props.onAcceptTaskSuggestion?.(suggestion, mode, cloudProfileId),
                   onDismiss: (suggestion) => props.onDismissTaskSuggestion?.(suggestion),
                 })}
                 ${renderChatPullRequests({
@@ -665,7 +671,6 @@ export function renderChat(props: ChatProps) {
                   onResolve: (suggestion, resolution) =>
                     props.onResolveSessionSuggestion?.(suggestion, resolution),
                 })}
-                ${scrollToBottomButton}
                 ${renderChatSwarmProgress({
                   sessions: props.swarmSessions ?? [],
                   sessionKey: props.sessionKey,

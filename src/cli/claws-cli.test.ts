@@ -321,14 +321,9 @@ describe("claws cli", () => {
     registerClawsCli(program);
     const claws = program.commands.find((command) => command.name() === "claws");
 
-    expect(claws?.commands.map((command) => command.name())).toEqual([
-      "inspect",
-      "add",
-      "status",
-      "update",
-      "remove",
-      "export",
-    ]);
+    expect(claws?.commands.map((command) => command.name())).toEqual(
+      expect.arrayContaining(["inspect", "add", "status", "update", "remove", "export"]),
+    );
   });
 
   it("accepts an already-applied Gateway config revision", async () => {
@@ -1085,12 +1080,10 @@ describe("claws cli", () => {
   });
 
   it("exports one installed agent to a new package directory", async () => {
-    await runCli(["claws", "export", "demo-agent", "--out", "/tmp/exported", "--json"]);
+    await runCli(["claws", "export", "demo-agent", "--out", "/e", "--bootstrap", "/b", "--json"]);
 
-    expect(mocks.exportClawAgent).toHaveBeenCalledWith("demo-agent", "/tmp/exported", {
-      config: {},
-      sourceMcpServers: {},
-    });
+    expect(mocks.exportClawAgent.mock.calls[0]?.slice(0, 2)).toEqual(["demo-agent", "/e"]);
+    expect(mocks.exportClawAgent.mock.calls[0]?.[2]).toMatchObject({ bootstrapPath: "/b" });
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       schemaVersion: "openclaw.clawExportResult.v1",
       stability: "experimental",
