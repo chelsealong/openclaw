@@ -2167,6 +2167,37 @@ describe("WorkboardStore", () => {
     expect(blocked.metadata?.notifications?.[0]?.message.length).toBeLessThanOrEqual(240);
   });
 
+  it("truncates a pre-existing oversized notification instead of throwing on the next write", async () => {
+    const cards = createMemoryStore();
+    const store = new WorkboardStore(cards);
+    const created = await store.create({ title: "Legacy card", status: "running" });
+    const legacyMessage = "z".repeat(500);
+    const entry = await cards.lookup(created.id);
+    if (entry?.version !== 1) {
+      throw new Error("test setup: card missing after create");
+    }
+    await cards.register(created.id, {
+      version: 1,
+      card: {
+        ...entry.card,
+        metadata: {
+          ...entry.card.metadata,
+          notifications: [
+            { id: "legacy-notification", kind: "completed", createdAt: 1, message: legacyMessage },
+          ],
+        },
+      },
+    });
+
+    const blocked = await store.block(created.id, { reason: "Needs another look." });
+
+    expect(blocked.metadata?.notifications).toHaveLength(2);
+    const [legacy, fresh] = blocked.metadata?.notifications ?? [];
+    expect(legacy?.message.length).toBeLessThanOrEqual(240);
+    expect(legacy?.message.endsWith("…")).toBe(true);
+    expect(fresh?.message).toBe("Needs another look.");
+  });
+
   it("dispatches ready cards and blocks expired or timed-out work", async () => {
     vi.useFakeTimers();
     try {

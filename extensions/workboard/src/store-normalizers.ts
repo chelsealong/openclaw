@@ -46,6 +46,7 @@ import {
   type WorkboardWorkerProtocol,
   type WorkboardWorkspace,
 } from "@openclaw/workboard-contract";
+import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_CARD_ARTIFACTS,
@@ -269,6 +270,20 @@ export function normalizeBoundedString(
     throw new Error(`${fieldName} must be ${maxLength} characters or fewer.`);
   }
   return normalized;
+}
+
+// Persisted records can predate a length cap or come from an older plugin
+// version. Rejecting them on read would crash every card load/dispatch that
+// touches the record; truncate instead so one oversized historical value
+// cannot take down the whole board.
+function truncateStoredString(value: unknown, maxLength: number): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.length <= maxLength
+    ? normalized
+    : `${truncateUtf16Safe(normalized, Math.max(0, maxLength - 1))}…`;
 }
 
 export function normalizeStatus(value: unknown, fallback: WorkboardStatus): WorkboardStatus {
@@ -950,7 +965,7 @@ function normalizeNotification(value: unknown): WorkboardNotification | null {
     : undefined;
   const createdAt = normalizeTimestamp(record.createdAt, Date.now());
   const sequence = normalizeTimestamp(record.sequence, 0) || undefined;
-  const message = normalizeBoundedString(record.message, undefined, 240, "notification message");
+  const message = truncateStoredString(record.message, 240);
   if (!kind || !message) {
     return null;
   }
@@ -1136,7 +1151,8 @@ export function normalizeMetadata(
             detectedAt: normalizeTimestamp(stale.detectedAt, Date.now()),
             lastSessionUpdatedAt: normalizeTimestamp(stale.lastSessionUpdatedAt, 0) || undefined,
             reason:
-              normalizeBoundedString(stale.reason, fallback.stale?.reason, 240, "stale reason") ??
+              truncateStoredString(stale.reason, 240) ??
+              fallback.stale?.reason ??
               "Session has not reported recent activity.",
           }
         : undefined
