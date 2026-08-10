@@ -99,9 +99,9 @@ extension OnboardingView {
         isLocal && executableReady && !installing
     }
 
-    // GatewayProcessManager retains the concrete registration/readiness failure in
-    // lastFailureReason, but LocalGatewayActivation.failed discards it. Surface it here so
-    // onboarding does not fall back to a generic retry message with no diagnosable cause.
+    /// GatewayProcessManager retains the concrete registration/readiness failure in
+    /// lastFailureReason, but LocalGatewayActivation.failed discards it. Surface it here so
+    /// onboarding does not fall back to a generic retry message with no diagnosable cause.
     static func gatewayStartFailureMessage(prefix: String, reason: String?) -> String {
         guard let reason, !reason.isEmpty else { return prefix }
         return "\(prefix) (\(reason))"

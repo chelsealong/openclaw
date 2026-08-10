@@ -710,6 +710,7 @@ extension GatewayProcessManager {
             await MainActor.run {
                 self.status = .failed(resolution.status.message)
             }
+            self.lastFailureReason = resolution.status.message
             self.logger.error("gateway command resolve failed: \(resolution.status.message)")
             return nil
         }
