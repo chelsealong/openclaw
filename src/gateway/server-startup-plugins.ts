@@ -1,8 +1,10 @@
 // Gateway plugin startup bootstrap and adjacent startup maintenance.
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { initSubagentRegistry } from "../agents/subagent-registry.js";
 import type { AmbientEnvTriggerPolicy } from "../channels/config-presence.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { GATEWAY_SERVICE_KIND, GATEWAY_SERVICE_MARKER } from "../daemon/constants.js";
 import {
   collectRegisteredEmbeddingProviderIds,
   collectUnregisteredConfiguredMemoryEmbeddingProviders,
@@ -43,6 +45,49 @@ export function resolveGatewayStartupMaintenanceConfig(params: {
     : params.cfgAtStart;
 }
 
+const LINUX_CONTROL_GROUP_KILL_MODE_PROBE_TIMEOUT_MS = 5000;
+
+/** True only for the gateway's own generated Linux systemd service process. */
+function isLinuxGatewayServiceProcess(): boolean {
+  return (
+    process.platform === "linux" &&
+    process.env.OPENCLAW_SERVICE_MARKER?.trim() === GATEWAY_SERVICE_MARKER &&
+    process.env.OPENCLAW_SERVICE_KIND?.trim() === GATEWAY_SERVICE_KIND
+  );
+}
+
+/**
+ * Confirms the running gateway service's live systemd KillMode once per boot,
+ * before any tool run can start, so the process/supervisor child adapter can
+ * gate detaching tool children on ground truth instead of the generated
+ * unit's intent. A hand-edited unit file or a later KillMode drop-in
+ * (process/none) makes this probe report false even though the unit and
+ * OPENCLAW_SERVICE_MARKER/KIND env vars still look like control-group
+ * (#120398 review). Any probe failure or ambiguous read also reports false,
+ * which keeps children attached — the same safe default as before this
+ * probe existed.
+ */
+async function confirmLinuxControlGroupKillModeAtStartup(
+  log: Pick<GatewayPluginBootstrapLog, "warn">,
+): Promise<void> {
+  const { setConfirmedLinuxControlGroupKillMode } =
+    await import("../process/supervisor/adapters/child.js");
+  try {
+    const { readSystemdServiceRuntime } = await import("../daemon/systemd.js");
+    const runtime = await readSystemdServiceRuntime(process.env, {
+      timeoutMs: LINUX_CONTROL_GROUP_KILL_MODE_PROBE_TIMEOUT_MS,
+    });
+    setConfirmedLinuxControlGroupKillMode(
+      normalizeLowercaseStringOrEmpty(runtime.systemd?.killMode) === "control-group",
+    );
+  } catch (error) {
+    log.warn(
+      `Could not confirm the gateway service's live systemd KillMode; keeping tool children attached: ${String(error)}`,
+    );
+    setConfirmedLinuxControlGroupKillMode(false);
+  }
+}
+
 /** Runs channel, session, and pairing maintenance before plugin bootstrap. */
 export async function runGatewayStartupMaintenance(params: {
   cfgAtStart: OpenClawConfig;
@@ -55,18 +100,23 @@ export async function runGatewayStartupMaintenance(params: {
     startupRuntimeConfig: params.startupRuntimeConfig,
   });
 
+  const startupTasks: Promise<void>[] = [];
+  if (isLinuxGatewayServiceProcess()) {
+    startupTasks.push(confirmLinuxControlGroupKillModeAtStartup(params.log));
+  }
+
   const shouldRunStartupMaintenance =
     !params.minimalTestGateway || startupMaintenanceConfig.channels !== undefined;
   if (shouldRunStartupMaintenance) {
     const { runChannelPluginStartupMaintenance } =
       await import("../channels/plugins/lifecycle-startup.js");
-    const startupTasks = [
+    startupTasks.push(
       runChannelPluginStartupMaintenance({
         cfg: startupMaintenanceConfig,
         env: process.env,
         log: params.log,
       }),
-    ];
+    );
     if (!params.minimalTestGateway) {
       const { runStartupSessionMigration } = await import("./server-startup-session-migration.js");
       startupTasks.push(
@@ -99,8 +149,8 @@ export async function runGatewayStartupMaintenance(params: {
         ),
       );
     }
-    await Promise.all(startupTasks);
   }
+  await Promise.all(startupTasks);
 }
 
 /** Builds plugin startup state and gateway method lists before the server binds. */

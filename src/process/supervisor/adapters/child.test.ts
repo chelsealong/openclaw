@@ -40,6 +40,7 @@ vi.mock("../../../infra/windows-encoding.js", () => ({
 }));
 
 let createChildAdapter: typeof import("./child.js").createChildAdapter;
+let setConfirmedLinuxControlGroupKillMode: typeof import("./child.js").setConfirmedLinuxControlGroupKillMode;
 let getWindowsInstallRoots: typeof import("../../../infra/windows-install-roots.js").getWindowsInstallRoots;
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -148,7 +149,7 @@ describe("createChildAdapter", () => {
       return accessSync(filePath, mode);
     });
     ({ getWindowsInstallRoots } = await import("../../../infra/windows-install-roots.js"));
-    ({ createChildAdapter } = await import("./child.js"));
+    ({ createChildAdapter, setConfirmedLinuxControlGroupKillMode } = await import("./child.js"));
     spawnWithFallbackMock.mockClear();
     signalProcessTreeMock.mockClear();
     createWindowsOutputDecoderMock.mockClear();
@@ -364,6 +365,7 @@ describe("createChildAdapter", () => {
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
     process.env.INVOCATION_ID = "test-invocation";
+    setConfirmedLinuxControlGroupKillMode(true);
     try {
       const { adapter, killMock } = await createAdapterHarness({ pid: 9998 });
       adapter.kill();
@@ -372,6 +374,51 @@ describe("createChildAdapter", () => {
         9998,
         "SIGKILL",
         expect.objectContaining({ detached: true }),
+      );
+      expect(killMock).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      delete process.env.OPENCLAW_SERVICE_MARKER;
+      delete process.env.OPENCLAW_SERVICE_KIND;
+      delete process.env.INVOCATION_ID;
+    }
+  });
+
+  it("passes detached:false on Linux for the confirmed gateway marker when the startup probe has not confirmed control-group yet (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    process.env.INVOCATION_ID = "test-invocation";
+    try {
+      const { adapter, killMock } = await createAdapterHarness({ pid: 9995 });
+      adapter.kill();
+      await Promise.resolve();
+      expect(signalProcessTreeMock).toHaveBeenCalledWith(
+        9995,
+        "SIGKILL",
+        expect.objectContaining({ detached: false }),
+      );
+      expect(killMock).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      delete process.env.OPENCLAW_SERVICE_MARKER;
+      delete process.env.OPENCLAW_SERVICE_KIND;
+      delete process.env.INVOCATION_ID;
+    }
+  });
+
+  it("passes detached:false on Linux when the startup probe found KillMode overridden away from control-group (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    process.env.INVOCATION_ID = "test-invocation";
+    setConfirmedLinuxControlGroupKillMode(false);
+    try {
+      const { adapter, killMock } = await createAdapterHarness({ pid: 9994 });
+      adapter.kill();
+      await Promise.resolve();
+      expect(signalProcessTreeMock).toHaveBeenCalledWith(
+        9994,
+        "SIGKILL",
+        expect.objectContaining({ detached: false }),
       );
       expect(killMock).toHaveBeenCalledWith("SIGKILL");
     } finally {
@@ -730,12 +777,27 @@ describe("createChildAdapter", () => {
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
     process.env.INVOCATION_ID = "test-invocation";
+    setConfirmedLinuxControlGroupKillMode(true);
 
     await createAdapterHarness({ pid: 7778 });
 
     const spawnArgs = firstSpawnWithFallbackParams();
     expect(spawnArgs.options?.detached).toBe(true);
     expect(spawnArgs.fallbacks?.[0]?.options?.detached).toBe(false);
+  });
+
+  it("disables detached mode on Linux for the confirmed gateway marker when the startup probe found KillMode overridden away from control-group (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    process.env.INVOCATION_ID = "test-invocation";
+    setConfirmedLinuxControlGroupKillMode(false);
+
+    await createAdapterHarness({ pid: 7780 });
+
+    const spawnArgs = firstSpawnWithFallbackParams();
+    expect(spawnArgs.options?.detached).toBe(false);
+    expect(spawnArgs.fallbacks ?? []).toStrictEqual([]);
   });
 
   it("disables detached mode on Linux for a service marker that is not the confirmed gateway systemd lifecycle (#120398 review)", async () => {

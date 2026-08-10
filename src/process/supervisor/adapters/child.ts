@@ -1,5 +1,6 @@
 // Child process adapter wraps spawned child processes for the supervisor.
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
+import { GATEWAY_SERVICE_KIND, GATEWAY_SERVICE_MARKER } from "../../../daemon/constants.js";
 import { toErrorObject } from "../../../infra/errors.js";
 import { createWindowsOutputDecoder } from "../../../infra/windows-encoding.js";
 import {
@@ -87,18 +88,38 @@ function isConfirmedUnderSystemdSupervision(): boolean {
   );
 }
 
+// `null` means the gateway startup probe (server-startup-plugins.ts) has not
+// run or completed yet; treated the same as a confirmed `false` below so an
+// in-flight or skipped probe fails safe to attached, not detached.
+let confirmedLinuxControlGroupKillMode: boolean | null = null;
+
+// Set once per gateway boot after a live `systemctl show` read of the actual
+// running unit's KillMode. The generated unit and OPENCLAW_SERVICE_MARKER/KIND
+// env vars only prove the unit was *generated* with KillMode=control-group; a
+// hand-edited unit file or a later drop-in can override it to `process`/`none`
+// without touching the marker env vars, which would let detached children
+// survive a gateway crash or restart (#120398 review). This is the ground
+// truth that gates detachment instead.
+export function setConfirmedLinuxControlGroupKillMode(confirmed: boolean): void {
+  confirmedLinuxControlGroupKillMode = confirmed;
+}
+
 // Only the gateway's own generated systemd unit (systemd-unit.ts) is proven to ship
 // KillMode=control-group, so the cgroup reaps every descendant on stop/restart
-// regardless of process-group membership. "openclaw"/"gateway" mirror
-// GATEWAY_SERVICE_MARKER/GATEWAY_SERVICE_KIND (daemon/constants.ts); a generic or
-// foreign marker (e.g. the "node" service kind, or a hand-set env var) does not
-// carry that guarantee, so it keeps children attached instead of assuming it.
+// regardless of process-group membership. GATEWAY_SERVICE_MARKER/GATEWAY_SERVICE_KIND
+// mirror the values that daemon/systemd-unit.ts stamps into the generated unit's
+// Environment= lines; a generic or foreign marker (e.g. the "node" service kind, or
+// a hand-set env var) does not carry that guarantee, so it keeps children attached
+// instead of assuming it. The env/hint checks alone only prove the unit was
+// generated correctly, not that it still is, so the live-confirmed flag above is
+// required too.
 function hasConfirmedLinuxControlGroupLifecycle(): boolean {
   const env = process.env;
   return (
-    env.OPENCLAW_SERVICE_MARKER?.trim() === "openclaw" &&
-    env.OPENCLAW_SERVICE_KIND?.trim() === "gateway" &&
-    isConfirmedUnderSystemdSupervision()
+    env.OPENCLAW_SERVICE_MARKER?.trim() === GATEWAY_SERVICE_MARKER &&
+    env.OPENCLAW_SERVICE_KIND?.trim() === GATEWAY_SERVICE_KIND &&
+    isConfirmedUnderSystemdSupervision() &&
+    confirmedLinuxControlGroupKillMode === true
   );
 }
 

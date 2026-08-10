@@ -1,7 +1,7 @@
 /**
  * Gateway startup plugin bootstrap tests.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -114,6 +114,20 @@ const migrateLegacyDevicePairingStore = vi.hoisted(() =>
 const migrateLegacyNodePairingStore = vi.hoisted(() =>
   vi.fn(async (_params: unknown) => undefined),
 );
+const setConfirmedLinuxControlGroupKillMode = vi.hoisted(() => vi.fn());
+const readSystemdServiceRuntime = vi.hoisted(() =>
+  vi.fn(async (_env?: unknown, _opts?: unknown) => ({ systemd: { killMode: "control-group" } })),
+);
+vi.mock("../process/supervisor/adapters/child.js", () => ({
+  setConfirmedLinuxControlGroupKillMode: (confirmed: boolean) =>
+    setConfirmedLinuxControlGroupKillMode(confirmed),
+}));
+
+vi.mock("../daemon/systemd.js", () => ({
+  readSystemdServiceRuntime: (env?: unknown, opts?: unknown) =>
+    readSystemdServiceRuntime(env, opts),
+}));
+
 vi.mock("../agents/agent-scope.js", () => ({
   resolveAgentWorkspaceDir: () => "/workspace",
   resolveDefaultAgentId: () => "default",
@@ -219,11 +233,35 @@ async function prepareBootstrapWithRuntimeConfig(
 }
 
 describe("runGatewayStartupMaintenance", () => {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+
+  const setPlatform = (platform: NodeJS.Platform) => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: platform,
+    });
+  };
+
   beforeEach(() => {
     runChannelPluginStartupMaintenance.mockClear();
     runStartupSessionMigration.mockClear();
     migrateLegacyDevicePairingStore.mockClear();
     migrateLegacyNodePairingStore.mockClear();
+    setConfirmedLinuxControlGroupKillMode.mockClear();
+    readSystemdServiceRuntime.mockClear();
+    readSystemdServiceRuntime.mockImplementation(async () => ({
+      systemd: { killMode: "control-group" },
+    }));
+    delete process.env.OPENCLAW_SERVICE_MARKER;
+    delete process.env.OPENCLAW_SERVICE_KIND;
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCLAW_SERVICE_MARKER;
+    delete process.env.OPENCLAW_SERVICE_KIND;
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, "platform", originalPlatformDescriptor);
+    }
   });
 
   it("runs channel, session, and ordered pairing maintenance for a normal gateway", async () => {
@@ -292,6 +330,77 @@ describe("runGatewayStartupMaintenance", () => {
     expect(runStartupSessionMigration).not.toHaveBeenCalled();
     expect(migrateLegacyDevicePairingStore).not.toHaveBeenCalled();
     expect(migrateLegacyNodePairingStore).not.toHaveBeenCalled();
+  });
+
+  it("does not probe systemd KillMode outside a Linux gateway service process", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "node";
+    const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
+
+    await runGatewayStartupMaintenance({
+      cfgAtStart: {},
+      startupRuntimeConfig: {},
+      minimalTestGateway: true,
+      log: createLog(),
+    });
+
+    expect(readSystemdServiceRuntime).not.toHaveBeenCalled();
+    expect(setConfirmedLinuxControlGroupKillMode).not.toHaveBeenCalled();
+  });
+
+  it("confirms control-group KillMode at startup for a Linux gateway service process (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    readSystemdServiceRuntime.mockResolvedValueOnce({ systemd: { killMode: "control-group" } });
+    const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
+
+    await runGatewayStartupMaintenance({
+      cfgAtStart: {},
+      startupRuntimeConfig: {},
+      minimalTestGateway: true,
+      log: createLog(),
+    });
+
+    expect(readSystemdServiceRuntime).toHaveBeenCalledTimes(1);
+    expect(setConfirmedLinuxControlGroupKillMode).toHaveBeenCalledWith(true);
+  });
+
+  it("reports unconfirmed when the live unit KillMode was overridden away from control-group (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    readSystemdServiceRuntime.mockResolvedValueOnce({ systemd: { killMode: "process" } });
+    const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
+
+    await runGatewayStartupMaintenance({
+      cfgAtStart: {},
+      startupRuntimeConfig: {},
+      minimalTestGateway: true,
+      log: createLog(),
+    });
+
+    expect(setConfirmedLinuxControlGroupKillMode).toHaveBeenCalledWith(false);
+  });
+
+  it("fails safe to unconfirmed and warns when the systemd probe throws (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    readSystemdServiceRuntime.mockRejectedValueOnce(new Error("systemctl unavailable"));
+    const log = createLog();
+    const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
+
+    await runGatewayStartupMaintenance({
+      cfgAtStart: {},
+      startupRuntimeConfig: {},
+      minimalTestGateway: true,
+      log,
+    });
+
+    expect(setConfirmedLinuxControlGroupKillMode).toHaveBeenCalledWith(false);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("systemctl unavailable"));
   });
 });
 
