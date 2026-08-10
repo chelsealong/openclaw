@@ -737,6 +737,25 @@ describe("runCli exit behavior", () => {
     expect(progressDoneMock).toHaveBeenCalledTimes(1);
   });
 
+  it("suppresses startup progress for a root --version invocation before full CLI parsing", async () => {
+    tryRouteCliMock.mockResolvedValueOnce(false);
+    const parseAsync = vi.fn().mockResolvedValueOnce(undefined);
+    buildProgramMock.mockReturnValueOnce({
+      commands: [{ name: () => "config", aliases: () => [] }],
+      parseAsync,
+    });
+
+    await runCli(["node", "openclaw", "--version"]);
+
+    expect(createCliProgressMock).toHaveBeenCalledWith({
+      label: "Loading OpenClaw CLI…",
+      indeterminate: true,
+      delayMs: 0,
+      enabled: false,
+    });
+    expect(progressDoneMock).toHaveBeenCalledTimes(1);
+  });
+
   it("pauses non-tty stdin after full CLI command completion", async () => {
     tryRouteCliMock.mockResolvedValueOnce(false);
     const parseAsync = vi.fn().mockResolvedValueOnce(undefined);

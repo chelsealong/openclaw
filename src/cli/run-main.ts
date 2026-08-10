@@ -23,6 +23,7 @@ import { tryProcessCwd } from "../infra/safe-cwd.js";
 import type { PluginManifestCommandAliasRegistry } from "../plugins/manifest-command-aliases.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
 import {
+  isRootVersionInvocation,
   normalizeGeneratedHelpCommandArgv,
   normalizeRootHelpTargetArgv,
   normalizeRootLogLevelArgv,
@@ -1504,12 +1505,16 @@ async function runCliWithPreparedOutputMode(
 
     let parseArgv = normalizeGeneratedHelpCommandArgv(normalizedArgv);
     const suppressStartupProgress = hasJsonOutputFlag(parseArgv);
+    // configureProgramHelp() exits directly on a root --version invocation, before
+    // stopStartupProgress() runs below; never start the spinner for it so that exit
+    // can't leak a leftover "Canceled" line onto stderr (#121604).
+    const isRootVersionOutputInvocation = isRootVersionInvocation(parseArgv);
     const { createCliProgress } = await loadProgressModule();
     const startupProgress = createCliProgress({
       label: "Loading OpenClaw CLI…",
       indeterminate: true,
       delayMs: 0,
-      ...(suppressStartupProgress ? { enabled: false } : {}),
+      ...(suppressStartupProgress || isRootVersionOutputInvocation ? { enabled: false } : {}),
     });
     let startupProgressStopped = false;
     const stopStartupProgress = () => {
