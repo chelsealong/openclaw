@@ -681,6 +681,10 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
           await flushSignalInboundEntries(entries, admissionLifecycle, settle);
         } catch (err) {
           if (!isSignalReplySessionInitConflictError(err)) {
+            // Any other dispatch failure (e.g. a restart-recovery session-admission
+            // race) must release the claim now so queue retry policy redelivers it,
+            // instead of leaving it held for the full pre-adoption stall watchdog.
+            await admissionLifecycle.onAbandoned();
             throw err;
           }
           if (deps.abortSignal?.aborted) {

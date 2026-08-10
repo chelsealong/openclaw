@@ -326,13 +326,23 @@ describe("signal reply session init conflict retry", () => {
     }
   });
 
-  it("does not retry non-conflict flush failures", async () => {
+  it("does not retry non-conflict flush failures, but releases the ingress claim", async () => {
     dispatchInboundMessageMock.mockRejectedValue(new Error("some other dispatch failure"));
 
     const handler = createSignalEventHandler(createBaseSignalEventHandlerDeps());
+    const onAbandoned = vi.fn().mockResolvedValue(undefined);
+    const turnAdoptionLifecycle = {
+      abortSignal: new AbortController().signal,
+      onAdopted: vi.fn(),
+      onDeferred: vi.fn(),
+      onAdoptionFinalizing: vi.fn(),
+      onAbandoned,
+    };
 
     vi.useFakeTimers();
     try {
+      // Without this release, an admission race (e.g. restart-recovery rotating
+      // session ownership) would strand the claim until the 300s stall watchdog.
       await handler(
         createSignalReceiveEvent({
           dataMessage: {
@@ -340,9 +350,11 @@ describe("signal reply session init conflict retry", () => {
             attachments: [],
           },
         }),
+        turnAdoptionLifecycle,
       );
 
       expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
+      expect(onAbandoned).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(10_000);
       expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
