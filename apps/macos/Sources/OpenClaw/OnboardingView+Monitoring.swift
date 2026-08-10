@@ -99,6 +99,14 @@ extension OnboardingView {
         isLocal && executableReady && !installing
     }
 
+    // GatewayProcessManager retains the concrete registration/readiness failure in
+    // lastFailureReason, but LocalGatewayActivation.failed discards it. Surface it here so
+    // onboarding does not fall back to a generic retry message with no diagnosable cause.
+    static func gatewayStartFailureMessage(prefix: String, reason: String?) -> String {
+        guard let reason, !reason.isEmpty else { return prefix }
+        return "\(prefix) (\(reason))"
+    }
+
     func finishExistingCLIActivation() async {
         defer {
             installingCLI = false
@@ -122,7 +130,9 @@ extension OnboardingView {
             cliStatus = "OpenClaw is paused. Resume it, then retry setup to start the Gateway."
         case .failed:
             cliInstalled = false
-            cliStatus = "OpenClaw is installed, but the Gateway did not start. Retry setup."
+            cliStatus = Self.gatewayStartFailureMessage(
+                prefix: "OpenClaw is installed, but the Gateway did not start. Retry setup.",
+                reason: GatewayProcessManager.shared.lastFailureReason)
         }
     }
 
@@ -178,7 +188,9 @@ extension OnboardingView {
         case .deferred:
             cliStatus = "OpenClaw is installed. The Gateway will start when This Mac is active and resumed."
         case .failed:
-            cliStatus = "OpenClaw was installed, but the Gateway did not start. Retry setup."
+            cliStatus = Self.gatewayStartFailureMessage(
+                prefix: "OpenClaw was installed, but the Gateway did not start. Retry setup.",
+                reason: GatewayProcessManager.shared.lastFailureReason)
             return
         }
         cliInstalled = true
