@@ -116,7 +116,10 @@ const migrateLegacyNodePairingStore = vi.hoisted(() =>
 );
 const setConfirmedLinuxControlGroupKillMode = vi.hoisted(() => vi.fn());
 const readSystemdServiceRuntime = vi.hoisted(() =>
-  vi.fn(async (_env?: unknown, _opts?: unknown) => ({ systemd: { killMode: "control-group" } })),
+  vi.fn(async (_env?: unknown, _opts?: unknown) => ({
+    pid: process.pid,
+    systemd: { killMode: "control-group" },
+  })),
 );
 vi.mock("../process/supervisor/adapters/child.js", () => ({
   setConfirmedLinuxControlGroupKillMode: (confirmed: boolean) =>
@@ -250,6 +253,7 @@ describe("runGatewayStartupMaintenance", () => {
     setConfirmedLinuxControlGroupKillMode.mockClear();
     readSystemdServiceRuntime.mockClear();
     readSystemdServiceRuntime.mockImplementation(async () => ({
+      pid: process.pid,
       systemd: { killMode: "control-group" },
     }));
     delete process.env.OPENCLAW_SERVICE_MARKER;
@@ -353,7 +357,10 @@ describe("runGatewayStartupMaintenance", () => {
     setPlatform("linux");
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
-    readSystemdServiceRuntime.mockResolvedValueOnce({ systemd: { killMode: "control-group" } });
+    readSystemdServiceRuntime.mockResolvedValueOnce({
+      pid: process.pid,
+      systemd: { killMode: "control-group" },
+    });
     const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
 
     await runGatewayStartupMaintenance({
@@ -367,11 +374,34 @@ describe("runGatewayStartupMaintenance", () => {
     expect(setConfirmedLinuxControlGroupKillMode).toHaveBeenCalledWith(true);
   });
 
+  it("reports unconfirmed when the resolved unit does not own this process, e.g. a dueling user/system scope pair whose user unit reports control-group while the system unit that actually launched this gateway does not (#120398 review)", async () => {
+    setPlatform("linux");
+    process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
+    process.env.OPENCLAW_SERVICE_KIND = "gateway";
+    readSystemdServiceRuntime.mockResolvedValueOnce({
+      pid: process.pid + 1,
+      systemd: { killMode: "control-group" },
+    });
+    const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
+
+    await runGatewayStartupMaintenance({
+      cfgAtStart: {},
+      startupRuntimeConfig: {},
+      minimalTestGateway: true,
+      log: createLog(),
+    });
+
+    expect(setConfirmedLinuxControlGroupKillMode).toHaveBeenCalledWith(false);
+  });
+
   it("reports unconfirmed when the live unit KillMode was overridden away from control-group (#120398 review)", async () => {
     setPlatform("linux");
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
-    readSystemdServiceRuntime.mockResolvedValueOnce({ systemd: { killMode: "process" } });
+    readSystemdServiceRuntime.mockResolvedValueOnce({
+      pid: process.pid,
+      systemd: { killMode: "process" },
+    });
     const { runGatewayStartupMaintenance } = await import("./server-startup-plugins.js");
 
     await runGatewayStartupMaintenance({

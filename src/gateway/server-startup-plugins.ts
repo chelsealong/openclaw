@@ -63,9 +63,14 @@ function isLinuxGatewayServiceProcess(): boolean {
  * unit's intent. A hand-edited unit file or a later KillMode drop-in
  * (process/none) makes this probe report false even though the unit and
  * OPENCLAW_SERVICE_MARKER/KIND env vars still look like control-group
- * (#120398 review). Any probe failure or ambiguous read also reports false,
- * which keeps children attached — the same safe default as before this
- * probe existed.
+ * (#120398 review). readSystemdServiceRuntime's unit-selection is user-first
+ * on a dueling user/system install (#79375), which can be a *different* unit
+ * than the one that actually launched this process; trusting that unit's
+ * KillMode without confirming it reports this process as its MainPID would
+ * let a coexisting unit's control-group override this process's real
+ * KillMode. Any probe failure, ambiguous read, or unit/PID mismatch reports
+ * false, which keeps children attached — the same safe default as before
+ * this probe existed.
  */
 async function confirmLinuxControlGroupKillModeAtStartup(
   log: Pick<GatewayPluginBootstrapLog, "warn">,
@@ -77,8 +82,10 @@ async function confirmLinuxControlGroupKillModeAtStartup(
     const runtime = await readSystemdServiceRuntime(process.env, {
       timeoutMs: LINUX_CONTROL_GROUP_KILL_MODE_PROBE_TIMEOUT_MS,
     });
+    const resolvedUnitOwnsThisProcess = runtime.pid === process.pid;
     setConfirmedLinuxControlGroupKillMode(
-      normalizeLowercaseStringOrEmpty(runtime.systemd?.killMode) === "control-group",
+      resolvedUnitOwnsThisProcess &&
+        normalizeLowercaseStringOrEmpty(runtime.systemd?.killMode) === "control-group",
     );
   } catch (error) {
     log.warn(
