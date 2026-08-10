@@ -36,6 +36,7 @@ import {
 } from "../../infra/outbound/agent-delivery.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
 import { buildOutboundResultEnvelope } from "../../infra/outbound/envelope.js";
+import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import {
   createOutboundPayloadPlan,
   formatOutboundPayloadLog,
@@ -935,6 +936,7 @@ export async function deliverAgentCommandResult(
           channel: deliveryChannel,
           to: deliveryTarget,
           accountId: resolvedAccountId,
+          identity: resolveAgentOutboundIdentity(cfg, deliveryAgentId),
           payloads: deliveryPayloads,
           session: outboundSession,
           replyPayloadSendingHook: {

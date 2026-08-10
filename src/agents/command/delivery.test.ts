@@ -181,6 +181,7 @@ function latestOutboundDeliveryArgs(): {
   bestEffort?: boolean;
   queuePolicy?: string;
   replyPayloadSendingHook?: ReplyPayloadSendingHookArgs;
+  identity?: { name?: string; emoji?: string; avatarUrl?: string; theme?: string };
 } {
   const args = lastMockArg(deliverOutboundPayloadsMock, "outbound delivery arguments");
   if (!args || typeof args !== "object") {
@@ -196,6 +197,7 @@ function latestOutboundDeliveryArgs(): {
     bestEffort?: boolean;
     queuePolicy?: string;
     replyPayloadSendingHook?: ReplyPayloadSendingHookArgs;
+    identity?: { name?: string; emoji?: string; avatarUrl?: string; theme?: string };
   };
 }
 
@@ -348,6 +350,30 @@ describe("deliverAgentCommandResult payload normalization", () => {
     )?.abortSignal;
     expect(deliverySignal).toBeInstanceOf(AbortSignal);
     expect(deliverySignal?.aborted).toBe(false);
+  });
+
+  it("forwards the configured agent identity to outbound delivery", async () => {
+    await deliverAgentCommandResultForTest({
+      cfg: {
+        agents: {
+          list: [{ id: "tester", identity: { name: "Richbot", emoji: ":lion:" } }],
+        },
+      } as OpenClawConfig,
+      payloads: [{ text: "hi" }],
+    });
+
+    expect(latestOutboundDeliveryArgs().identity).toEqual({
+      name: "Richbot",
+      emoji: ":lion:",
+    });
+  });
+
+  it("omits identity from outbound delivery when the agent has none configured", async () => {
+    await deliverAgentCommandResultForTest({
+      payloads: [{ text: "hi" }],
+    });
+
+    expect(latestOutboundDeliveryArgs().identity).toBeUndefined();
   });
 
   it("cancels durable delivery when restart arrives before the durable intent", async () => {
