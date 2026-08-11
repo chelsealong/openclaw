@@ -399,6 +399,22 @@ function parseComponentBlock(raw: unknown, label: string): DiscordComponentBlock
   }
 }
 
+// Some MCP transports (e.g. claude-cli) stringify object tool params that
+// aren't declared in the tool's exposed schema. Parse those back into an
+// object/array before any typeof/shape check runs, or components silently
+// vanish instead of erroring. Falls back to the raw string on parse failure
+// so already-working object callers are unaffected.
+export function normalizeDiscordComponentsParam(raw: unknown): unknown {
+  if (typeof raw !== "string") {
+    return raw;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function readDiscordComponentSpec(raw: unknown): DiscordComponentMessageSpec | null {
   if (raw === undefined || raw === null) {
     return null;

@@ -449,6 +449,50 @@ describe("discordMessageActions", () => {
     });
   });
 
+  it("parses a JSON-stringified components param instead of dropping it", async () => {
+    const prepared = await discordMessageActions.prepareSendPayload?.({
+      ctx: {
+        channel: "discord",
+        action: "send",
+        cfg: {} as OpenClawConfig,
+        params: {
+          components: JSON.stringify({
+            text: "Choose",
+            blocks: [
+              {
+                type: "actions",
+                buttons: [{ label: "Yes", callbackData: "yes" }],
+              },
+            ],
+          }),
+          embeds: undefined,
+          filename: "photo.png",
+        },
+      },
+      to: "channel:123",
+      payload: { text: "hello", mediaUrl: "/tmp/photo.png" },
+    });
+
+    expect(prepared).toEqual({
+      text: "hello",
+      mediaUrl: "/tmp/photo.png",
+      channelData: {
+        discord: {
+          components: {
+            text: "Choose",
+            blocks: [
+              {
+                type: "actions",
+                buttons: [{ label: "Yes", callbackData: "yes" }],
+              },
+            ],
+          },
+          filename: "photo.png",
+        },
+      },
+    });
+  });
+
   it("prepares inbound event delivery metadata for durable core sends", async () => {
     const prepared = await discordMessageActions.prepareSendPayload?.({
       ctx: {
