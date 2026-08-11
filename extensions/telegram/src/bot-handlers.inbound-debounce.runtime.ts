@@ -1,5 +1,5 @@
 // Telegram inbound debounce lanes and batch flushing.
-import type { Message } from "grammy/types";
+import type { ExternalReplyInfo, Message } from "grammy/types";
 import { shouldDebounceTextInbound } from "openclaw/plugin-sdk/channel-inbound";
 import {
   createInboundDebouncer,
@@ -22,6 +22,29 @@ import type { TelegramContext } from "./bot/types.js";
 import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedupe.js";
 
 type TelegramDebounceLane = "default" | "forward";
+
+type TelegramReplyContextFields = Pick<Message, "reply_to_message" | "quote"> & {
+  external_reply?: ExternalReplyInfo;
+};
+
+// Debounce merge keeps the first entry as the synthetic base, but reply/quote
+// context is almost always on the message the user sent last. Scan back to
+// front so the most recent reply target wins instead of always the first
+// entry's (issue: quote-reply on a follow-up message was silently dropped).
+const pickTelegramDebounceReplyContext = (
+  messages: readonly Message[],
+): TelegramReplyContextFields => {
+  const source = messages.findLast(
+    (msg) => msg.reply_to_message || msg.quote || msg.external_reply,
+  );
+  return source
+    ? {
+        reply_to_message: source.reply_to_message,
+        quote: source.quote,
+        external_reply: source.external_reply,
+      }
+    : {};
+};
 
 export type TelegramDebounceEntry = {
   ctx: TelegramContext;
@@ -150,6 +173,7 @@ export function createTelegramInboundDebounceRuntime(
               entities: combinedTextParts.entities,
               date: last.msg.date ?? first.msg.date,
             }),
+            ...pickTelegramDebounceReplyContext(entries.map((entry) => entry.msg)),
             forward_origin: undefined,
           };
           const result = await processMessageWithReplyChain({

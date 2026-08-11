@@ -1660,6 +1660,49 @@ describe("createTelegramBot", () => {
     }
   });
 
+  it("preserves reply context from a later entry in a multi-message debounce batch", async () => {
+    configureOpenDm({ debounceMs: INBOUND_DEBOUNCE_MS, timezone: "envelopeTimezone" });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    try {
+      createTelegramBot({ token: "tok" });
+      const messageHandler = getMessageHandler();
+
+      await messageHandler(
+        makePrivateTextContext({ text: "quick question", messageId: 301, date: 1736380801 }),
+      );
+      await messageHandler(
+        makePrivateTextContext({
+          text: "actually see this",
+          messageId: 302,
+          date: 1736380802,
+          message: {
+            reply_to_message: {
+              message_id: 9500,
+              text: "Earlier note",
+              from: { first_name: "Bob" },
+            },
+          },
+        }),
+      );
+
+      takeLatestTimerCallback(INBOUND_DEBOUNCE_MS)();
+
+      await vi.waitFor(() => expect(replySpy).toHaveBeenCalledTimes(1));
+      const payload = requireValue(replySpy.mock.calls[0]?.[0], "debounce batch reply payload");
+      expect(payload.Body).toContain("quick question");
+      expect(payload.Body).toContain("actually see this");
+      expect(payload.Body).toContain("[Reply chain - nearest first]");
+      expect(payload.Body).toContain("[1. Bob id:9500]");
+      expect(payload.Body).toContain("Earlier note");
+      expect(payload.ReplyToId).toBe("9500");
+      expect(payload.ReplyToBody).toBe("Earlier note");
+      expect(payload.ReplyToSender).toBe("Bob");
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it("lets stop cancel pending same-chat forwarded debounce", async () => {
     configureOpenDm({ debounceMs: INBOUND_DEBOUNCE_MS, timezone: "envelopeTimezone" });
 
