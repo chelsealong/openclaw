@@ -129,7 +129,13 @@ function expectedTrustedCmdExe(): string {
 }
 
 describe("createChildAdapter", () => {
-  const originalServiceMarker = process.env.OPENCLAW_SERVICE_MARKER;
+  const originalServiceEnv = {
+    OPENCLAW_SERVICE_MARKER: process.env.OPENCLAW_SERVICE_MARKER,
+    OPENCLAW_SERVICE_KIND: process.env.OPENCLAW_SERVICE_KIND,
+    INVOCATION_ID: process.env.INVOCATION_ID,
+    SYSTEMD_EXEC_PID: process.env.SYSTEMD_EXEC_PID,
+    JOURNAL_STREAM: process.env.JOURNAL_STREAM,
+  };
   const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
   const setPlatform = (platform: NodeJS.Platform) => {
@@ -166,10 +172,12 @@ describe("createChildAdapter", () => {
   });
 
   afterAll(() => {
-    if (originalServiceMarker === undefined) {
-      delete process.env.OPENCLAW_SERVICE_MARKER;
-    } else {
-      process.env.OPENCLAW_SERVICE_MARKER = originalServiceMarker;
+    for (const [key, value] of Object.entries(originalServiceEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   });
 
