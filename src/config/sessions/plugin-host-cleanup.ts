@@ -1,5 +1,5 @@
 /** Shared predicates and mutations for plugin host-owned session-state cleanup. */
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeOptionalAgentRuntimeId } from "../../agents/agent-runtime-id.js";
 import { normalizeSessionEntrySlotKey } from "../../plugins/session-entry-slot-keys.js";
 import type { SessionEntry } from "./types.js";
@@ -186,13 +186,15 @@ export function matchesPluginHostCleanupSession(
   entry: SessionEntry,
   sessionKey?: string,
 ): boolean {
-  const normalizedSessionKey = normalizeLowercaseStringOrEmpty(sessionKey);
+  const normalizedSessionKey = normalizeOptionalString(sessionKey) ?? "";
   if (!normalizedSessionKey) {
     return true;
   }
+  // Matrix room ids and Signal group ids are case-sensitive opaque identifiers;
+  // lowercasing here would clear plugin state from a case-distinct sibling session.
   return (
-    normalizeLowercaseStringOrEmpty(entryKey) === normalizedSessionKey ||
-    normalizeLowercaseStringOrEmpty(entry.sessionId) === normalizedSessionKey
+    normalizeOptionalString(entryKey) === normalizedSessionKey ||
+    normalizeOptionalString(entry.sessionId) === normalizedSessionKey
   );
 }
 

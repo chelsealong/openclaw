@@ -221,6 +221,46 @@ describe("plugin host cleanup session stores", () => {
     expect(work?.updatedAt).toBeGreaterThan(beforeUpdatedAt);
   });
 
+  it("does not clear a case-distinct sibling session sharing the same lowercase key", async () => {
+    stateDir = await fs.mkdtemp(
+      path.join(resolvePreferredOpenClawTmpDir(), "openclaw-host-cleanup-case-distinct-"),
+    );
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    const storePath = path.join(stateDir, "sessions.json");
+    const beforeUpdatedAt = 100;
+    const targetKey = "agent:main:matrix:group:!Room:server";
+    const siblingKey = "agent:main:matrix:group:!room:server";
+    const targetEntry: SessionEntry = {
+      sessionId: "session-a",
+      updatedAt: beforeUpdatedAt,
+      pluginExtensions: { cleanup: { state: { active: true } } },
+    };
+    const siblingEntry: SessionEntry = {
+      sessionId: "session-b",
+      updatedAt: beforeUpdatedAt,
+      pluginExtensions: { cleanup: { state: { active: true } } },
+    };
+    await replaceSessionEntry({ sessionKey: targetKey, storePath }, targetEntry);
+    await replaceSessionEntry({ sessionKey: siblingKey, storePath }, siblingEntry);
+
+    const result = await runPluginHostCleanup({
+      cfg: { session: { store: storePath } },
+      registry: createEmptyPluginRegistry(),
+      pluginId: "cleanup",
+      reason: "delete",
+      sessionKey: targetKey,
+      sessionStorePaths: [storePath],
+    });
+
+    expect(result).toEqual({ cleanupCount: 1, failures: [] });
+    expect(
+      loadSessionEntry({ sessionKey: targetKey, storePath })?.pluginExtensions,
+    ).toBeUndefined();
+    expect(loadSessionEntry({ sessionKey: siblingKey, storePath })?.pluginExtensions).toEqual({
+      cleanup: { state: { active: true } },
+    });
+  });
+
   it("preserves locked sessions for every harness owned by a disabled plugin", async () => {
     stateDir = await fs.mkdtemp(
       path.join(resolvePreferredOpenClawTmpDir(), "openclaw-host-cleanup-locked-harness-"),
