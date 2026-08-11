@@ -852,6 +852,19 @@ describe("handleDiscordMessageAction", () => {
     });
   });
 
+  it("parses a JSON-stringified components param instead of dropping it", async () => {
+    const components = { blocks: [{ type: "text", text: "Pick one" }] };
+    await handleDiscordMessageAction({
+      action: "send",
+      params: { message: "hello", components: JSON.stringify(components) },
+      cfg: discordConfig(),
+      toolContext: { currentChannelProvider: "discord", currentChannelId: "channel:123" },
+    });
+    const [call] = handleDiscordActionMock.mock.calls;
+    const payload = call?.[0] as Record<string, unknown> | undefined;
+    expect(payload?.components).toEqual(components);
+  });
+
   it("downgrades chart-only presentations to Discord component text", async () => {
     const cfg = discordConfig();
 

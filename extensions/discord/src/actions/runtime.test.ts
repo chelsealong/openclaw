@@ -2246,6 +2246,31 @@ describe("handleDiscordMessagingAction", () => {
     expect(sendOptions.mediaLocalRoots).toEqual(["/tmp/agent-root"]);
   });
 
+  it("parses a JSON-stringified components param for sendMessage instead of dropping it", async () => {
+    sendMessageDiscord.mockClear();
+    sendDiscordComponentMessage.mockClear();
+
+    await handleMessagingAction(
+      "sendMessage",
+      {
+        to: "channel:123",
+        components: JSON.stringify({
+          blocks: [{ type: "text", text: "Pick one" }],
+        }),
+      },
+      enableAllActions,
+      DISCORD_TEST_CFG,
+    );
+
+    expect(sendMessageDiscord).not.toHaveBeenCalled();
+    expect(sendDiscordComponentMessage).toHaveBeenCalledTimes(1);
+    const call = mockCall(sendDiscordComponentMessage, "sendDiscordComponentMessage");
+    expect(call[0]).toBe("channel:123");
+    expect(call[1]).toEqual({
+      blocks: [{ type: "text", text: "Pick one" }],
+    });
+  });
+
   it("forwards the optional filename into sendMessageDiscord", async () => {
     sendMessageDiscord.mockClear();
     await handleMessagingAction(
