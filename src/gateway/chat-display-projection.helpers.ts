@@ -27,7 +27,9 @@ export function truncateChatHistoryText(
     return { text, truncated: false };
   }
   return {
-    text: `...(truncated)...\n${sliceUtf16Safe(text, -maxChars)}`,
+    // maxChars <= 0 must yield an empty tail; sliceUtf16Safe(text, -0) would
+    // otherwise return the whole string, since `-0 < 0` is false in JS.
+    text: `...(truncated)...\n${maxChars > 0 ? sliceUtf16Safe(text, -maxChars) : ""}`,
     truncated: true,
   };
 }

@@ -892,6 +892,15 @@ describe("sanitizeChatHistoryMessages", () => {
     ]);
   });
 
+  it("truncates to an empty tail for a zero maxChars cap", () => {
+    const result = sanitizeChatHistoryMessages(
+      [assistantHistoryMessage("some text", { timestamp: 1 })],
+      0,
+    );
+
+    expect(result).toEqual([assistantHistoryMessage("...(truncated)...\n", { timestamp: 1 })]);
+  });
+
   it("reports decoded byte size when omitting base64 images from chat history", () => {
     const data = Buffer.from([0, 1, 2, 3, 4]).toString("base64");
     const result = sanitizeChatHistoryMessages([
