@@ -881,13 +881,14 @@ describe("sanitizeChatHistoryMessages", () => {
 
   it("truncates display text without splitting surrogate pairs", () => {
     const prefix = "a".repeat(7);
+    const suffix = "😀tail";
     const result = sanitizeChatHistoryMessages(
-      [assistantHistoryMessage(`${prefix}😀tail`, { timestamp: 1 })],
+      [assistantHistoryMessage(`${prefix}${suffix}`, { timestamp: 1 })],
       8,
     );
 
     expect(result).toEqual([
-      assistantHistoryMessage(`${prefix}\n...(truncated)...`, { timestamp: 1 }),
+      assistantHistoryMessage(`...(truncated)...\naa${suffix}`, { timestamp: 1 }),
     ]);
   });
 
@@ -2085,7 +2086,7 @@ describe("projectRecentChatDisplayMessages", () => {
 
     expect(result).toEqual([
       assistantAudioAttachmentHistoryMessage(
-        `${projectedVisibleText.slice(0, 24)}\n...(truncated)...`,
+        `...(truncated)...\n${projectedVisibleText.slice(-24)}`,
         1,
       ),
     ]);

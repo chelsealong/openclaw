@@ -5262,7 +5262,7 @@ describe("gateway server chat", () => {
       const historyMaxBytes = getMaxChatHistoryMessagesBytes();
       const baseText = "s".repeat(100_000);
       const lines: unknown[] = Array.from({ length: 70 }, (_, index) =>
-        createTextTranscriptEvent("user", `small-${index}:${baseText}`, {
+        createTextTranscriptEvent("user", `${baseText}#small-${index}#`, {
           timestamp: Date.now() + index,
         }),
       );
@@ -5287,9 +5287,9 @@ describe("gateway server chat", () => {
       const serialized = JSON.stringify(messages);
 
       expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(historyMaxBytes);
-      expect(serialized).toContain("small-69:");
+      expect(serialized).toContain("#small-69#");
       expect(serialized).toContain("[chat.history omitted: message too large]");
-      expect(serialized).not.toContain("small-0:");
+      expect(serialized).not.toContain("#small-0#");
     });
   });
 
@@ -5438,10 +5438,10 @@ describe("gateway server chat", () => {
       expect(editResult.details).toEqual({ diff: expect.any(String) });
       const projectedDiff = editResult.details?.diff;
       expect(typeof projectedDiff).toBe("string");
-      expect(projectedDiff).toContain("-12 old line");
+      expect(projectedDiff).toContain(fullDiff.slice(-48));
       expect(projectedDiff).toContain("...(truncated)...");
       expect((projectedDiff as string).length).toBeLessThanOrEqual(
-        48 + "\n...(truncated)...".length,
+        48 + "...(truncated)...\n".length,
       );
     });
   });
@@ -5562,7 +5562,7 @@ describe("gateway server chat", () => {
 
       const messages = await fetchHistoryMessages(ws, { maxChars: 7 });
       const serialized = JSON.stringify(messages);
-      expect(serialized).toContain("abcdefg\\n...(truncated)...");
+      expect(serialized).toContain("...(truncated)...\\ndefghij");
     });
   });
 
@@ -5604,7 +5604,7 @@ describe("gateway server chat", () => {
       ]);
 
       const historyMessages = await fetchHistoryMessages(ws, { maxChars: 5 });
-      expect(JSON.stringify(historyMessages)).toContain("abcde\\n...(truncated)...");
+      expect(JSON.stringify(historyMessages)).toContain("...(truncated)...\\nfghij");
 
       const full = await fetchChatMessage(ws, makeMainMessageParams("msg-full-assistant"));
       expect(full.ok).toBe(true);
@@ -5632,7 +5632,7 @@ describe("gateway server chat", () => {
       );
 
       const historyMessages = await fetchHistoryMessages(ws, { maxChars: 12 });
-      expect(JSON.stringify(historyMessages)).toContain("archive abcd\\n...(truncated)...");
+      expect(JSON.stringify(historyMessages)).toContain("...(truncated)...\\ne abcdefghij");
 
       const full = await fetchChatMessage(ws, makeMainMessageParams("msg-archive-full-assistant"));
       expect(full.ok).toBe(true);
