@@ -1,7 +1,7 @@
 // Isolated plugin LLM completion policy validates and dispatches the zero-tool runtime mode.
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import type { IsolatedCompletionResult } from "../../agents/isolated-completion.js";
-import { buildConfiguredModelCatalog } from "../../agents/model-selection-shared.js";
+import { loadProviderScopedThinkingCatalog } from "../../agents/prepared-model-catalog.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveThinkingProfile } from "../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -85,17 +85,25 @@ function resolveIsolatedTimeoutMs(value: number | undefined): number {
   return timeoutMs;
 }
 
-function assertIsolatedReasoningSupported(params: {
+async function assertIsolatedReasoningSupported(params: {
   cfg: OpenClawConfig;
   agentId: string;
   provider: string;
   model: string;
   reasoning: LlmCompleteParams["reasoning"];
-}): void {
+}): Promise<void> {
   if (params.reasoning === undefined) {
     return;
   }
-  const catalog = buildConfiguredModelCatalog({ cfg: params.cfg });
+  // Matches the live-discovery-aware catalog other turn-path callers use (e.g. the
+  // native slash fast path), so an OAuth `auto` alias resolved only at live discovery
+  // (no static config row) still carries its canonical target metadata here.
+  const catalog = await loadProviderScopedThinkingCatalog({
+    config: params.cfg,
+    provider: params.provider,
+    model: params.model,
+    agentId: params.agentId,
+  });
   const profile = resolveThinkingProfile({
     provider: params.provider,
     model: params.model,
@@ -126,7 +134,7 @@ export async function runIsolatedAgentRuntimeCompletion(params: {
 }): Promise<IsolatedCompletionResult> {
   const prompt = requireIsolatedUserPrompt(params.request);
   const timeoutMs = resolveIsolatedTimeoutMs(params.request.execution.timeoutMs);
-  assertIsolatedReasoningSupported({
+  await assertIsolatedReasoningSupported({
     cfg: params.cfg,
     agentId: params.agentId,
     provider: params.provider,

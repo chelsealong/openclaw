@@ -14,6 +14,7 @@ const hoisted = vi.hoisted(() => ({
   completeWithPreparedSimpleCompletionModel: vi.fn(),
   resolveSimpleCompletionSelectionForAgent: vi.fn(),
   runIsolatedCompletion: vi.fn(),
+  loadProviderScopedThinkingCatalog: vi.fn(),
 }));
 
 vi.mock("../../agents/isolated-completion.js", () => ({
@@ -24,6 +25,10 @@ vi.mock("../../agents/simple-completion-runtime.js", () => ({
   prepareSimpleCompletionModelForAgent: hoisted.prepareSimpleCompletionModelForAgent,
   completeWithPreparedSimpleCompletionModel: hoisted.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent: hoisted.resolveSimpleCompletionSelectionForAgent,
+}));
+
+vi.mock("../../agents/prepared-model-catalog.js", () => ({
+  loadProviderScopedThinkingCatalog: hoisted.loadProviderScopedThinkingCatalog,
 }));
 
 const cfg = {
@@ -72,6 +77,8 @@ describe("runtime.llm.complete isolated agent runtime", () => {
     hoisted.completeWithPreparedSimpleCompletionModel.mockReset();
     hoisted.resolveSimpleCompletionSelectionForAgent.mockReset();
     hoisted.runIsolatedCompletion.mockReset();
+    hoisted.loadProviderScopedThinkingCatalog.mockReset();
+    hoisted.loadProviderScopedThinkingCatalog.mockResolvedValue([]);
     primeCompletionMocks();
   });
 
@@ -267,6 +274,56 @@ describe("runtime.llm.complete isolated agent runtime", () => {
       }),
     ).rejects.toMatchObject({ code: "LLM_ISOLATED_INPUT_REJECTED" });
     expect(hoisted.runIsolatedCompletion).not.toHaveBeenCalled();
+  });
+
+  it("rejects a thinking level absent from the config-only catalog", async () => {
+    hoisted.resolveSimpleCompletionSelectionForAgent.mockReturnValueOnce({
+      provider: "test-provider",
+      modelId: "model-x",
+      agentDir: "/tmp/main",
+    });
+    const llm = createRuntimeLlm({ getConfig: () => cfg, authority: { allowComplete: true } });
+
+    await expect(
+      llm.complete({
+        messages: [{ role: "user", content: "Return JSON" }],
+        reasoning: "xhigh",
+        execution: { mode: "isolated-agent-runtime" },
+      }),
+    ).rejects.toMatchObject({ code: "LLM_ISOLATED_INPUT_REJECTED" });
+    expect(hoisted.runIsolatedCompletion).not.toHaveBeenCalled();
+  });
+
+  it("accepts a thinking level only visible through live-discovery catalog metadata", async () => {
+    hoisted.resolveSimpleCompletionSelectionForAgent.mockReturnValueOnce({
+      provider: "test-provider",
+      modelId: "model-x",
+      agentDir: "/tmp/main",
+    });
+    hoisted.loadProviderScopedThinkingCatalog.mockResolvedValueOnce([
+      {
+        provider: "test-provider",
+        id: "model-x",
+        reasoning: true,
+        params: { canonicalModelId: "model-x-large" },
+        compat: { supportedReasoningEfforts: ["xhigh"] },
+      },
+    ]);
+    const llm = createRuntimeLlm({ getConfig: () => cfg, authority: { allowComplete: true } });
+
+    await expect(
+      llm.complete({
+        messages: [{ role: "user", content: "Return JSON" }],
+        reasoning: "xhigh",
+        execution: { mode: "isolated-agent-runtime" },
+      }),
+    ).resolves.toMatchObject({ text: "isolated" });
+    expect(hoisted.loadProviderScopedThinkingCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "test-provider", model: "model-x", agentId: "main" }),
+    );
+    expect(hoisted.runIsolatedCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkLevel: "xhigh" }),
+    );
   });
 
   it("denies request-level auth profiles without host policy", async () => {
