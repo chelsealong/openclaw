@@ -522,6 +522,56 @@ describe("sessions page lifecycle", () => {
     expect(list).not.toHaveBeenCalled();
   });
 
+  it("projects an in-place reconcile's row changes into the page-local result", async () => {
+    const initialResult = {
+      count: 1,
+      sessions: [{ key: "a", updatedAt: 1 }],
+    } as SessionsListResult;
+    const sharedListener: { current: ((snapshot: SessionCapability["state"]) => void) | null } = {
+      current: null,
+    };
+    const sharedState: SessionCapability["state"] = {
+      result: initialResult,
+      agentId: null,
+      modelOverrides: {},
+      loading: false,
+      error: null,
+      deletedSessions: [],
+      groups: [],
+      sectionOrder: [],
+    };
+    const list = vi.fn(async () => initialResult);
+    const sessions = createSessions({
+      state: sharedState,
+      list,
+      subscribe: (listener) => {
+        sharedListener.current = listener;
+        return () => {
+          sharedListener.current = null;
+        };
+      },
+    });
+    const { gateway } = createGateway({} as GatewayBrowserClient);
+    const context = createContext(gateway, sessions);
+    const page = await createRenderedPage(context, initialResult);
+    list.mockClear();
+
+    // An active session.message reconciles the shared roster's row in place
+    // (index.ts returns before scheduling a coordinator refresh), so `loading`
+    // never toggles for this publish.
+    const reconciled = {
+      count: 1,
+      sessions: [{ key: "a", updatedAt: 2 }],
+    } as SessionsListResult;
+    sharedListener.current?.({ ...sharedState, result: reconciled });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(list).not.toHaveBeenCalled();
+    expect(page.result?.sessions[0]?.updatedAt).toBe(2);
+  });
+
   it("reloads once the shared roster completes a debounced canonical refresh", async () => {
     const initialResult = { count: 1, sessions: [{ key: "a" }] } as SessionsListResult;
     const sharedListener: { current: ((snapshot: SessionCapability["state"]) => void) | null } = {
