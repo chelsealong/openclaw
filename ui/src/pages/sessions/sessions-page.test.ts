@@ -480,6 +480,86 @@ describe("sessions page lifecycle", () => {
     expect(page.result?.sessions.map((session) => session.key)).toEqual(["fresh"]);
   });
 
+  it("does not issue a raw session list request for an in-place reconcile publish", async () => {
+    const initialResult = { count: 1, sessions: [{ key: "a" }] } as SessionsListResult;
+    const sharedListener: { current: ((snapshot: SessionCapability["state"]) => void) | null } = {
+      current: null,
+    };
+    const sharedState: SessionCapability["state"] = {
+      result: initialResult,
+      agentId: null,
+      modelOverrides: {},
+      loading: false,
+      error: null,
+      deletedSessions: [],
+      groups: [],
+      sectionOrder: [],
+    };
+    const list = vi.fn(async () => initialResult);
+    const sessions = createSessions({
+      state: sharedState,
+      list,
+      subscribe: (listener) => {
+        sharedListener.current = listener;
+        return () => {
+          sharedListener.current = null;
+        };
+      },
+    });
+    const { gateway } = createGateway({} as GatewayBrowserClient);
+    const context = createContext(gateway, sessions);
+    await createRenderedPage(context, initialResult);
+    list.mockClear();
+
+    // A shared-capability reconcile (event-refresh-coordinator.ts owns the
+    // debounced network refresh) replaces `result` without toggling `loading`.
+    const reconciled = { count: 1, sessions: [{ key: "b" }] } as SessionsListResult;
+    sharedListener.current?.({ ...sharedState, result: reconciled });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("reloads once the shared roster completes a debounced canonical refresh", async () => {
+    const initialResult = { count: 1, sessions: [{ key: "a" }] } as SessionsListResult;
+    const sharedListener: { current: ((snapshot: SessionCapability["state"]) => void) | null } = {
+      current: null,
+    };
+    const sharedState: SessionCapability["state"] = {
+      result: initialResult,
+      agentId: null,
+      modelOverrides: {},
+      loading: false,
+      error: null,
+      deletedSessions: [],
+      groups: [],
+      sectionOrder: [],
+    };
+    const freshResult = { count: 1, sessions: [{ key: "fresh" }] } as SessionsListResult;
+    const list = vi.fn(async () => freshResult);
+    const sessions = createSessions({
+      state: sharedState,
+      list,
+      subscribe: (listener) => {
+        sharedListener.current = listener;
+        return () => {
+          sharedListener.current = null;
+        };
+      },
+    });
+    const { gateway } = createGateway({} as GatewayBrowserClient);
+    const context = createContext(gateway, sessions);
+    await createRenderedPage(context, initialResult);
+    list.mockClear();
+
+    sharedListener.current?.({ ...sharedState, loading: true });
+    sharedListener.current?.({ ...sharedState, result: freshResult, loading: false });
+
+    await vi.waitFor(() => expect(list).toHaveBeenCalledOnce());
+  });
+
   it("rejects session and checkpoint results after the sessions capability changes", async () => {
     const list = deferred<SessionsListResult | null>();
     const checkpoints = deferred<SessionCompactionCheckpoint[]>();

@@ -196,7 +196,12 @@ class SessionsPage extends OpenClawLightDomElement {
             this.ignorePendingSharedRefresh = false;
             return;
           }
-          if (resultChanged) {
+          // Reload only once the shared roster's own debounced event-refresh
+          // coordinator (event-refresh-coordinator.ts) completes a canonical
+          // fetch. In-place reconcile publishes also change `result` but never
+          // toggle loading, so reacting to every `resultChanged` here bypassed
+          // that coordinator and fired one raw sessions.list per session event.
+          if (refreshCompleted && resultChanged) {
             this.scheduleSessionReload();
           }
         });
