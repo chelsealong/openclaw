@@ -1,4 +1,5 @@
 // Command queue tests cover bounded command execution and queue ordering.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -148,6 +149,25 @@ describe("command queue", () => {
     expect(calls).toEqual([1, 2, 3]);
     expect(maxActive).toBe(1);
     expect(getQueueSize()).toBe(0);
+  });
+
+  it("runs queued tasks in their enqueue-time async context", async () => {
+    const context = new AsyncLocalStorage<string>();
+    const blocker = createDeferred();
+    const first = context.run("first", () =>
+      enqueueCommandInLane(CommandLane.Main, async () => {
+        await blocker.promise;
+        return context.getStore();
+      }),
+    );
+    const second = context.run("second", () =>
+      enqueueCommandInLane(CommandLane.Main, async () => context.getStore()),
+    );
+
+    blocker.resolve();
+
+    await expect(first).resolves.toBe("first");
+    await expect(second).resolves.toBe("second");
   });
 
   it("runs foreground work before already queued background work", async () => {
@@ -318,6 +338,26 @@ describe("command queue", () => {
         message.includes("lane task interrupted: lane=nested"),
       ),
     ).toBe(true);
+  });
+
+  it("logs error types separately from the actionable lane failure message", async () => {
+    const error = new Error("provider request failed");
+    error.name = "FailoverError";
+
+    await expect(
+      enqueueCommandInLane(CommandLane.Main, async () => {
+        throw error;
+      }),
+    ).rejects.toBe(error);
+
+    expect(diagnosticMocks.diag.error).toHaveBeenCalledWith(
+      expect.not.stringContaining("FailoverError:"),
+      expect.objectContaining({ errorName: "FailoverError" }),
+    );
+    expect(diagnosticMocks.diag.error).toHaveBeenCalledWith(
+      expect.stringContaining('error="provider request failed"'),
+      expect.any(Object),
+    );
   });
 
   it.each([
@@ -883,6 +923,46 @@ describe("command queue", () => {
     markGatewayDraining();
     resetAllLanes();
     await expect(enqueueCommandInLane(CommandLane.Main, async () => "ok")).resolves.toBe("ok");
+  });
+
+  it("re-admits preserved queued work after reset retires its captured root", async () => {
+    const outerLane = `restart-outer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const innerLane = `restart-inner-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(outerLane, 0);
+    const root = tryBeginGatewayRootWorkAdmission();
+    expect(root).not.toBeNull();
+    let task: Promise<string> | undefined;
+    await root?.run(async () => {
+      task = enqueueCommandInLane(outerLane, async () =>
+        enqueueCommandInLane(innerLane, async () => "continued"),
+      );
+    });
+
+    markGatewayDraining();
+    resetAllLanes();
+    setCommandLaneConcurrency(outerLane, 1);
+
+    await expect(task).resolves.toBe("continued");
+    root?.release();
+  });
+
+  it("does not re-admit queued work after its root is released normally", async () => {
+    const outerLane = `released-outer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const innerLane = `released-inner-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(outerLane, 0);
+    const root = tryBeginGatewayRootWorkAdmission();
+    expect(root).not.toBeNull();
+    let task: Promise<string> | undefined;
+    await root?.run(async () => {
+      task = enqueueCommandInLane(outerLane, async () =>
+        enqueueCommandInLane(innerLane, async () => "unexpected"),
+      );
+    });
+
+    root?.release();
+    setCommandLaneConcurrency(outerLane, 1);
+
+    await expect(task).rejects.toBeInstanceOf(GatewayDrainingError);
   });
 
   it("migrates legacy queue state missing activeTaskWaiters without crashing", async () => {

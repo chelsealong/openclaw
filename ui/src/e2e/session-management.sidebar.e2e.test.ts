@@ -25,6 +25,57 @@ import {
 const suite = createSessionManagementE2eSuite();
 
 suite.define(() => {
+  it("shows an unsent-draft pencil after switching sessions and removes it after clearing", async () => {
+    const firstKey = "agent:main:draft-first";
+    const secondKey = "agent:main:draft-second";
+    const context = await suite.browser.newContext({
+      colorScheme: "dark",
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      methodResponses: {
+        "sessions.list": sessionsListResponse([
+          sessionRow(firstKey, "Draft first", 2),
+          sessionRow(secondKey, "Draft second", 1),
+        ]),
+      },
+      sessionKey: firstKey,
+    });
+
+    try {
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, firstKey));
+      const firstRow = page.locator(`[data-session-key="${firstKey}"]`);
+      const secondRow = page.locator(`[data-session-key="${secondKey}"]`);
+      const composer = page.locator(
+        'openclaw-chat-pane[aria-hidden="false"] .agent-chat__composer-combobox > textarea',
+      );
+      await firstRow.waitFor({ state: "visible", timeout: 10_000 });
+      await secondRow.waitFor({ state: "visible" });
+      await composer.waitFor({ state: "visible" });
+      await captureUiProof(page, "draft-indicator-before.png");
+
+      await composer.fill("Keep this unsent");
+      await secondRow.getByRole("link").click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe(controlUiSessionPath(secondKey));
+      await firstRow.getByRole("img", { name: "Unsent draft" }).waitFor();
+      await captureUiProof(page, "draft-indicator-after.png");
+
+      await firstRow.getByRole("link").click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe(controlUiSessionPath(firstKey));
+      expect(await firstRow.getByRole("img", { name: "Unsent draft" }).count()).toBe(0);
+
+      await composer.fill("");
+      await secondRow.getByRole("link").click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe(controlUiSessionPath(secondKey));
+      await expect.poll(() => firstRow.getByRole("img", { name: "Unsent draft" }).count()).toBe(0);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("expands child sessions inline and opens a child chat", async () => {
     const baseTime = Date.parse("2026-07-01T16:00:00.000Z");
     const parentKey = "agent:main:release-plan";
@@ -167,9 +218,10 @@ suite.define(() => {
       },
       sessionKey: "agent:main:main",
     });
-    const dialogs: string[] = [];
+    // Control UI confirms in-app; a native dialog here would be a regression.
+    const nativeDialogs: string[] = [];
     page.on("dialog", (dialog) => {
-      dialogs.push(dialog.message());
+      nativeDialogs.push(dialog.message());
       void dialog.dismiss();
     });
 
@@ -214,7 +266,8 @@ suite.define(() => {
           .toBeLessThanOrEqual(0);
       };
       const hiddenActionCounts = async () => ({
-        dialogs: dialogs.length,
+        confirms: await page.locator("openclaw-modal-dialog .exec-approval-actions").count(),
+        nativeDialogs: nativeDialogs.length,
         patches: (await gateway.getRequests("sessions.patch")).length,
       });
       const expectHiddenShortcutsInert = async (
@@ -350,26 +403,11 @@ suite.define(() => {
       const menu = page.getByRole("menu", { name: "Actions for Research notes" });
       await menu.waitFor({ state: "visible" });
 
-      await page
-        .locator("openclaw-session-menu")
-        .getByRole("menuitem", { name: "Change icon" })
-        .click();
-      const iconPicker = page.getByRole("dialog", { name: "Change icon" });
-      await iconPicker.waitFor({ state: "visible" });
-      await expect
-        .poll(() => iconPicker.evaluate((element) => element.contains(document.activeElement)))
-        .toBe(true);
-      await page.keyboard.press("Tab");
-      await expect
-        .poll(() => iconPicker.evaluate((element) => element.contains(document.activeElement)))
-        .toBe(true);
-      await iconPicker.getByRole("button", { name: "Back" }).click();
-      await menu.waitFor({ state: "visible" });
       await expect
         .poll(() =>
           page
             .locator("openclaw-session-menu")
-            .getByRole("menuitem", { name: "Change icon" })
+            .getByRole("menuitem", { name: "Pin session" })
             .evaluate((element) => element === document.activeElement),
         )
         .toBe(true);
@@ -391,7 +429,7 @@ suite.define(() => {
         .poll(() =>
           page
             .locator("openclaw-session-menu")
-            .getByRole("menuitem", { name: "Open chat" })
+            .getByRole("menuitem", { name: "Pin session" })
             .evaluate((element) => element === document.activeElement),
         )
         .toBe(true);
@@ -453,7 +491,7 @@ suite.define(() => {
       await expect
         .poll(() => gateway.getSocketCount(), { timeout: 15_000 })
         .toBe(socketsBefore + 1);
-      await gateway.deferNext("sessions.list");
+      await gateway.deferNext("sessions.list", { includeLastMessage: true });
       await gateway.setOnline(true);
       await waitForControlUiGatewayReady(page);
       await expect
@@ -526,7 +564,7 @@ suite.define(() => {
         .poll(() => gateway.getSocketCount(), { timeout: 15_000 })
         .toBe(socketsBefore + 1);
       await gateway.deferNext("sessions.subscribe");
-      await gateway.deferNext("sessions.list");
+      await gateway.deferNext("sessions.list", { includeLastMessage: true });
       await gateway.setOnline(true);
       await waitForControlUiGatewayReady(page);
       await expect
@@ -545,8 +583,12 @@ suite.define(() => {
 
       await gateway.resolveDeferred("sessions.subscribe", { subscribed: true });
       await expect
-        .poll(async () => (await gateway.getRequests("sessions.list")).length, { timeout: 15_000 })
-        .toBeGreaterThan(initialListCount);
+        .poll(async () =>
+          (await gateway.getRequests("sessions.list"))
+            .slice(initialListCount)
+            .some((request) => requireRecord(request.params).includeLastMessage === true),
+        )
+        .toBe(true);
       await gateway.resolveDeferred(
         "sessions.list",
         sessionsListResponse([
@@ -637,7 +679,7 @@ suite.define(() => {
     }
   });
 
-  it("pins a session dropped into the interleaved sidebar zone", async () => {
+  it("pins a session dropped below an existing row in the interleaved sidebar zone", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -685,9 +727,17 @@ suite.define(() => {
         .poll(() => trimmedTextContents(pinnedEntry.locator(".sidebar-recent-session__name")))
         .toEqual(["Already pinned"]);
       await captureUiProof(page, "sidebar-session-before-pinned-drop.png");
+      const pinnedBox = await pinnedEntry.boundingBox();
+      if (!pinnedBox) {
+        throw new Error("expected the pinned row to be laid out");
+      }
+      // The drop slot is decided by which half of the row the pointer is in, so
+      // aim below its midpoint instead of the default centre landing on the edge.
       await researchGroup
         .locator('.sidebar-recent-session[data-session-key="agent:main:candidate"]')
-        .dragTo(pinnedEntry);
+        .dragTo(pinnedEntry, {
+          targetPosition: { x: pinnedBox.width / 2, y: pinnedBox.height - 2 },
+        });
 
       const pinPatch = await waitForPatch(
         gateway,
@@ -706,6 +756,13 @@ suite.define(() => {
         )
         .toEqual(["Already pinned", "Pin me"]);
       await expect.poll(() => researchGroup.locator(".sidebar-recent-session").count()).toBe(0);
+
+      const pinnedCandidate = page.locator(
+        '[data-sidebar-entry="session:agent:main:candidate"] .sidebar-recent-session',
+      );
+      await pinnedCandidate.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Unpin session" }).waitFor();
+      expect(await page.getByRole("menuitem", { name: "Reset pinned items" }).count()).toBe(0);
       await captureUiProof(page, "sidebar-session-dropped-into-pinned.png");
     } finally {
       await context.close();

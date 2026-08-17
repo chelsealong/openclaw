@@ -17,15 +17,14 @@ import {
   validateTerminalInputParams,
   validateTerminalOpenParams,
   validateTerminalResizeParams,
-  validateTerminalTextParams,
   validateTerminalUploadResult,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { allowsProcessHomeSessionScan } from "../../config/paths.js";
 import { NODE_TERMINAL_UPLOAD_COMMAND } from "../../infra/node-commands.js";
 import { mergeProcessEnv } from "../../infra/process-env.js";
 import type { TerminalUploadFile } from "../../infra/terminal-file-upload.js";
 import type { SessionCatalogTerminalPlan } from "../../plugins/session-catalog.js";
 import { applyPluginNodeInvokePolicy } from "../node-invoke-plugin-policy.js";
-import { renderTerminalBufferText } from "../terminal/buffer-text.js";
 import { buildTerminalEnv, type TerminalLaunchResolution } from "../terminal/launch.js";
 import { createNodeRelayBackend } from "../terminal/node-relay.js";
 import {
@@ -137,6 +136,14 @@ function respondLaunchBlocked(
     );
     return;
   }
+  if (block.kind === "owner-required") {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, terminalFailureMessage(block.message, hint)),
+    );
+    return;
+  }
   // Fail closed: a sandboxed agent must never receive a host shell.
   respond(
     false,
@@ -160,7 +167,7 @@ type TerminalSessionOpenRequest = {
   cols: number;
   rows: number;
   requiredCwd?: string;
-  resolveCatalogPlan?: () => Promise<SessionCatalogTerminalPlan>;
+  resolveCatalogPlan?: (agentId: string) => Promise<SessionCatalogTerminalPlan>;
   catalogFailureMessage?: string;
   failureHint?: string;
 };
@@ -205,8 +212,12 @@ export async function openTerminalSession(
     | undefined;
   let stageUpload: ((file: TerminalUploadFile) => Promise<TerminalUploadResult>) | undefined;
   if (request.resolveCatalogPlan) {
+    const resolveCatalogPlan = request.resolveCatalogPlan;
     try {
-      catalogPlan = await waitForTerminalOpenDeadline(request.resolveCatalogPlan, deadline);
+      catalogPlan = await waitForTerminalOpenDeadline(
+        () => resolveCatalogPlan(launch.plan.agentId),
+        deadline,
+      );
     } catch (error) {
       if (error instanceof TerminalOpenDeadlineError) {
         respondTerminalOpenTimeout(respond, request.failureHint);
@@ -460,7 +471,7 @@ export const terminalHandlers: GatewayRequestHandlers = {
       return;
     }
     const p = params as TerminalOpenParams;
-    let resolveCatalogPlan: (() => Promise<SessionCatalogTerminalPlan>) | undefined;
+    let resolveCatalogPlan: ((agentId: string) => Promise<SessionCatalogTerminalPlan>) | undefined;
     if (p.catalog) {
       const provider = resolveSessionCatalogProvider(p.catalog.catalogId);
       if (!provider) {
@@ -481,8 +492,10 @@ export const terminalHandlers: GatewayRequestHandlers = {
       }
       const openTerminal = provider.openTerminal;
       const catalog = p.catalog;
-      resolveCatalogPlan = async () =>
+      resolveCatalogPlan = async (agentId) =>
         await openTerminal.call(provider, {
+          allowProcessHomeFallback: allowsProcessHomeSessionScan(),
+          agentId,
           hostId: catalog.hostId,
           threadId: catalog.threadId,
         });
@@ -617,31 +630,5 @@ export const terminalHandlers: GatewayRequestHandlers = {
           }))
         : [];
     respond(true, { sessions });
-  },
-
-  "terminal.text": async (opts) => {
-    const { params, respond, context } = opts;
-    if (!assertValidParams(params, validateTerminalTextParams, "terminal.text", respond)) {
-      return;
-    }
-    const connId = requireConnId(opts);
-    if (!connId) {
-      return;
-    }
-    const p = params as { sessionId: string };
-    if (!context.terminalSessions || !terminalEnabled(context)) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "terminal is not available"));
-      return;
-    }
-    const raw = context.terminalSessions.snapshot(p.sessionId);
-    if (raw === undefined) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, `unknown terminal session "${p.sessionId}"`),
-      );
-      return;
-    }
-    respond(true, { text: renderTerminalBufferText(raw) });
   },
 };

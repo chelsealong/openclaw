@@ -10,10 +10,10 @@ import type {
 import { listRouteBindings } from "../../config/bindings.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { normalizeOptionalAccountId } from "../../routing/account-id.js";
 import { normalizeRouteBindingChannelId } from "../../routing/binding-scope.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import { buildAgentMainSessionKey, normalizeAgentId } from "../../routing/session-key.js";
-import { normalizeAccountId } from "../../utils/account-id.js";
 import {
   INTERNAL_MESSAGE_CHANNEL,
   isDeliverableMessageChannel,
@@ -23,8 +23,8 @@ import {
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
 import { resolveOutboundSessionRoute, type OutboundSessionRoute } from "./outbound-session.js";
 import { resolveChannelTarget, type ResolvedMessagingTarget } from "./target-resolver.js";
-import type { OutboundTargetResolution } from "./targets.js";
 import {
+  type OutboundTargetResolution,
   resolveOutboundTarget,
   resolveSessionDeliveryTarget,
   type SessionDeliveryTarget,
@@ -100,7 +100,7 @@ function resolveAgentDeliveryPlan(params: {
       ? normalizedTurnSource
       : undefined;
   const turnSourceTo = normalizeOptionalString(params.turnSourceTo) ?? undefined;
-  const turnSourceAccountId = normalizeAccountId(params.turnSourceAccountId);
+  const turnSourceAccountId = normalizeOptionalAccountId(params.turnSourceAccountId);
   const turnSourceThreadId =
     params.turnSourceThreadId != null && params.turnSourceThreadId !== ""
       ? params.turnSourceThreadId
@@ -145,7 +145,7 @@ function resolveAgentDeliveryPlan(params: {
       : undefined;
 
   const resolvedAccountId =
-    normalizeAccountId(params.accountId) ??
+    normalizeOptionalAccountId(params.accountId) ??
     (deliveryTargetMode === "implicit" ? baseDelivery.accountId : undefined);
 
   let resolvedTo = explicitTo;
@@ -187,6 +187,7 @@ export async function resolveAgentDeliveryPlanWithSessionRoute(
     resolveOutboundChannelPlugin({
       channel: resolvedChannel,
       cfg: params.cfg,
+      agentId: params.agentId,
       allowBootstrap: true,
     });
   if (!plugin) {

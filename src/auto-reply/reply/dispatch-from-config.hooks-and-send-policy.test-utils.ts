@@ -1,5 +1,6 @@
 // Imported by dispatch-from-config.test.ts to keep its mocked suite in one Vitest module graph.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PROVIDER_CONVERSATION_STATE_ERROR_USER_MESSAGE } from "../../agents/failover/user-copy.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
 import type { PluginSubagentRequesterContext } from "../../plugins/runtime/subagent-requester-context.js";
@@ -35,7 +36,6 @@ import {
   describe2BeforeEach0,
 } from "./dispatch-from-config.test-harness.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
-import { PROVIDER_CONVERSATION_STATE_ERROR_USER_MESSAGE } from "./provider-request-error-classifier.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { buildTestCtx } from "./test-ctx.js";
@@ -660,7 +660,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(result.noVisibleReplyFallbackEligible).toBeUndefined();
   });
 
-  it("does not treat an active-run accepted turn as an empty completion", async () => {
+  it("reports an active-run accepted turn as deferred instead of empty", async () => {
     setNoAbort();
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
@@ -688,6 +688,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(result).toEqual({
       queuedFinal: false,
       counts: { tool: 0, block: 0, final: 0 },
+      deferredToActiveRun: "followup",
     });
   });
 
@@ -2672,6 +2673,15 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
       },
     },
     {
+      label: "unavailable exec approvals",
+      payload: {
+        text: "Exec approval is unavailable.",
+        channelData: {
+          execApprovalUnavailable: { reason: "no-approval-route" },
+        },
+      },
+    },
+    {
       label: "ask-user prompts",
       payload: {
         text: "Question for you: Where should this deploy?",
@@ -2703,6 +2713,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
           sourceReplyDeliveryMode: "message_tool_only",
           forceToolResultProgress: true,
           suppressDefaultToolProgressMessages: true,
+          suppressToolProgressMessages: true,
           allowProgressCallbacksWhenSourceDeliverySuppressed: true,
           onToolResult,
         },

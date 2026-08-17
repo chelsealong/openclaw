@@ -60,6 +60,8 @@ type SlackPresenceEventsMode = "off" | "auto" | "on";
 type SlackPresenceEventsConfig = {
   /** Presence wake mode. Default: off. */
   mode?: SlackPresenceEventsMode;
+  /** Override the default presence-event guidance. Empty omits guidance. Maximum: 20,000 characters. */
+  prompt?: string;
 };
 
 export type SlackReactionNotificationMode = "off" | "own" | "all" | "allowlist";
@@ -136,12 +138,6 @@ export type SlackAccountConfig = Omit<
     postAs?: "bot" | "user";
     /** Slack connection mode (socket|http|relay). Default: socket. */
     mode?: "socket" | "http" | "relay";
-    /**
-     * Treat this account as one Slack Enterprise Grid org-wide installation.
-     * The declaration is verified against auth.test during monitor startup.
-     * DMs must be disabled or use dmPolicy="open" with effective allowFrom containing "*".
-     */
-    enterpriseOrgInstall?: boolean;
     /** Slack SDK Socket Mode transport options. Ignored in HTTP mode. */
     /** Relay-delivered Slack event source. Used when mode is "relay". */
     relay?: SlackRelayConfig;

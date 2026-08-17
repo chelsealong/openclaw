@@ -16,7 +16,7 @@ import {
 } from "../../sessions/session-key-utils.js";
 import {
   resolveTargetPrefixedChannel,
-  stripTargetKindPrefix,
+  stripOutboundTargetKindPrefix,
   stripTargetProviderPrefix,
 } from "./channel-target-prefix.js";
 import {
@@ -223,7 +223,7 @@ function resolveOutboundTargetFacts(context: OutboundAuditDeliveryContext): {
   const withoutProvider = stripTargetProviderPrefix(context.to, ...providerPrefixes);
   const kindPrefix = TARGET_PREFIX_RE.exec(withoutProvider)?.[1]?.toLowerCase();
   const allowedRouteKinds = kindPrefix ? TARGET_KIND_TO_ROUTE_KINDS[kindPrefix] : undefined;
-  const conversationId = stripTargetKindPrefix(
+  const conversationId = stripOutboundTargetKindPrefix(
     withoutProvider,
     Object.keys(TARGET_KIND_TO_ROUTE_KINDS),
   );
@@ -287,9 +287,9 @@ function resolveConversationKind(
 function firstIdentifier(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     const normalized = value?.trim();
-    // "unknown"/"suppressed" are adapter sentinel messageIds (telegram/slack
-    // outbound adapters), not platform identifiers; treating them as real ids
-    // would pseudonymize a constant and corrupt correlation refs.
+    // "unknown"/"suppressed" are adapter sentinel messageIds, not platform
+    // identifiers; treating them as real ids would pseudonymize a constant
+    // and corrupt correlation refs.
     if (normalized && normalized !== "unknown" && normalized !== "suppressed") {
       return normalized;
     }
