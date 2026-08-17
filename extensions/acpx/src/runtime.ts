@@ -47,6 +47,7 @@ import {
   isOpenClawLeaseAwareAcpxProcessCommand,
   type AcpxProcessCleanupDeps,
 } from "./process-reaper.js";
+import type { CompleteAcpRuntime } from "./runtime-proxy.js";
 
 type AcpSessionStore = AcpRuntimeOptions["sessionStore"];
 type AcpSessionRecord = Parameters<AcpSessionStore["save"]>[0];
@@ -791,7 +792,7 @@ function withManagedToolsMcpSessionEnv(params: {
 }
 
 /** OpenClaw-managed ACP runtime implementation backed by the upstream acpx runtime. */
-export class AcpxRuntime implements AcpRuntime {
+export class AcpxRuntime implements CompleteAcpRuntime {
   private readonly sessionStore: ResetAwareSessionStore;
   private readonly agentRegistry: AcpAgentRegistry;
   private readonly scopedAgentRegistry: AcpAgentRegistry;
@@ -1884,14 +1885,10 @@ export {
 /** Test-only hooks for ACPX runtime behavior that is otherwise private. */
 export const testing = {
   appendCodexAcpConfigOverrides,
-  assertSupportedRuntimeSessionMode,
-  classifyCodexAcpModelRequest,
   isClaudeAcpCommand,
   isCodexAcpCommand,
   normalizeAgentCommand,
-  normalizeClaudeAcpModelOverride,
 };
 
 export type { AcpAgentRegistry, AcpRuntimeOptions, AcpSessionRecord, AcpSessionStore };
-export { testing as __testing };
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

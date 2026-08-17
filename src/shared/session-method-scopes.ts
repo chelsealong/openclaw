@@ -5,9 +5,9 @@ export type SessionMutationOperatorScope = "operator.write" | "operator.admin";
 
 const SESSIONS_PATCH_WRITE_SCOPE_MUTATIONS: ReadonlySet<string> = new Set([
   "label",
+  "icon",
   "category",
   "boardFace",
-  "icon",
   "pinned",
   "archived",
   "unread",
@@ -25,6 +25,7 @@ const SESSIONS_DELETE_WRITE_SCOPE_FIELDS: ReadonlySet<string> = new Set([
   "key",
   "agentId",
   "deleteTranscript",
+  "expectedSessionId",
   "archivedOnly",
 ]);
 
@@ -58,14 +59,14 @@ function resolveSessionsCreateRequiredScope(params: unknown): SessionMutationOpe
   if (!isRecord(params)) {
     return "operator.write";
   }
-  // Incognito creation and inheritance expose process-only session state; cwd and
-  // execNode target privileged host resources. All require operator.admin.
+  // Incognito creation and inheritance expose process-only session state, while
+  // execNode targets privileged host resources. Gateway cwd containment needs
+  // runtime config and filesystem facts, so the create handler owns that check.
   if (
     params.incognito === true ||
     (typeof params.key === "string" && isIncognitoSessionKey(params.key)) ||
     (typeof params.parentSessionKey === "string" &&
       isIncognitoSessionKey(params.parentSessionKey)) ||
-    Object.hasOwn(params, "cwd") ||
     Object.hasOwn(params, "execNode")
   ) {
     return "operator.admin";
@@ -89,6 +90,9 @@ export function resolveDynamicSessionMutationRequiredScope(
   method: string,
   params?: unknown,
 ): SessionMutationOperatorScope | undefined {
+  if (method === "sessions.recover") {
+    return "operator.write";
+  }
   if (method === "sessions.create") {
     return resolveSessionsCreateRequiredScope(params);
   }

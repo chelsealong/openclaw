@@ -218,6 +218,15 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     route: { id: "health" },
   },
   {
+    commandPath: ["audit"],
+    policy: {
+      configGuard: "skip",
+      loadPlugins: "never",
+      ensureCliPath: false,
+      networkProxy: "bypass",
+    },
+  },
+  {
     commandPath: ["gateway"],
     policy: {
       networkProxy: ({ commandPath }) =>
@@ -273,18 +282,9 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     route: { id: "sessions" },
   },
   {
-    commandPath: ["commitments"],
-    policy: {
-      configGuard: "skip",
-      ensureCliPath: false,
-      loadPlugins: "never",
-      networkProxy: "bypass",
-    },
-  },
-  {
     commandPath: ["agents", "list"],
-    // Text and JSON output are derived from config plus read-only channel
-    // metadata, so the route should not preload bundled plugin runtimes.
+    // Output combines config with shared-state provenance and optional read-only
+    // channel metadata, so the route should not preload bundled plugin runtimes.
     policy: { configGuard: "skip", loadPlugins: "never", networkProxy: "bypass" },
     route: { id: "agents-list" },
   },
@@ -461,6 +461,11 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     policy: { ownsProtocolStdout: true },
   },
   {
+    commandPath: ["browser", "extension", "native-host"],
+    exact: true,
+    policy: { hideBanner: true, ownsProtocolStdout: true, networkProxy: "bypass" },
+  },
+  {
     commandPath: ["node"],
     policy: { networkProxy: "bypass" },
   },
@@ -476,6 +481,11 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
   },
   {
     commandPath: ["node", "run"],
+    exact: true,
+    policy: { networkProxy: "default" },
+  },
+  {
+    commandPath: ["connect"],
     exact: true,
     policy: { networkProxy: "default" },
   },

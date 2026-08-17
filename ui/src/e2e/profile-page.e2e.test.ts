@@ -54,12 +54,13 @@ const testPresenceUsers = [
 ];
 
 suite.define(() => {
-  async function openProfilePage(page: Page) {
+  async function openProfilePage(page: Page, methodResponses: Record<string, unknown> = {}) {
     const gateway = await installMockGateway(page, {
       basePath,
       presenceUsers: testPresenceUsers,
       methodResponses: {
         "users.self": { profile: testProfile },
+        ...methodResponses,
       },
     });
     const response = await page.goto(new URL(profilePath, suite.server.baseUrl).href);
@@ -87,6 +88,81 @@ suite.define(() => {
         0,
       );
     });
+  });
+
+  it("renders the protected assistant avatar through an authenticated blob fetch", async () => {
+    await suite.withPage(
+      {
+        ...(captureUiProof
+          ? { recordVideo: { dir: proofDir, size: { width: 1280, height: 800 } } }
+          : {}),
+        viewport: { width: 1280, height: 800 },
+      },
+      async ({ page }) => {
+        const avatarRequests: Array<{ authorization?: string; resourceType: string; url: string }> =
+          [];
+        const avatarUrl = new URL(`${basePath}/avatar/main`, suite.server.baseUrl).href;
+        await page.route(`**${basePath}/avatar/main`, async (route) => {
+          const authorization = route.request().headers().authorization;
+          avatarRequests.push({
+            authorization,
+            resourceType: route.request().resourceType(),
+            url: route.request().url(),
+          });
+          if (authorization !== "Bearer e2e-device-token") {
+            await route.fulfill({ status: 401 });
+            return;
+          }
+          await route.fulfill({
+            body: `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#ef4e2f"/><circle cx="23" cy="27" r="4" fill="white"/><circle cx="41" cy="27" r="4" fill="white"/><path d="M20 42c8 6 16 6 24 0" fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/></svg>`,
+            contentType: "image/svg+xml",
+            status: 200,
+          });
+        });
+        const gateway = await openProfilePage(page, {
+          "agent.identity.get": {
+            agentId: "main",
+            name: "Main agent",
+            avatar: `${basePath}/avatar/main`,
+            avatarStatus: "local",
+          },
+          "agents.list": {
+            defaultId: "main",
+            agents: [
+              {
+                id: "main",
+                identity: { name: "Main agent", avatarUrl: `${basePath}/avatar/main` },
+              },
+            ],
+          },
+        });
+
+        await gateway.waitForRequest("agent.identity.get");
+        const image = page.locator(".profile-hero__avatar-image");
+        await image.waitFor({ timeout: 10_000 });
+        await expect.poll(() => image.getAttribute("src")).toMatch(/^blob:/u);
+        await expect
+          .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+          .toBe(64);
+        expect(avatarRequests.length).toBeGreaterThan(0);
+        expect(new Set(avatarRequests.map((request) => JSON.stringify(request)))).toEqual(
+          new Set([
+            JSON.stringify({
+              authorization: "Bearer e2e-device-token",
+              resourceType: "fetch",
+              url: avatarUrl,
+            }),
+          ]),
+        );
+        if (captureUiProof) {
+          await mkdir(proofDir, { recursive: true });
+          await page.locator(".profile-hero").screenshot({
+            animations: "disabled",
+            path: path.join(proofDir, "06-authenticated-assistant-avatar.png"),
+          });
+        }
+      },
+    );
   });
 
   it("shares one authenticated avatar between the sidebar and profile preview", async () => {
@@ -348,55 +424,69 @@ suite.define(() => {
   });
 
   it("keeps identity refresh single-flight and retries after a failed request", async () => {
-    await suite.withPage(undefined, async ({ page }) => {
-      const gateway = await installMockGateway(page, {
-        basePath,
-        deferredMethods: ["users.self"],
-        presenceUsers: testPresenceUsers,
-        methodResponses: {
-          "users.self": { profile: testProfile },
-        },
-      });
+    await suite.withPage(
+      {
+        ...(captureUiProof
+          ? { recordVideo: { dir: proofDir, size: { width: 1280, height: 800 } } }
+          : {}),
+        viewport: { width: 1280, height: 800 },
+      },
+      async ({ page }) => {
+        const gateway = await installMockGateway(page, {
+          basePath,
+          deferredMethods: ["users.self"],
+          presenceUsers: testPresenceUsers,
+          methodResponses: {
+            "users.self": { profile: testProfile },
+          },
+        });
 
-      const response = await page.goto(new URL(profilePath, suite.server.baseUrl).href);
-      expect(response?.status()).toBe(200);
+        const response = await page.goto(new URL(profilePath, suite.server.baseUrl).href);
+        expect(response?.status()).toBe(200);
 
-      const refresh = page.locator(".profile-refresh");
-      await gateway.waitForRequest("users.self");
-      await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(1);
-      await expect.poll(() => refresh.isDisabled()).toBe(true);
-      expect(await refresh.ariaSnapshot()).toContain('button "Refreshing…" [disabled]');
+        const refresh = page.locator(".profile-refresh");
+        await gateway.waitForRequest("users.self");
+        await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(1);
+        await expect.poll(() => refresh.isDisabled()).toBe(true);
+        expect(await refresh.ariaSnapshot()).toContain('button "Refreshing…" [disabled]');
 
-      await refresh.evaluate((element) => {
-        const button = element as HTMLButtonElement;
-        button.click();
-        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(1);
+        await refresh.evaluate((element) => {
+          const button = element as HTMLButtonElement;
+          button.click();
+          button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        });
+        await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(1);
 
-      await gateway.rejectDeferred("users.self", { message: "identity unavailable" });
-      await page.getByText("identity unavailable", { exact: true }).waitFor({ timeout: 10_000 });
-      await expect.poll(() => refresh.isEnabled()).toBe(true);
-      expect(await refresh.ariaSnapshot()).toContain('button "Refresh"');
+        await gateway.rejectDeferred("users.self", {
+          message: "identity unavailable: OPENAI_API_KEY=sk-1234567890abcdef",
+        });
+        await page
+          .getByText("identity unavailable: OPENAI_API_KEY=sk-123...cdef", { exact: true })
+          .waitFor({ timeout: 10_000 });
+        await expect(page.getByText("sk-1234567890abcdef").count()).resolves.toBe(0);
+        await expect.poll(() => refresh.isEnabled()).toBe(true);
+        expect(await refresh.ariaSnapshot()).toContain('button "Refresh"');
+        await screenshot(page, "07-redacted-identity-error.png");
 
-      await gateway.deferNext("users.self");
-      await refresh.click();
-      await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(2);
-      await expect.poll(() => refresh.isDisabled()).toBe(true);
-      expect(await refresh.ariaSnapshot()).toContain('button "Refreshing…" [disabled]');
+        await gateway.deferNext("users.self");
+        await refresh.click();
+        await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(2);
+        await expect.poll(() => refresh.isDisabled()).toBe(true);
+        expect(await refresh.ariaSnapshot()).toContain('button "Refreshing…" [disabled]');
 
-      await refresh.evaluate((element) => {
-        (element as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(2);
+        await refresh.evaluate((element) => {
+          (element as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        });
+        await expect.poll(async () => (await gateway.getRequests("users.self")).length).toBe(2);
 
-      await gateway.resolveDeferred("users.self", { profile: testProfile });
-      const displayName = page.locator('.identity-name-control input[type="text"]');
-      await displayName.waitFor({ timeout: 10_000 });
-      await expect(displayName.inputValue()).resolves.toBe(testProfile.displayName);
-      await expect.poll(() => refresh.isEnabled()).toBe(true);
-      expect(await refresh.ariaSnapshot()).toContain('button "Refresh"');
-    });
+        await gateway.resolveDeferred("users.self", { profile: testProfile });
+        const displayName = page.locator('.identity-name-control input[type="text"]');
+        await displayName.waitFor({ timeout: 10_000 });
+        await expect(displayName.inputValue()).resolves.toBe(testProfile.displayName);
+        await expect.poll(() => refresh.isEnabled()).toBe(true);
+        expect(await refresh.ariaSnapshot()).toContain('button "Refresh"');
+      },
+    );
   });
 
   it("keeps event revisions through same-timestamp avatar responses", async () => {

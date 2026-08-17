@@ -1,22 +1,24 @@
 // Control UI component renders the command palette.
 import { consume } from "@lit/context";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import { ref } from "lit/directives/ref.js";
 import type { RouteId } from "../app-route-paths.ts";
-import { isDesktopPanelAvailable } from "../app/app-shell-chrome.ts";
 import { applicationContext, type ApplicationContext } from "../app/context.ts";
 import { t } from "../i18n/index.ts";
 import { formatRelativeTimestamp } from "../lib/format.ts";
 import { resolveSessionDisplayName } from "../lib/session-display.ts";
 import { getVisibleSessionRows } from "../lib/sessions/index.ts";
-import { normalizeLowercaseStringOrEmpty, normalizeOptionalString } from "../lib/string-coerce.ts";
 import { OpenClawLightDomContentsElement } from "../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../lit/subscriptions-controller.ts";
 import { isCommandPaletteShortcut } from "./command-palette-contract.ts";
 import { icons, type IconName } from "./icons.ts";
-import { DESKTOP_PANEL_TOGGLE_EVENT } from "./panel-toggle-contract.ts";
 import "./modal-dialog.ts";
+import { DESKTOP_PANEL_TOGGLE_EVENT } from "./panel-toggle-contract.ts";
 
 type PaletteItem = {
   id: string;
@@ -122,6 +124,7 @@ type CommandPaletteProps = {
   query: string;
   activeIndex: number;
   sessionItems: readonly PaletteItem[];
+  sessionSearchFailed: boolean;
   onToggle: () => void;
   onQueryChange: (query: string) => void;
   onActiveIndexChange: (index: number) => void;
@@ -313,7 +316,11 @@ function renderCommandPalette(props: CommandPaletteProps) {
                 <span class="nav-item__icon" style="opacity:0.3;width:20px;height:20px"
                   >${icons.search}</span
                 >
-                <span>${t("palette.noResults")}</span>
+                <span
+                  >${props.sessionSearchFailed
+                    ? t("palette.searchFailed")
+                    : t("palette.noResults")}</span
+                >
               </div>`
             : grouped.map(
                 ([category, groupedItems]) => html`
@@ -360,12 +367,14 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
   @property({ attribute: false }) onNavigate?: (routeId: RouteId) => void;
   @property({ attribute: false }) onSelectSession?: (sessionKey: string) => void;
   @property({ attribute: false }) onSlashCommand?: (command: string) => void;
+  @property({ attribute: false }) desktopAvailable = false;
   @consume({ context: applicationContext, subscribe: true })
   private context?: ApplicationContext<RouteId>;
   @state() private open = false;
   @state() private query = "";
   @state() private activeIndex = 0;
   @state() private sessionItems: readonly PaletteItem[] = [];
+  @state() private sessionSearchFailed = false;
 
   private readonly subscriptions = new SubscriptionsController(this);
   private sessionSearchTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -455,6 +464,7 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
     }
     this.sessionSearchId += 1;
     this.sessionItems = [];
+    this.sessionSearchFailed = false;
   }
 
   private scheduleSessionSearch(query: string) {
@@ -466,6 +476,7 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
     // repopulate selectable stale rows during the debounce window.
     this.sessionSearchId += 1;
     this.sessionItems = [];
+    this.sessionSearchFailed = false;
     const search = normalizeOptionalString(query);
     if (!this.open || !search || !this.onSelectSession) {
       return;
@@ -548,7 +559,13 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
       }));
       this.activeIndex = 0;
     } catch {
-      // Session search is best-effort; navigation commands stay usable.
+      // Session search is best-effort; navigation commands stay usable. But a
+      // failed search must not render as "No results" — that reads as a
+      // successful search with zero matches and hides gateway-side failures
+      // (e.g. a store needing doctor migration) from the operator.
+      if (requestId === this.sessionSearchId && this.open) {
+        this.sessionSearchFailed = true;
+      }
     }
   }
 
@@ -570,9 +587,8 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
       query: this.query,
       activeIndex: this.activeIndex,
       sessionItems: this.sessionItems,
-      desktopAvailable: this.context
-        ? isDesktopPanelAvailable(this.context.gateway.snapshot)
-        : false,
+      sessionSearchFailed: this.sessionSearchFailed,
+      desktopAvailable: this.desktopAvailable,
       onToggle: this.togglePalette,
       onQueryChange: (query) => {
         this.query = query;

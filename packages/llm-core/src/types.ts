@@ -1,6 +1,7 @@
+import type { TSchema } from "typebox";
 // LLM Core type module defines shared TypeScript contracts.
-export type { AssistantMessageDiagnostic, DiagnosticErrorInfo } from "./utils/diagnostics.js";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.js";
+export type { AssistantMessageDiagnostic, DiagnosticErrorInfo } from "./utils/diagnostics.js";
 
 /** Provider API families with first-class request/stream adapters in OpenClaw. */
 export type KnownApi =
@@ -311,6 +312,10 @@ export interface Usage {
 /** Normalized assistant stop reasons across text providers. */
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
+/** Stable error codes for provider outcomes that cannot be replayed safely. */
+export const PROVIDER_POST_DISPATCH_AMBIGUITY_ERROR_CODE = "PROVIDER_POST_DISPATCH_AMBIGUITY";
+export const PROVIDER_FAILURE_WITH_OUTPUT_ERROR_CODE = "PROVIDER_FAILURE_WITH_OUTPUT";
+
 /** User turn in a text-model conversation. */
 export interface UserMessage {
   role: "user";
@@ -331,6 +336,11 @@ export interface UserMessage {
 export interface AssistantMessage {
   role: "assistant";
   content: (TextContent | ThinkingContent | ToolCall)[];
+  openclawDelivery?: {
+    audioAsVoice?: true;
+    replyToCurrent?: true;
+    replyToId?: string;
+  };
   api: Api;
   provider: Provider;
   model: string;
@@ -387,8 +397,6 @@ export interface AssistantImages {
   errorMessage?: string;
   timestamp: number; // Unix timestamp in milliseconds
 }
-
-import type { TSchema } from "typebox";
 
 /** Provider tool declaration with a TypeBox/JSON-schema parameter object. */
 export interface Tool<TParameters extends TSchema = TSchema> {
@@ -652,7 +660,7 @@ export interface Model<TApi extends Api = Api> {
     cacheRead: number; // $/million tokens
     cacheWrite: number; // $/million tokens
   };
-  contextWindow: number;
+  contextWindow?: number;
   /**
    * Optional effective runtime cap used for compaction/session budgeting.
    * Keeps provider/native contextWindow metadata intact while allowing a

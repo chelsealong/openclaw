@@ -6,8 +6,7 @@ import {
   type ConfiguredBindingRouteResult,
   type RuntimeConversationBindingRouteResult,
 } from "openclaw/plugin-sdk/conversation-runtime";
-import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
-import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
+import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { resolveSlackReplyToMode } from "../../account-reply-mode.js";
 import type { ResolvedSlackAccount } from "../../accounts.js";
 import { parseSlackTarget, type SlackTargetKind } from "../../targets.js";
@@ -81,10 +80,13 @@ function normalizeSlackRouteBindingPeer(peer: SlackRouteBindingPeer): SlackRoute
       return undefined;
     }
   })();
-  if (!target || !slackTargetKindMatchesPeer(peer.kind, target.kind) || target.id === peer.id) {
+  if (!target || !slackTargetKindMatchesPeer(peer.kind, target.kind)) {
     return peer;
   }
-  return { ...peer, id: target.id };
+  const normalizedId = target.teamId
+    ? `team:${target.teamId}:${target.kind}:${target.id}`
+    : target.id;
+  return normalizedId === peer.id ? peer : { ...peer, id: normalizedId };
 }
 
 function normalizeSlackRouteBindingConfig(cfg: OpenClawConfig): OpenClawConfig {

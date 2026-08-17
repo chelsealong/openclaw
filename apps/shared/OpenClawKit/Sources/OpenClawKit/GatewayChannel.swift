@@ -420,18 +420,12 @@ public actor GatewayChannelActor {
         }
     }
 
-    private static func loadDeviceIdentityForConnect(
+    static func loadDeviceIdentityForConnect(
         includeDeviceIdentity: Bool,
         profile: GatewayDeviceIdentityProfile) throws -> DeviceIdentity?
     {
         guard includeDeviceIdentity else { return nil }
-        guard let identity = DeviceIdentityStore.loadOrCreatePersisted(profile: profile) else {
-            throw NSError(
-                domain: "Gateway",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Could not access the persisted device identity"])
-        }
-        return identity
+        return try DeviceIdentityStore.loadOrCreatePersistedOrThrow(profile: profile)
     }
 
     private func sendConnect(
@@ -496,15 +490,7 @@ public actor GatewayChannelActor {
             "role": ProtoAnyCodable(role),
             "scopes": ProtoAnyCodable(scopes),
         ]
-        if !options.commands.isEmpty {
-            params["commands"] = ProtoAnyCodable(options.commands)
-        }
-        if let pathEnv = options.pathEnv?.trimmingCharacters(in: .whitespacesAndNewlines), !pathEnv.isEmpty {
-            params["pathEnv"] = ProtoAnyCodable(pathEnv)
-        }
-        if !options.permissions.isEmpty {
-            params["permissions"] = ProtoAnyCodable(options.permissions)
-        }
+        options.applyOptionalConnectParams(to: &params)
         self.applyConnectAuth(
             selectedAuth,
             deviceId: identity?.deviceId,
