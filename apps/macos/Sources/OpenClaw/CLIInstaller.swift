@@ -103,9 +103,9 @@ enum CLIInstaller {
     enum LocalGatewayActivation: Equatable {
         case ready
         case deferred
-        // Binds the concrete failure to this activation attempt: GatewayProcessManager's
-        // lastFailureReason is mutable shared state that a later attempt can overwrite before
-        // a caller gets around to rereading it, misattributing a stale or newer reason.
+        /// Binds the concrete failure to this activation attempt: GatewayProcessManager's
+        /// lastFailureReason is mutable shared state that a later attempt can overwrite before
+        /// a caller gets around to rereading it, misattributing a stale or newer reason.
         case failed(reason: String?)
     }
 
@@ -591,8 +591,8 @@ enum CLIInstaller {
             await GatewayProcessManager.shared.waitForGatewayReady(
                 timeout: GatewayLaunchAgentManager.startupMigrationTolerance)
         },
-        failureReason: @MainActor () -> String? = { GatewayProcessManager.shared.lastFailureReason }
-    ) async -> LocalGatewayActivation
+        failureReason: @MainActor () -> String? = { GatewayProcessManager.shared.lastFailureReason }) async
+        -> LocalGatewayActivation
     {
         guard mode == .local, !paused else { return .deferred }
         start()
