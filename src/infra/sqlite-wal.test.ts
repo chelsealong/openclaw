@@ -893,6 +893,32 @@ describe("sqlite WAL maintenance", () => {
     );
   });
 
+  it("enables memory-mapped reads on a local ZFS mount", () => {
+    // Confirmed in production (openclaw/openclaw#115138): on Linux, OpenZFS
+    // reads bypass the kernel page cache but mmap reads populate it, so ZFS
+    // is a case where this pragma matters even though zfs was already on
+    // LOCAL_DISK_FILESYSTEM_TYPES without dedicated coverage.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-zfs-"));
+    try {
+      const db = createMockDb();
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(0));
+      vi.spyOn(fs, "readFileSync").mockReturnValue(
+        `42 12 0:41 / ${tempDir} rw,relatime - zfs tank/openclaw rw\n`,
+      );
+
+      configureSqliteWalMaintenance(db, {
+        checkpointIntervalMs: 0,
+        databasePath: path.join(tempDir, "openclaw.sqlite"),
+      });
+
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql).toContain("PRAGMA mmap_size = 67108864;");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("never memory-maps a verified local Windows drive", () => {
     // SQLite cannot truncate a memory-mapped database file on Windows, which
     // conflicts with the incremental auto_vacuum/incremental_vacuum
