@@ -158,6 +158,32 @@ describe("openclaw tool", () => {
     expect(proposalRef.current).toBeUndefined();
   });
 
+  it("keeps the first staged config_set proposal instead of overwriting it with a second", async () => {
+    const proposalRef: { current?: string } = {};
+    const tool = createSystemAgentTool({ surface: "gateway", proposalRef });
+
+    const first = await tool.execute("multi-a", {
+      action: "config_set",
+      path: "tts.providers.fish-audio.model",
+      value: "s2.1-pro",
+    });
+    expect(toolText(first)).toContain("needs-approval");
+    const firstHash = proposalRef.current;
+    expect(firstHash).toBeDefined();
+
+    const second = await tool.execute("multi-b", {
+      action: "config_set",
+      path: "talk.providers.fish-audio.model",
+      value: "s2.1-pro",
+    });
+
+    // The second, different path must not silently replace the first staged
+    // operation: only one operation can ever be approved and applied.
+    expect(toolText(second)).toContain("proposal-conflict");
+    expect(proposalRef.current).toBe(firstHash);
+    expect(mocks.executeSystemAgentOperation).not.toHaveBeenCalled();
+  });
+
   it("binds setup approval to the exact verified model and workspace", async () => {
     const proposalRef: { current?: string } = {};
     const args = {
