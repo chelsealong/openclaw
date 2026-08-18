@@ -531,6 +531,14 @@ describe("openclaw tool", () => {
     expect(
       resolveSystemAgentProposalTransition({ args, resultText: "Default model updated." }),
     ).toEqual({ proposal: undefined });
+    // A rejected second proposal must not overwrite the mirrored first
+    // operation: the host keeps proposalRef untouched on a null transition.
+    expect(
+      resolveSystemAgentProposalTransition({
+        args: { action: "config_set", path: "talk.providers.fish-audio.model", value: "s2.1-pro" },
+        resultText: `proposal-conflict:${hash}\nA different operation is already staged and awaiting the user's approval.`,
+      }),
+    ).toBeNull();
     // Read actions and unparsable calls never touch the proposal.
     expect(
       resolveSystemAgentProposalTransition({ args: { action: "status" }, resultText: "ok" }),
