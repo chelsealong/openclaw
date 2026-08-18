@@ -440,6 +440,32 @@ describe("skill workshop proposals", () => {
     await expect(fs.readFile(skillFile, "utf8")).resolves.toContain("user-invocable: false");
   });
 
+  it("preserves the live skill's routing description when an update supplies a change summary", async () => {
+    const workspaceDir = await makeWorkspace();
+    const skillDir = path.join(workspaceDir, "skills", "cron-guard");
+    await writeSkill({
+      dir: skillDir,
+      name: "cron-guard",
+      description: "Manage cron jobs safely: routing, dry-run, alerts, digest, review, rollback.",
+      body: "# Cron Guard\n\nOld body.\n",
+    });
+    const skillFile = path.join(skillDir, "SKILL.md");
+
+    const updated = await proposeUpdateSkill({
+      workspaceDir,
+      skillName: "cron-guard",
+      description: "Correct dead-man secret storage path.",
+      content: "# Cron Guard\n\nNew body.\n",
+    });
+    expect(updated.record.description).toBe("Correct dead-man secret storage path.");
+
+    await applySkillProposal({ workspaceDir, proposalId: updated.record.id });
+
+    await expect(fs.readFile(skillFile, "utf8")).resolves.toContain(
+      'description: "Manage cron jobs safely: routing, dry-run, alerts, digest, review, rollback."',
+    );
+  });
+
   it("rejects create proposals when the target skill file already exists", async () => {
     const workspaceDir = await makeWorkspace();
     const skillFile = path.join(workspaceDir, "skills", "empty-skill", "SKILL.md");

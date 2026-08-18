@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { parseFrontmatterBlock } from "../../../packages/markdown-core/src/frontmatter.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { buildWorkspaceSkillStatus, resolveSkillStatusEntry } from "../discovery/status.js";
@@ -21,6 +22,7 @@ import { createSkillProposalEvent, dispatchSkillProposalChanged } from "./plugin
 import {
   nextProposalVersion,
   prepareSkillProposalDraft,
+  resolveDraftDescription,
   resolveUpdateProposalDescription,
 } from "./proposal-draft.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
@@ -290,6 +292,7 @@ export async function proposeUpdateSkill(
   const prepared = prepareSkillProposalDraft({
     name: targetSkill.skillKey,
     description,
+    frontmatterDescription: resolveDraftDescription(draftContent, targetSkill.description),
     content: draftContent,
     fallbackFrontmatterContent: currentContent,
     date: now,
@@ -389,6 +392,7 @@ export async function reviseSkillProposal(
     assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");
     assertInsideWorkspace(input.workspaceDir, record.target.skillDir, "skill directory");
 
+    let liveDescription: string | undefined;
     if (record.kind === "create") {
       const currentContent = await readWorkspaceSkillFile(record.target.skillFile);
       if (currentContent !== null) {
@@ -404,6 +408,7 @@ export async function reviseSkillProposal(
       if (currentContent === null) {
         throw new Error(`Target skill is missing: ${record.target.skillFile}`);
       }
+      liveDescription = parseFrontmatterBlock(currentContent).description;
       if (
         record.target.currentContentHash &&
         hashSkillProposalContent(currentContent) !== record.target.currentContentHash
@@ -429,6 +434,10 @@ export async function reviseSkillProposal(
     const prepared = prepareSkillProposalDraft({
       name: record.target.skillKey,
       description,
+      frontmatterDescription:
+        liveDescription !== undefined
+          ? resolveDraftDescription(requestedContent, liveDescription)
+          : undefined,
       content: requestedContent,
       fallbackFrontmatterContent: read.content,
       version: nextVersion,

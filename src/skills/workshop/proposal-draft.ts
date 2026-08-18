@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "@openclaw/normalization-core/result";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { parseFrontmatterBlock } from "../../../packages/markdown-core/src/frontmatter.js";
 import { readLocalFileSafely, root, walkDirectory } from "../../infra/fs-safe.js";
 import {
   MAX_WORKSPACE_SKILL_SUPPORT_FILE_BYTES,
@@ -39,6 +40,7 @@ type PreparedSkillProposalDraft = {
 export function prepareSkillProposalDraft(input: {
   name: string;
   description: string;
+  frontmatterDescription?: string;
   content: string;
   fallbackFrontmatterContent?: string;
   version?: string;
@@ -55,7 +57,7 @@ export function prepareSkillProposalDraft(input: {
     const supportFiles = prepareSkillProposalSupportFiles(input.supportFiles);
     const content = renderProposalMarkdown({
       name: input.name,
-      description: input.description,
+      description: input.frontmatterDescription ?? input.description,
       content: input.content,
       fallbackFrontmatterContent: input.fallbackFrontmatterContent,
       version: input.version,
@@ -94,6 +96,16 @@ export function resolveUpdateProposalDescription(
     return supplied;
   }
   return truncateUtf8(currentDescription.trim(), MAX_SKILL_PROPOSAL_DESCRIPTION_BYTES);
+}
+
+/**
+ * An update proposal's `description` is a change summary for the proposal listing (see
+ * `resolveUpdateProposalDescription`), never the skill's routing description. The frontmatter
+ * written into PROPOSAL.md, and later copied into the live SKILL.md on apply, must keep the
+ * skill's real description unless the drafted content explicitly carries a new one.
+ */
+export function resolveDraftDescription(draftContent: string, liveDescription: string): string {
+  return parseFrontmatterBlock(draftContent).description || liveDescription;
 }
 
 export function nextProposalVersion(version: string): string {
