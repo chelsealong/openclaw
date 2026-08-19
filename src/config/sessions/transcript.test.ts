@@ -841,6 +841,34 @@ describe("appendAssistantMessageToSessionTranscript", () => {
     }
   });
 
+  it("suppresses a keyed channel-final mirror that duplicates the preceding primary reply", async () => {
+    await writeTranscriptStore();
+
+    const primary = await appendExactAssistantMessageToSessionTranscript({
+      sessionKey,
+      storePath: fixture.storePath(),
+      message: createExactAssistantMessage({ text: "Delivered once already" }),
+    });
+    expect(primary.ok).toBe(true);
+
+    const mirror = await appendAssistantMessageToSessionTranscript({
+      sessionKey,
+      text: "Delivered once already",
+      storePath: fixture.storePath(),
+      idempotencyKey: "channel-final:telegram-message-1:0",
+      deliveryMirror: { kind: "channel-final", sourceMessageId: "telegram-message-1" },
+    });
+
+    expect(mirror.ok).toBe(true);
+    if (primary.ok && mirror.ok) {
+      expect(mirror.messageId).toBe(primary.messageId);
+      const messages = (await loadFixtureMessages()).flatMap((entry) =>
+        entry.message ? [entry.message] : [],
+      );
+      expect(messages).toHaveLength(1);
+    }
+  });
+
   it("idempotently appends identified message-tool source replies", async () => {
     await writeTranscriptStore();
     const deliveryMirror = {

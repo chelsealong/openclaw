@@ -315,14 +315,19 @@ export async function appendAssistantMirrorMessageByIdentity(
       sessionId: currentEntry.sessionId,
     };
     const target = await resolveSessionTranscriptRuntimeTarget(scope);
-    const latestEquivalentAssistantId =
-      !params.idempotencyKey && isDeliveryMirrorAssistantMessage(message)
-        ? findLatestEquivalentAssistantMessageId(
-            selectVisibleTranscriptEvents(await locked.readEvents()),
-            message,
-            params.config,
-          )
-        : undefined;
+    // A keyed mirror only suppresses against a genuine primary reply, never
+    // against another mirror row: key-scan dedup already handles repeated
+    // deliveries of the same source, and matching two distinct-source keyed
+    // mirrors on text alone would wrongly collapse them into one. An unkeyed
+    // mirror keeps deduping against any equivalent-text tail, mirror or not.
+    const latestEquivalentAssistantId = isDeliveryMirrorAssistantMessage(message)
+      ? findLatestEquivalentAssistantMessageId(
+          selectVisibleTranscriptEvents(await locked.readEvents()),
+          message,
+          params.config,
+          Boolean(params.idempotencyKey),
+        )
+      : undefined;
     if (latestEquivalentAssistantId) {
       return {
         ok: true,
@@ -484,6 +489,7 @@ function findLatestEquivalentAssistantMessageId(
   events: readonly SessionTranscriptEvent[],
   message: SessionTranscriptAssistantMessage,
   config: OpenClawConfig | undefined,
+  requirePrimaryCandidate: boolean,
 ): string | undefined {
   const expectedText = extractAssistantMirrorComparableText(message, config);
   if (!expectedText) {
@@ -500,6 +506,12 @@ function findLatestEquivalentAssistantMessageId(
       continue;
     }
     if (candidate.role !== "assistant") {
+      return undefined;
+    }
+    // A keyed mirror only suppresses against a genuine primary reply, not
+    // against another mirror row, so distinct-source keyed mirrors with
+    // identical text stay separate rows.
+    if (requirePrimaryCandidate && isDeliveryMirrorAssistantMessage(candidate)) {
       return undefined;
     }
     return extractAssistantMirrorComparableText(candidate, config) === expectedText &&

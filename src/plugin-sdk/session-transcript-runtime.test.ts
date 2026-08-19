@@ -480,6 +480,41 @@ describe("session transcript runtime SDK", () => {
     ).resolves.toMatchObject({ ok: false, code: "session-rebound" });
   });
 
+  it("suppresses a keyed channel-final mirror that duplicates the preceding primary reply", async () => {
+    const scope = {
+      agentId: "main",
+      sessionId: "primary-then-keyed-mirror-session",
+      sessionKey: "agent:main:main",
+      storePath,
+    };
+
+    await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const primary = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Delivered once already" }],
+      },
+    });
+    if (!primary) {
+      throw new Error("expected primary reply to append");
+    }
+
+    const mirror = await appendAssistantMirrorMessageByIdentity({
+      ...scope,
+      deliveryMirror: { kind: "channel-final", sourceMessageId: "telegram-message-1" },
+      idempotencyKey: "channel-final:telegram-message-1:0",
+      text: "Delivered once already",
+    });
+
+    expect(mirror).toEqual({ ok: true, messageId: primary.messageId });
+    const assistantMessages = (await readSessionTranscriptEvents(scope)).filter((event) => {
+      const message = (event as { message?: { role?: unknown } }).message;
+      return message?.role === "assistant";
+    });
+    expect(assistantMessages).toHaveLength(1);
+  });
+
   it("dedupes unkeyed assistant mirrors against only the visible SQLite branch", async () => {
     const scope = {
       agentId: "main",

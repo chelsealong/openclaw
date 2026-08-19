@@ -559,8 +559,6 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
       storePath,
     };
     let latestEquivalentAssistantId: string | undefined;
-    // Identified delivery mirrors, including suppressed finals, dedupe only by
-    // key so same-text markers from different source ids remain separate rows.
     const turn = await persistSessionTranscriptTurn(
       {
         sessionId: currentEntry.sessionId,
@@ -603,14 +601,19 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
                 }
               : {}),
             shouldAppend: async (appendTarget) => {
-              latestEquivalentAssistantId =
-                isRedundantDeliveryMirror(params.message) && !identifiedDeliveryMirror
-                  ? await findLatestEquivalentAssistantMessageId(
-                      appendTarget,
-                      preparedUnkeyedMessage as SessionTranscriptAssistantMessage,
-                      params.config,
-                    )
-                  : undefined;
+              // An identified (keyed) mirror only suppresses against a genuine
+              // primary reply, never against another mirror row: key-scan
+              // dedup already handles repeated deliveries of the same source,
+              // and matching two distinct-source keyed mirrors on text alone
+              // would wrongly collapse them into one.
+              latestEquivalentAssistantId = isRedundantDeliveryMirror(params.message)
+                ? await findLatestEquivalentAssistantMessageId(
+                    appendTarget,
+                    preparedUnkeyedMessage as SessionTranscriptAssistantMessage,
+                    params.config,
+                    identifiedDeliveryMirror,
+                  )
+                : undefined;
               return !latestEquivalentAssistantId;
             },
           },
@@ -698,6 +701,17 @@ function isRedundantDeliveryMirror(message: SessionTranscriptAssistantMessage): 
   );
 }
 
+function isIdentifiedDeliveryMirror(message: SessionTranscriptAssistantMessage): boolean {
+  const marker = (message as { openclawDeliveryMirror?: InternalSessionTranscriptDeliveryMirror })
+    .openclawDeliveryMirror;
+  return (
+    isRedundantDeliveryMirror(message) &&
+    (marker?.kind === "channel-final" ||
+      marker?.kind === "channel-final-suppressed" ||
+      marker?.kind === "message-tool-source-reply")
+  );
+}
+
 async function readLatestVisibleTranscriptMessage(scope: {
   agentId?: string;
   sessionId: string;
@@ -729,17 +743,6 @@ async function readLatestVisibleTranscriptMessage(scope: {
   return undefined;
 }
 
-function isIdentifiedDeliveryMirror(message: SessionTranscriptAssistantMessage): boolean {
-  const marker = (message as { openclawDeliveryMirror?: InternalSessionTranscriptDeliveryMirror })
-    .openclawDeliveryMirror;
-  return (
-    isRedundantDeliveryMirror(message) &&
-    (marker?.kind === "channel-final" ||
-      marker?.kind === "channel-final-suppressed" ||
-      marker?.kind === "message-tool-source-reply")
-  );
-}
-
 function extractAssistantMessageText(message: AgentMessage): string | null {
   if (message.role !== "assistant" || !Array.isArray(message.content)) {
     return null;
@@ -762,7 +765,8 @@ function extractAssistantMessageText(message: AgentMessage): string | null {
 async function findLatestEquivalentAssistantMessageId(
   target: SessionTranscriptTurnWriteContext,
   message: SessionTranscriptAssistantMessage,
-  config?: OpenClawConfig,
+  config: OpenClawConfig | undefined,
+  requirePrimaryCandidate: boolean,
 ): Promise<string | undefined> {
   const expectedText = extractAssistantMessageText(redactTranscriptMessage(message, config));
   if (!expectedText) {
@@ -776,8 +780,14 @@ async function findLatestEquivalentAssistantMessageId(
       ...(target.sessionKey ? { sessionKey: target.sessionKey } : {}),
       storePath: target.storePath,
     });
-    const latestMessage = latest?.message as { role?: unknown } | undefined;
+    const latestMessage = latest?.message as SessionTranscriptAssistantMessage | undefined;
     if (latestMessage?.role !== "assistant") {
+      return undefined;
+    }
+    // An identified (keyed) mirror only suppresses against a genuine primary
+    // reply, not against another mirror row, so distinct-source keyed mirrors
+    // with identical text stay separate rows.
+    if (requirePrimaryCandidate && isRedundantDeliveryMirror(latestMessage)) {
       return undefined;
     }
     const candidateText = latest
