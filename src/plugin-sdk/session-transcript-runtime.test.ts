@@ -515,6 +515,42 @@ describe("session transcript runtime SDK", () => {
     expect(assistantMessages).toHaveLength(1);
   });
 
+  it("keeps a distinct keyed mirror separate from a marker-only historical mirror with stripped provenance", async () => {
+    const scope = {
+      agentId: "main",
+      sessionId: "stripped-mirror-then-keyed-mirror-session",
+      sessionKey: "agent:main:main",
+      storePath,
+    };
+
+    await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const historicalMirror = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Delivered once already" }],
+        openclawDeliveryMirror: { kind: "channel-final", sourceMessageId: "stripped-message" },
+      },
+    });
+    if (!historicalMirror) {
+      throw new Error("expected historical mirror to append");
+    }
+
+    const mirror = await appendAssistantMirrorMessageByIdentity({
+      ...scope,
+      deliveryMirror: { kind: "channel-final", sourceMessageId: "telegram-message-2" },
+      idempotencyKey: "channel-final:telegram-message-2:0",
+      text: "Delivered once already",
+    });
+
+    expect(mirror.ok).toBe(true);
+    const assistantMessages = (await readSessionTranscriptEvents(scope)).filter((event) => {
+      const message = (event as { message?: { role?: unknown } }).message;
+      return message?.role === "assistant";
+    });
+    expect(assistantMessages).toHaveLength(2);
+  });
+
   it("dedupes unkeyed assistant mirrors against only the visible SQLite branch", async () => {
     const scope = {
       agentId: "main",

@@ -36,6 +36,7 @@ import type {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { extractAssistantPhaseText } from "../shared/chat-message-content.js";
+import { isTranscriptOnlyOpenClawAssistantMessage } from "../shared/transcript-only-openclaw-assistant.js";
 import type { AgentMessage } from "./agent-core.js";
 import { withProjectedSessionTranscriptWriteLock } from "./session-transcript-lock-runtime.js";
 import {
@@ -510,8 +511,11 @@ function findLatestEquivalentAssistantMessageId(
     }
     // A keyed mirror only suppresses against a genuine primary reply, not
     // against another mirror row, so distinct-source keyed mirrors with
-    // identical text stay separate rows.
-    if (requirePrimaryCandidate && isDeliveryMirrorAssistantMessage(candidate)) {
+    // identical text stay separate rows. Use the marker-aware check (not the
+    // plain provider/model test) because session rebuild/side-branch merges
+    // can strip a historical mirror's provider/model while leaving its
+    // openclawDeliveryMirror marker intact (#99470).
+    if (requirePrimaryCandidate && isTranscriptOnlyOpenClawAssistantMessage(candidate)) {
       return undefined;
     }
     return extractAssistantMirrorComparableText(candidate, config) === expectedText &&

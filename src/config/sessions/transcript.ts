@@ -18,6 +18,7 @@ import {
   OPENCLAW_DELIVERY_MIRROR_MODEL,
   OPENCLAW_TRANSCRIPT_ARTIFACT_API,
   OPENCLAW_TRANSCRIPT_ARTIFACT_PROVIDER,
+  isTranscriptOnlyOpenClawAssistantMessage as isMarkerAwareTranscriptArtifactMessage,
   isTranscriptOnlyOpenClawAssistantModel,
 } from "../../shared/transcript-only-openclaw-assistant.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
@@ -786,8 +787,11 @@ async function findLatestEquivalentAssistantMessageId(
     }
     // An identified (keyed) mirror only suppresses against a genuine primary
     // reply, not against another mirror row, so distinct-source keyed mirrors
-    // with identical text stay separate rows.
-    if (requirePrimaryCandidate && isRedundantDeliveryMirror(latestMessage)) {
+    // with identical text stay separate rows. Use the marker-aware check
+    // (not the plain provider/model test) because session rebuild/side-branch
+    // merges can strip a historical mirror's provider/model while leaving its
+    // openclawDeliveryMirror marker intact (#99470).
+    if (requirePrimaryCandidate && isMarkerAwareTranscriptArtifactMessage(latestMessage)) {
       return undefined;
     }
     const candidateText = latest

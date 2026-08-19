@@ -869,6 +869,36 @@ describe("appendAssistantMessageToSessionTranscript", () => {
     }
   });
 
+  it("keeps a distinct keyed mirror separate from a marker-only historical mirror with stripped provenance", async () => {
+    await writeTranscriptStore();
+    await persistSessionTranscriptTurn(createFixtureTranscriptScope(), {
+      updateMode: "none",
+      messages: [
+        {
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Delivered once already" }],
+            openclawDeliveryMirror: { kind: "channel-final", sourceMessageId: "stripped-message" },
+          },
+        },
+      ],
+    });
+
+    const mirror = await appendAssistantMessageToSessionTranscript({
+      sessionKey,
+      text: "Delivered once already",
+      storePath: fixture.storePath(),
+      idempotencyKey: "channel-final:telegram-message-2:0",
+      deliveryMirror: { kind: "channel-final", sourceMessageId: "telegram-message-2" },
+    });
+
+    expect(mirror.ok).toBe(true);
+    const messages = (await loadFixtureMessages()).flatMap((entry) =>
+      entry.message ? [entry.message] : [],
+    );
+    expect(messages).toHaveLength(2);
+  });
+
   it("idempotently appends identified message-tool source replies", async () => {
     await writeTranscriptStore();
     const deliveryMirror = {
