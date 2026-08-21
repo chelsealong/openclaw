@@ -129,6 +129,35 @@ describe("read tool", () => {
     );
   });
 
+  it("omits the image payload for a model with no vision support", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-read-media-"));
+    const mediaId = `read-tool-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
+    const mediaPath = path.join(stateDir, "media", "inbound", mediaId);
+    await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+    await fs.writeFile(mediaPath, Buffer.from(ONE_PIXEL_PNG_BASE64, "base64"));
+
+    const tool = createReadToolDefinition("/workspace", { autoResizeImages: false });
+    try {
+      await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+        const result = await tool.execute(
+          "call-1",
+          { path: `media://inbound/${mediaId}` },
+          undefined,
+          undefined,
+          { model: { input: ["text"] } } as never,
+        );
+
+        expect(result.content).toHaveLength(1);
+        expect(textContent(result)).toContain(
+          "Current model does not support images. The image will be omitted from this request.",
+        );
+        expect(result.content.some((part) => part.type === "image")).toBe(false);
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("explains that directory paths must be listed before reading a file", async () => {
     const tempDir = tempDirs.make("openclaw-read-directory-");
     const tool = createReadToolDefinition(tempDir);

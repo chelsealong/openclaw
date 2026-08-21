@@ -574,7 +574,9 @@ export function createReadToolDefinition(
                 if (nonVisionImageNote) {
                   textNote += `\n${nonVisionImageNote}`;
                 }
-                content = [{ type: "text", text: textNote }, processed.image];
+                content = nonVisionImageNote
+                  ? [{ type: "text", text: textNote }]
+                  : [{ type: "text", text: textNote }, processed.image];
               }
             } else {
               const decodedText =
