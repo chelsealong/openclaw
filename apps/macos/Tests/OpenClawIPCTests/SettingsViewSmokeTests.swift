@@ -111,6 +111,29 @@ struct SettingsViewSmokeTests {
             result: .confirmed(nil)) == .loaded(nil))
     }
 
+    @Test func `settings tab router retires a request only when the admitted notification matches`() {
+        // Mounted admits its own notification: clears.
+        SettingsTabRouter.request(.connection)
+        SettingsTabRouter.clearIfMatching(.connection)
+        #expect(SettingsTabRouter.consumePending() == nil)
+
+        // A newer request supersedes an older one before the older notification is
+        // admitted; admitting the stale request must preserve the newer one, and
+        // admitting the newer request must clear it.
+        SettingsTabRouter.request(.connection)
+        SettingsTabRouter.request(.about)
+        SettingsTabRouter.clearIfMatching(.connection)
+        #expect(SettingsTabRouter.consumePending() == .about)
+
+        SettingsTabRouter.request(.about)
+        SettingsTabRouter.clearIfMatching(.about)
+        #expect(SettingsTabRouter.consumePending() == nil)
+
+        // A request made while unmounted stays consumable on first appearance.
+        SettingsTabRouter.request(.connection)
+        #expect(SettingsTabRouter.consumePending() == .connection)
+    }
+
     @Test func `OpenClaw preserves same route and resets for gateway changes`() {
         let stateDir = URL(fileURLWithPath: "/Users/tester/.openclaw")
         let directA = MacChatTranscriptCache.gatewayID(
