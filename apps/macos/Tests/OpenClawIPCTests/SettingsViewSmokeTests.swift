@@ -134,6 +134,27 @@ struct SettingsViewSmokeTests {
         #expect(SettingsTabRouter.consumePending() == .connection)
     }
 
+    @Test func `mounted settings view retires request when the notification is admitted`() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: SettingsTab.windowWidth, height: SettingsTab.windowHeight),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false)
+        let hosting = NSHostingView(rootView: SettingsRootView(state: .preview, updater: DisabledUpdaterController()))
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+
+        // Same request-then-notify sequence as AppNavigationActions.openSettings and
+        // CLIInstallPrompter.openSettings, but with Settings already mounted. Goes through
+        // the real `.onReceive` handler via NotificationCenter instead of calling
+        // `clearIfMatching` directly, so it fails if that call is ever removed from the
+        // handler: a later ordinary appearance would then wrongly consume this stale request.
+        SettingsTabRouter.request(.connection)
+        NotificationCenter.default.post(name: .openclawSelectSettingsTab, object: SettingsTab.connection)
+
+        #expect(SettingsTabRouter.consumePending() == nil)
+    }
+
     @Test func `OpenClaw preserves same route and resets for gateway changes`() {
         let stateDir = URL(fileURLWithPath: "/Users/tester/.openclaw")
         let directA = MacChatTranscriptCache.gatewayID(
