@@ -326,11 +326,11 @@ struct DashboardWindowSmokeTests {
         // Let the stale task resume and unwind. Pre-fix, its unconditional
         // `defer` clears whichever task is currently stored — the successor's
         // handle — even though the successor is still in flight.
-        gate.releaseOldest()
+        await gate.releaseOldest()
         for _ in 0..<200 { await Task.yield() }
 
         #expect(manager._testHasOpenForCommandTask())
-        gate.releaseOldest()
+        await gate.releaseOldest()
         for _ in 0..<200 { await Task.yield() }
     }
 

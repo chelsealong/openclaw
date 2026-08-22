@@ -474,22 +474,6 @@ final class DashboardManager {
             detail: "Check Settings → Connection or use Debug → Reset Remote Tunnel, then try again.")
     }
 
-    /// Shared by `close()` and the primary controller's native close handler:
-    /// both are terminal for whatever presentation/navigation/command-open
-    /// work was in flight for the primary window, so both retire the same
-    /// manager-owned generations and tasks.
-    private func retirePrimaryPresentationState() {
-        self.endpointGeneration &+= 1
-        self.presentationGeneration &+= 1
-        self.presentationTask?.cancel()
-        self.presentationTask = nil
-        self.navigationGeneration &+= 1
-        self.openForCommandGeneration &+= 1
-        self.openForCommandTask?.cancel()
-        self.openForCommandTask = nil
-        self.pendingOpenCommands.removeAll()
-    }
-
     func close() {
         self.retirePrimaryPresentationState()
         self.switchGenerations.removeAll()
@@ -773,27 +757,6 @@ final class DashboardManager {
             requestBrowserProfileImportOffer: { _ in false })
     }
 
-    private func installPrimaryWindowCloseHandler(_ controller: DashboardWindowController) {
-        controller.onClosed = { [weak self, weak controller] in
-            guard let self, let controller, self.controller === controller else { return }
-            self.retirePrimaryPresentationState()
-        }
-    }
-
-    private func installAuxiliaryWindowCloseHandler(_ controller: DashboardWindowController, windowID: UUID) {
-        controller.onClosed = { [weak self, weak controller] in
-            guard let self, let controller,
-                  self.auxiliaryWindows[windowID]?.controller === controller
-            else {
-                return
-            }
-            self.switchGenerations[ObjectIdentifier(controller)] = nil
-            self.auxiliaryWindows.removeValue(forKey: windowID)
-            self.auxiliaryWindowOrder.removeAll { $0 == windowID }
-            self.updateFrontmostDashboardTarget()
-        }
-    }
-
     private func autosaveName(for target: DashboardGatewayTarget) -> String {
         switch target {
         case .primary:
@@ -917,6 +880,43 @@ final class DashboardManager {
 extension DashboardManager {
     func show() async throws {
         try await self.currentPresentationTask().value
+    }
+
+    /// Shared by `close()` and the primary controller's native close handler:
+    /// both are terminal for whatever presentation/navigation/command-open
+    /// work was in flight for the primary window, so both retire the same
+    /// manager-owned generations and tasks.
+    private func retirePrimaryPresentationState() {
+        self.endpointGeneration &+= 1
+        self.presentationGeneration &+= 1
+        self.presentationTask?.cancel()
+        self.presentationTask = nil
+        self.navigationGeneration &+= 1
+        self.openForCommandGeneration &+= 1
+        self.openForCommandTask?.cancel()
+        self.openForCommandTask = nil
+        self.pendingOpenCommands.removeAll()
+    }
+
+    private func installPrimaryWindowCloseHandler(_ controller: DashboardWindowController) {
+        controller.onClosed = { [weak self, weak controller] in
+            guard let self, let controller, self.controller === controller else { return }
+            self.retirePrimaryPresentationState()
+        }
+    }
+
+    private func installAuxiliaryWindowCloseHandler(_ controller: DashboardWindowController, windowID: UUID) {
+        controller.onClosed = { [weak self, weak controller] in
+            guard let self, let controller,
+                  self.auxiliaryWindows[windowID]?.controller === controller
+            else {
+                return
+            }
+            self.switchGenerations[ObjectIdentifier(controller)] = nil
+            self.auxiliaryWindows.removeValue(forKey: windowID)
+            self.auxiliaryWindowOrder.removeAll { $0 == windowID }
+            self.updateFrontmostDashboardTarget()
+        }
     }
 
     private func showResolvedDashboard() async throws {
