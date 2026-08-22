@@ -232,6 +232,29 @@ struct DashboardWindowSmokeTests {
         #expect(controller._testPendingNativeCommands.isEmpty)
     }
 
+    @Test func `closing dashboard window retires queued native intent`() throws {
+        let url = try #require(URL(string: "http://127.0.0.1:18789/control/"))
+        let controller = DashboardWindowController(
+            url: url,
+            auth: DashboardWindowAuth(gatewayUrl: nil, token: nil, password: nil))
+        controller.show()
+
+        controller.dispatchNativeCommand(.newSession)
+        controller.dispatchNativeNavigation(DashboardNativeNavigation(path: "/settings", search: nil, fallbackURL: url))
+        #expect(!controller._testPendingNativeCommands.isEmpty)
+        #expect(controller._testPendingNativeNavigation != nil)
+        let generationBeforeClose = controller._testNavigationGeneration
+
+        // Ordinary close, not the route-replacement transfer that reuses the
+        // window without a close cycle: a later reopen must not replay intent
+        // that was only ever valid for the window that is now gone.
+        controller.closeDashboard()
+
+        #expect(controller._testPendingNativeCommands.isEmpty)
+        #expect(controller._testPendingNativeNavigation == nil)
+        #expect(controller._testNavigationGeneration != generationBeforeClose)
+    }
+
     @Test func `dashboard navigation stays on same endpoint`() throws {
         let dashboard = try #require(URL(string: "http://127.0.0.1:18789/control/"))
         let staleEndpoint = try #require(URL(string: "http://127.0.0.1:18790/control/chat"))
