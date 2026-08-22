@@ -255,6 +255,24 @@ struct DashboardWindowSmokeTests {
         #expect(controller._testNavigationGeneration != generationBeforeClose)
     }
 
+    @Test func `closing primary dashboard window retires manager presentation state`() throws {
+        let url = try #require(URL(string: "http://127.0.0.1:18789/control/"))
+        let controller = DashboardWindowController(
+            url: url,
+            auth: DashboardWindowAuth(gatewayUrl: nil, token: nil, password: nil))
+        let manager = DashboardManager._testMake()
+        manager._testSetController(controller)
+        controller.show()
+
+        // A native close (the red-button path, not manager.close()) must
+        // still retire the manager's generations: a suspended show(atPath:)
+        // or command-open task guards on these before resuming.
+        let generationBeforeClose = manager._testNavigationGeneration()
+        controller.closeDashboard()
+
+        #expect(manager._testNavigationGeneration() != generationBeforeClose)
+    }
+
     @Test func `dashboard navigation stays on same endpoint`() throws {
         let dashboard = try #require(URL(string: "http://127.0.0.1:18789/control/"))
         let staleEndpoint = try #require(URL(string: "http://127.0.0.1:18790/control/chat"))

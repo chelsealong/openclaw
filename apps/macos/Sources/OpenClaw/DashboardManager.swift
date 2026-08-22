@@ -28,7 +28,16 @@ final class DashboardManager {
 
     private struct SupersededDashboardPresentation: Error {}
 
-    @ObservationIgnored private var controller: DashboardWindowController?
+    // The primary controller is reused across many creation/replacement call
+    // sites (initial load, failure fallback, endpoint/route replacement,
+    // target switch). `didSet` installs the close handler exactly once per
+    // assignment instead of repeating the wiring at every site.
+    @ObservationIgnored private var controller: DashboardWindowController? {
+        didSet {
+            guard let controller, controller !== oldValue else { return }
+            self.installPrimaryWindowCloseHandler(controller)
+        }
+    }
     @ObservationIgnored private var mainTarget = DashboardGatewayTarget.primary
     @ObservationIgnored private var auxiliaryWindows: [UUID: AuxiliaryWindowInstance] = [:]
     @ObservationIgnored private var auxiliaryWindowOrder: [UUID] = []
@@ -464,7 +473,11 @@ final class DashboardManager {
             detail: "Check Settings → Connection or use Debug → Reset Remote Tunnel, then try again.")
     }
 
-    func close() {
+    /// Shared by `close()` and the primary controller's native close handler:
+    /// both are terminal for whatever presentation/navigation/command-open
+    /// work was in flight for the primary window, so both retire the same
+    /// manager-owned generations and tasks.
+    private func retirePrimaryPresentationState() {
         self.endpointGeneration &+= 1
         self.presentationGeneration &+= 1
         self.presentationTask?.cancel()
@@ -473,6 +486,10 @@ final class DashboardManager {
         self.openForCommandTask?.cancel()
         self.openForCommandTask = nil
         self.pendingOpenCommands.removeAll()
+    }
+
+    func close() {
+        self.retirePrimaryPresentationState()
         self.switchGenerations.removeAll()
         self.controller?.closeDashboard()
         let controllers = self.auxiliaryWindows.values.map(\.controller)
@@ -742,6 +759,13 @@ final class DashboardManager {
             windowAutosaveName: windowAutosaveName,
             reusingWindow: reusingWindow,
             requestBrowserProfileImportOffer: { _ in false })
+    }
+
+    private func installPrimaryWindowCloseHandler(_ controller: DashboardWindowController) {
+        controller.onClosed = { [weak self, weak controller] in
+            guard let self, let controller, self.controller === controller else { return }
+            self.retirePrimaryPresentationState()
+        }
     }
 
     private func installAuxiliaryWindowCloseHandler(_ controller: DashboardWindowController, windowID: UUID) {
@@ -1205,6 +1229,10 @@ extension DashboardManager {
 
     func _testSetController(_ controller: DashboardWindowController?) {
         self.controller = controller
+    }
+
+    func _testNavigationGeneration() -> UInt64 {
+        self.navigationGeneration
     }
 
     func _testController() -> DashboardWindowController? {
