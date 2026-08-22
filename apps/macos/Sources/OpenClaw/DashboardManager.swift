@@ -45,6 +45,7 @@ final class DashboardManager {
     @ObservationIgnored private var presentationTask: Task<Void, Error>?
     @ObservationIgnored private var pendingOpenCommands: [DashboardNativeCommand] = []
     @ObservationIgnored private var openForCommandTask: Task<Void, Never>?
+    @ObservationIgnored private var openForCommandGeneration: UInt64 = 0
     @ObservationIgnored private var navigationGeneration: UInt64 = 0
     @ObservationIgnored private var updater: UpdaterProviding?
     @ObservationIgnored private var displayedRouteRevision: UInt64?
@@ -483,6 +484,7 @@ final class DashboardManager {
         self.presentationTask?.cancel()
         self.presentationTask = nil
         self.navigationGeneration &+= 1
+        self.openForCommandGeneration &+= 1
         self.openForCommandTask?.cancel()
         self.openForCommandTask = nil
         self.pendingOpenCommands.removeAll()
@@ -516,8 +518,17 @@ final class DashboardManager {
         // press would race window creation and reorder ⌘N/⌘K delivery.
         self.pendingOpenCommands.append(command)
         guard self.openForCommandTask == nil else { return }
+        self.openForCommandGeneration &+= 1
+        let generation = self.openForCommandGeneration
         self.openForCommandTask = Task { @MainActor in
-            defer { self.openForCommandTask = nil }
+            // A close mid-await bumps openForCommandGeneration and can install a
+            // successor task before this one resumes; the generation check keeps
+            // this stale task from clobbering the successor's handle or queue.
+            defer {
+                if self.openForCommandGeneration == generation {
+                    self.openForCommandTask = nil
+                }
+            }
             if !self.showConfiguredWindowIfPossible() {
                 do {
                     try await self.show()
@@ -529,6 +540,7 @@ final class DashboardManager {
                     return
                 }
             }
+            guard self.openForCommandGeneration == generation else { return }
             let commands = self.pendingOpenCommands
             self.pendingOpenCommands = []
             for command in commands {
@@ -1233,6 +1245,10 @@ extension DashboardManager {
 
     func _testNavigationGeneration() -> UInt64 {
         self.navigationGeneration
+    }
+
+    func _testHasOpenForCommandTask() -> Bool {
+        self.openForCommandTask != nil
     }
 
     func _testController() -> DashboardWindowController? {

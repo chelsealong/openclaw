@@ -41,6 +41,30 @@ private final class DashboardBrowserImportGate {
     }
 }
 
+/// FIFO suspension gate: `wait()` parks until a matching `releaseOldest()`.
+/// `waitForNextArrival()` blocks until the next `wait()` call has parked —
+/// a caller must invoke it before the corresponding `wait()` can run, which
+/// MainActor's cooperative scheduling guarantees for a just-spawned Task.
+private actor DashboardOpenAttemptGate {
+    private var parked: [CheckedContinuation<Void, Never>] = []
+    private var arrivalContinuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        self.arrivalContinuation?.resume()
+        self.arrivalContinuation = nil
+        await withCheckedContinuation { self.parked.append($0) }
+    }
+
+    func waitForNextArrival() async {
+        await withCheckedContinuation { self.arrivalContinuation = $0 }
+    }
+
+    func releaseOldest() {
+        guard !self.parked.isEmpty else { return }
+        self.parked.removeFirst().resume()
+    }
+}
+
 private final class DashboardWindowGestureSpy: NSWindow {
     private(set) var dragCount = 0
     private(set) var zoomCount = 0
@@ -271,6 +295,43 @@ struct DashboardWindowSmokeTests {
         controller.closeDashboard()
 
         #expect(manager._testNavigationGeneration() != generationBeforeClose)
+    }
+
+    @Test func `stale command-open task does not clobber a successor after close`() async {
+        struct OpenAttemptFailure: Error {}
+        let previousMode = AppStateStore.shared.connectionMode
+        AppStateStore.shared.connectionMode = .unconfigured
+        defer { AppStateStore.shared.connectionMode = previousMode }
+        let gate = DashboardOpenAttemptGate()
+        let manager = DashboardManager._testMake(primaryEndpointProvider: { _ in
+            await gate.wait()
+            throw OpenAttemptFailure()
+        })
+
+        // ⌘N before any window exists starts a command-open task that parks
+        // awaiting the endpoint.
+        manager.dispatchNativeCommand(.newSession)
+        await gate.waitForNextArrival()
+
+        // A close retires that task's generation and cancels it, but it is
+        // still parked in primaryEndpoint(mode:) — it has not unwound yet.
+        manager.close()
+
+        // ⌘K after close installs a successor command-open task, since the
+        // manager-owned handle was cleared synchronously by close().
+        manager.dispatchNativeCommand(.commandPalette)
+        await gate.waitForNextArrival()
+        #expect(manager._testHasOpenForCommandTask())
+
+        // Let the stale task resume and unwind. Pre-fix, its unconditional
+        // `defer` clears whichever task is currently stored — the successor's
+        // handle — even though the successor is still in flight.
+        gate.releaseOldest()
+        for _ in 0..<200 { await Task.yield() }
+
+        #expect(manager._testHasOpenForCommandTask())
+        gate.releaseOldest()
+        for _ in 0..<200 { await Task.yield() }
     }
 
     @Test func `dashboard navigation stays on same endpoint`() throws {
