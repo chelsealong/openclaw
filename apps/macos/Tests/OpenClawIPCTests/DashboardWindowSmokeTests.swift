@@ -334,6 +334,40 @@ struct DashboardWindowSmokeTests {
         for _ in 0..<200 { await Task.yield() }
     }
 
+    @Test func `stale gateway switch does not replace a natively closed primary controller`() async throws {
+        let url = try #require(URL(string: "http://127.0.0.1:18789/control/"))
+        let controller = DashboardWindowController(
+            url: url,
+            auth: DashboardWindowAuth(gatewayUrl: nil, token: nil, password: nil))
+        let gate = DashboardOpenAttemptGate()
+        let manager = DashboardManager._testMake(profileEndpointProvider: { profileID in
+            await gate.wait()
+            let endpointURL = try #require(URL(string: "ws://127.0.0.1:60002"))
+            return GatewayConnection.EndpointSnapshot(
+                config: (url: endpointURL, token: profileID, password: nil),
+                routeAuthority: nil)
+        })
+        manager._testSetController(controller)
+        controller.show()
+
+        // A gateway switch parks awaiting the profile endpoint while the
+        // primary window is still open.
+        let switchTask = Task { await manager._testSwitchTarget(.profile("test-profile"), in: controller) }
+        await gate.waitForNextArrival()
+
+        // A native close must invalidate this controller's in-flight switch
+        // generation the same way installAuxiliaryWindowCloseHandler does for
+        // auxiliary windows. Pre-fix, switchGenerations is left untouched, so
+        // the parked switch below still passes switchIsCurrent and replaces
+        // the closed controller with a stale gateway target.
+        controller.closeDashboard()
+        await gate.releaseOldest()
+        await switchTask.value
+
+        #expect(manager._testController() === controller)
+        #expect(manager._testMainTarget() == .primary)
+    }
+
     @Test func `dashboard navigation stays on same endpoint`() throws {
         let dashboard = try #require(URL(string: "http://127.0.0.1:18789/control/"))
         let staleEndpoint = try #require(URL(string: "http://127.0.0.1:18790/control/chat"))

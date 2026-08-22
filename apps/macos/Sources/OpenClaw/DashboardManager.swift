@@ -897,6 +897,13 @@ extension DashboardManager {
         self.openForCommandTask?.cancel()
         self.openForCommandTask = nil
         self.pendingOpenCommands.removeAll()
+        // Mirrors installAuxiliaryWindowCloseHandler: without this, a
+        // switchTarget(...) already awaiting windowConfiguration still passes
+        // switchIsCurrent after this controller closes, then replaces it with
+        // a stale gateway target on reopen.
+        if let controller {
+            self.switchGenerations[ObjectIdentifier(controller)] = nil
+        }
     }
 
     private func installPrimaryWindowCloseHandler(_ controller: DashboardWindowController) {
