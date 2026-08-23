@@ -753,6 +753,13 @@ function redactText(
     next = redactFormBody(next);
   }
   for (const pattern of patterns) {
+    const isChunkUnsafe = options?.fullContext || chunkUnsafePatterns.has(pattern);
+    // Bounded patterns are vetted to never match a chunk without also matching the full,
+    // unchunked text, so a cheap whole-text test() first lets non-matching patterns (the
+    // common case across a large default pattern table) skip the chunked replace entirely.
+    if (!isChunkUnsafe && !pattern.test(next)) {
+      continue;
+    }
     const replacer = (...args: unknown[]) => {
       const hasNamedGroups =
         args.length > 0 &&
@@ -768,10 +775,9 @@ function redactText(
       const input = typeof args[inputIndex] === "string" ? args[inputIndex] : "";
       return redactMatch(match, groups, pattern, { input, offset });
     };
-    next =
-      options?.fullContext || chunkUnsafePatterns.has(pattern)
-        ? next.replace(pattern, replacer)
-        : replacePatternBounded(next, pattern, replacer);
+    next = isChunkUnsafe
+      ? next.replace(pattern, replacer)
+      : replacePatternBounded(next, pattern, replacer);
   }
   return next;
 }

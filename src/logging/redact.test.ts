@@ -1603,6 +1603,21 @@ describe("redactSensitiveText", () => {
     expect(output).toBe(input);
   });
 
+  it("redacts a large payload with no default-pattern matches quickly", () => {
+    // "npm_telegram_package_spec" trips the outer prefilter (couldMatchDefaultRedactPatterns)
+    // without matching any real DEFAULT_REDACT_PATTERNS entry, so the full per-pattern walk
+    // below runs against every pattern in the table for a payload above the chunk threshold.
+    const benignTrigger = "npm_telegram_package_spec";
+    const filler = "the quick brown fox jumps over the lazy dog ".repeat(40_000);
+    const input = `${benignTrigger} ${filler}`;
+    expect(input.length).toBeGreaterThan(32_768);
+
+    const startedAt = performance.now();
+    const output = redactSensitiveText(input, { mode: "tools" });
+    expect(performance.now() - startedAt).toBeLessThan(200);
+    expect(output).toBe(input);
+  });
+
   it("masks Fireworks tokens that cross bounded-replacement chunk boundaries", () => {
     const chunkSize = 16_384;
     const prefix = `${"x".repeat(chunkSize - 2)} `;

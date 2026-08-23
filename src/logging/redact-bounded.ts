@@ -20,10 +20,10 @@ export function replacePatternBounded(
     return text.replace(pattern, replacer);
   }
 
-  let output = "";
+  const chunks: string[] = [];
   // Chunking may miss matches spanning chunk boundaries; use only for token-like redaction patterns.
   for (let index = 0; index < text.length; index += chunkSize) {
-    output += text.slice(index, index + chunkSize).replace(pattern, replacer);
+    chunks.push(text.slice(index, index + chunkSize).replace(pattern, replacer));
   }
-  return output;
+  return chunks.join("");
 }
