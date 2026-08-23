@@ -74,15 +74,15 @@ export async function ensureConfiguredAcpBindingSession(params: {
       })
     ) {
       // Model/thinking drift is live-configurable; preserve the bound conversation and patch in place.
+      // Thinking also reconciles the explicit-to-unset transition: an undefined desired value still
+      // patches (to undefined) when a prior explicit value is pinned, clearing the stale session state.
+      const currentThinking = normalizeText(resolution.meta.runtimeOptions?.thinking);
       const runtimeOptionsPatch = {
         ...(params.spec.model &&
         normalizeText(resolution.meta.runtimeOptions?.model) !== params.spec.model
           ? { model: params.spec.model }
           : {}),
-        ...(params.spec.thinking &&
-        normalizeText(resolution.meta.runtimeOptions?.thinking) !== params.spec.thinking
-          ? { thinking: params.spec.thinking }
-          : {}),
+        ...(currentThinking !== params.spec.thinking ? { thinking: params.spec.thinking } : {}),
       };
       if (Object.keys(runtimeOptionsPatch).length > 0) {
         await acpManager.updateSessionRuntimeOptions({

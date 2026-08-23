@@ -18,6 +18,7 @@ import {
   resolveAgentExplicitModelPrimary,
   resolveAgentWorkspaceDir,
 } from "../../agents/agent-scope.js";
+import { resolveConfiguredThinkingDefaultCore } from "../../agents/model-thinking-default-core.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type {
   ConfiguredBindingRuleConfig,
@@ -93,16 +94,30 @@ function buildConfiguredAcpSpec(params: {
   };
 }
 
+/** Splits an already-resolved `provider/model` ref for per-model thinking-policy lookup. */
+function splitConfiguredBindingModelRef(model: string): { provider: string; model: string } {
+  const slash = model.indexOf("/");
+  return slash > 0
+    ? { provider: model.slice(0, slash), model: model.slice(slash + 1) }
+    : { provider: "", model };
+}
+
 function resolveConfiguredBindingThinking(params: {
   cfg: OpenClawConfig;
   agentId: string;
+  model?: string;
 }): string | undefined {
-  // Same precedence as chat replies (docs/tools/thinking.md): per-agent thinkingDefault first,
-  // then the global default, so a configured ACP binding never silently drops the owner's policy.
-  return normalizeText(
-    resolveAgentConfig(params.cfg, params.agentId)?.thinkingDefault ??
-      params.cfg.agents?.defaults?.thinkingDefault,
+  // Same precedence as chat replies (docs/tools/thinking.md): an explicit per-agent
+  // thinkingDefault wins outright, otherwise reuse the canonical resolver so per-model
+  // policy (agents.defaults.models[key].params.thinking) still outranks the global default.
+  const agentThinkingDefault = normalizeText(
+    resolveAgentConfig(params.cfg, params.agentId)?.thinkingDefault,
   );
+  if (agentThinkingDefault) {
+    return agentThinkingDefault;
+  }
+  const { provider, model } = splitConfiguredBindingModelRef(params.model ?? "");
+  return normalizeText(resolveConfiguredThinkingDefaultCore({ cfg: params.cfg, provider, model }));
 }
 
 function buildAcpTargetFactory(params: {
@@ -124,7 +139,11 @@ function buildAcpTargetFactory(params: {
   const mode = normalizeMode(bindingOverrides.mode ?? runtimeDefaults.mode);
   // Every ACP binding uses its owner's explicit model, regardless of the owner's runtime type.
   const model = resolveAgentExplicitModelPrimary(params.cfg, params.agentId);
-  const thinking = resolveConfiguredBindingThinking({ cfg: params.cfg, agentId: params.agentId });
+  const thinking = resolveConfiguredBindingThinking({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    model,
+  });
   const cwd =
     bindingOverrides.cwd ??
     runtimeDefaults.cwd ??

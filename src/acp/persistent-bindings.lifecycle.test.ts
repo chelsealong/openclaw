@@ -60,6 +60,7 @@ function mockReadySession(params: {
   spec: ConfiguredAcpBindingSpec;
   cwd: string;
   model?: string;
+  thinking?: string;
   state?: "idle" | "running" | "error";
 }) {
   const sessionKey = buildConfiguredAcpSessionKey(params.spec);
@@ -74,6 +75,7 @@ function mockReadySession(params: {
       runtimeOptions: {
         cwd: params.cwd,
         ...(params.model ? { model: params.model } : {}),
+        ...(params.thinking ? { thinking: params.thinking } : {}),
       },
       state: params.state ?? "idle",
       lastActivityAt: Date.now(),
@@ -245,6 +247,29 @@ describe("ensureConfiguredAcpBindingSession", () => {
       cfg: baseCfg,
       sessionKey,
       patch: { thinking: "off" },
+    });
+    expect(managerMocks.closeSession).not.toHaveBeenCalled();
+    expect(managerMocks.initializeSession).not.toHaveBeenCalled();
+  });
+
+  it("clears a previously pinned thinking value once the configured default is removed", async () => {
+    const spec = createPersistentSpec();
+    const sessionKey = mockReadySession({
+      spec,
+      cwd: "/workspace/openclaw",
+      thinking: "off",
+    });
+
+    const ensured = await ensureConfiguredAcpBindingSession({
+      cfg: baseCfg,
+      spec,
+    });
+
+    expect(ensured).toEqual({ ok: true, sessionKey });
+    expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
+      cfg: baseCfg,
+      sessionKey,
+      patch: { thinking: undefined },
     });
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
