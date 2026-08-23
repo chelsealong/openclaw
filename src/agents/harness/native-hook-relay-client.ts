@@ -1,5 +1,6 @@
 import { request as httpRequest } from "node:http";
 import { toErrorObject } from "../../infra/errors.js";
+import { isPidDefinitelyDead } from "../../shared/pid-alive.js";
 import { readNativeHookRelayClientBridgeRecord } from "./native-hook-relay-client-store.js";
 import { DEFAULT_RELAY_TIMEOUT_MS } from "./native-hook-relay-constants.js";
 import { codexNativeHookRelayResponseCodec } from "./native-hook-relay-response-codec.js";
@@ -9,7 +10,6 @@ import type {
   NativeHookRelayProcessResponse,
 } from "./native-hook-relay-types.js";
 import {
-  isNativeHookRelayProcessDead,
   normalizePositiveInteger,
   readNativeHookRelayEvent,
   readNativeHookRelayProvider,
@@ -44,7 +44,7 @@ export async function invokeNativeHookRelayBridge(
       }
       // A dead owning process leaves an unreachable loopback port on record;
       // treat it as absent instead of spending the deadline on a dead connect.
-      if (isNativeHookRelayProcessDead(record.pid)) {
+      if (isPidDefinitelyDead(record.pid)) {
         throw new Error("native hook relay bridge not found");
       }
       if (Date.now() > record.expiresAtMs) {

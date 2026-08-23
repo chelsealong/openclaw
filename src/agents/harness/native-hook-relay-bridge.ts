@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { isPidDefinitelyDead } from "../../shared/pid-alive.js";
 import {
   isNativeHookRelayBridgeStaleRegistrationError,
   NATIVE_HOOK_RELAY_BRIDGE_STALE_REGISTRATION_ERROR,
@@ -24,7 +25,6 @@ import type {
 } from "./native-hook-relay-types.js";
 import {
   isJsonObject,
-  isNativeHookRelayProcessDead,
   normalizePositiveInteger,
   readNonEmptyString,
 } from "./native-hook-relay-utils.js";
@@ -63,7 +63,7 @@ export function registerNativeHookRelayBridge(
   try {
     const pruned = pruneNativeHookRelayBridgeRecords({
       currentPid: process.pid,
-      isPidDead: isNativeHookRelayProcessDead,
+      isPidDead: isPidDefinitelyDead,
       stateDbPath,
     });
     for (const row of pruned) {
