@@ -42,20 +42,30 @@ private final class DashboardBrowserImportGate {
 }
 
 /// FIFO suspension gate: `wait()` parks until a matching `releaseOldest()`.
-/// `waitForNextArrival()` blocks until the next `wait()` call has parked —
-/// a caller must invoke it before the corresponding `wait()` can run, which
-/// MainActor's cooperative scheduling guarantees for a just-spawned Task.
+/// `waitForNextArrival()` reports the next `wait()` call that parks. Arrivals
+/// are counted rather than signaled through a single continuation, so a
+/// `wait()` that parks before its matching `waitForNextArrival()` is called
+/// is still observed — the two calls do not depend on scheduling order.
 private actor DashboardOpenAttemptGate {
     private var parked: [CheckedContinuation<Void, Never>] = []
     private var arrivalContinuation: CheckedContinuation<Void, Never>?
+    private var unclaimedArrivals = 0
 
     func wait() async {
-        self.arrivalContinuation?.resume()
-        self.arrivalContinuation = nil
+        if let continuation = self.arrivalContinuation {
+            self.arrivalContinuation = nil
+            continuation.resume()
+        } else {
+            self.unclaimedArrivals += 1
+        }
         await withCheckedContinuation { self.parked.append($0) }
     }
 
     func waitForNextArrival() async {
+        if self.unclaimedArrivals > 0 {
+            self.unclaimedArrivals -= 1
+            return
+        }
         await withCheckedContinuation { self.arrivalContinuation = $0 }
     }
 
