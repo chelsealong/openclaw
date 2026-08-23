@@ -72,6 +72,7 @@ function buildConfiguredAcpSpec(params: {
   acpAgentId?: string;
   mode: "persistent" | "oneshot";
   model?: string;
+  thinking?: string;
   cwd?: string;
   backend?: string;
   label?: string;
@@ -85,10 +86,23 @@ function buildConfiguredAcpSpec(params: {
     acpAgentId: params.acpAgentId,
     mode: params.mode,
     model: params.model,
+    thinking: params.thinking,
     cwd: params.cwd,
     backend: params.backend,
     label: params.label,
   };
+}
+
+function resolveConfiguredBindingThinking(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): string | undefined {
+  // Same precedence as chat replies (docs/tools/thinking.md): per-agent thinkingDefault first,
+  // then the global default, so a configured ACP binding never silently drops the owner's policy.
+  return normalizeText(
+    resolveAgentConfig(params.cfg, params.agentId)?.thinkingDefault ??
+      params.cfg.agents?.defaults?.thinkingDefault,
+  );
 }
 
 function buildAcpTargetFactory(params: {
@@ -110,6 +124,7 @@ function buildAcpTargetFactory(params: {
   const mode = normalizeMode(bindingOverrides.mode ?? runtimeDefaults.mode);
   // Every ACP binding uses its owner's explicit model, regardless of the owner's runtime type.
   const model = resolveAgentExplicitModelPrimary(params.cfg, params.agentId);
+  const thinking = resolveConfiguredBindingThinking({ cfg: params.cfg, agentId: params.agentId });
   const cwd =
     bindingOverrides.cwd ??
     runtimeDefaults.cwd ??
@@ -134,6 +149,7 @@ function buildAcpTargetFactory(params: {
         acpAgentId,
         mode,
         model,
+        thinking,
         cwd,
         backend,
         label,

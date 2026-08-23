@@ -207,4 +207,46 @@ describe("ensureConfiguredAcpBindingSession", () => {
     });
     expect(initializeArgs).not.toHaveProperty("modelExplicit");
   });
+
+  it("forwards the owner agent's configured thinking default on session init", async () => {
+    const spec = createPersistentSpec({
+      model: "ollama-cloud/glm-5.2:cloud",
+      thinking: "off",
+    });
+    managerMocks.resolveSession.mockReturnValue({ kind: "none" });
+
+    const ensured = await ensureConfiguredAcpBindingSession({
+      cfg: baseCfg,
+      spec,
+    });
+
+    expect(ensured.ok).toBe(true);
+    const initializeArgs = expectInitializeArgs();
+    expect(initializeArgs.runtimeOptions).toEqual({
+      model: "ollama-cloud/glm-5.2:cloud",
+      thinking: "off",
+    });
+  });
+
+  it("patches thinking drift in place for a structurally matching session", async () => {
+    const spec = createPersistentSpec({ thinking: "off" });
+    const sessionKey = mockReadySession({
+      spec,
+      cwd: "/workspace/openclaw",
+    });
+
+    const ensured = await ensureConfiguredAcpBindingSession({
+      cfg: baseCfg,
+      spec,
+    });
+
+    expect(ensured).toEqual({ ok: true, sessionKey });
+    expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
+      cfg: baseCfg,
+      sessionKey,
+      patch: { thinking: "off" },
+    });
+    expect(managerMocks.closeSession).not.toHaveBeenCalled();
+    expect(managerMocks.initializeSession).not.toHaveBeenCalled();
+  });
 });

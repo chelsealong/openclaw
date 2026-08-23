@@ -73,15 +73,22 @@ export async function ensureConfiguredAcpBindingSession(params: {
         meta: resolution.meta,
       })
     ) {
-      // Model drift is live-configurable; preserve the bound conversation and patch it in place.
-      if (
-        params.spec.model &&
+      // Model/thinking drift is live-configurable; preserve the bound conversation and patch in place.
+      const runtimeOptionsPatch = {
+        ...(params.spec.model &&
         normalizeText(resolution.meta.runtimeOptions?.model) !== params.spec.model
-      ) {
+          ? { model: params.spec.model }
+          : {}),
+        ...(params.spec.thinking &&
+        normalizeText(resolution.meta.runtimeOptions?.thinking) !== params.spec.thinking
+          ? { thinking: params.spec.thinking }
+          : {}),
+      };
+      if (Object.keys(runtimeOptionsPatch).length > 0) {
         await acpManager.updateSessionRuntimeOptions({
           cfg: params.cfg,
           sessionKey,
-          patch: { model: params.spec.model },
+          patch: runtimeOptionsPatch,
         });
       }
       return {
@@ -106,7 +113,13 @@ export async function ensureConfiguredAcpBindingSession(params: {
       sessionKey,
       agent: params.spec.acpAgentId ?? params.spec.agentId,
       mode: params.spec.mode,
-      runtimeOptions: params.spec.model ? { model: params.spec.model } : undefined,
+      runtimeOptions:
+        params.spec.model || params.spec.thinking
+          ? {
+              ...(params.spec.model ? { model: params.spec.model } : {}),
+              ...(params.spec.thinking ? { thinking: params.spec.thinking } : {}),
+            }
+          : undefined,
       cwd: params.spec.cwd,
       backendId: params.spec.backend,
     });
