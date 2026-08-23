@@ -9,6 +9,7 @@ import type {
   NativeHookRelayProcessResponse,
 } from "./native-hook-relay-types.js";
 import {
+  isNativeHookRelayProcessDead,
   normalizePositiveInteger,
   readNativeHookRelayEvent,
   readNativeHookRelayProvider,
@@ -39,6 +40,11 @@ export async function invokeNativeHookRelayBridge(
         stateDbPath: params.stateDbPath,
       });
       if (!record) {
+        throw new Error("native hook relay bridge not found");
+      }
+      // A dead owning process leaves an unreachable loopback port on record;
+      // treat it as absent instead of spending the deadline on a dead connect.
+      if (isNativeHookRelayProcessDead(record.pid)) {
         throw new Error("native hook relay bridge not found");
       }
       if (Date.now() > record.expiresAtMs) {

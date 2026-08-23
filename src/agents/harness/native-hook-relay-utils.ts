@@ -48,6 +48,16 @@ export function readNativeHookRelayProvider(value: unknown): NativeHookRelayProv
   throw new Error("unsupported native hook relay provider");
 }
 
+/** True only when the pid is confirmed gone (ESRCH); unknown liveness stays alive. */
+export function isNativeHookRelayProcessDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH";
+  }
+}
+
 export function readNativeHookRelayEvent(value: unknown): NativeHookRelayEvent {
   if (
     value === "pre_tool_use" ||

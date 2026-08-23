@@ -24,6 +24,7 @@ import type {
 } from "./native-hook-relay-types.js";
 import {
   isJsonObject,
+  isNativeHookRelayProcessDead,
   normalizePositiveInteger,
   readNonEmptyString,
 } from "./native-hook-relay-utils.js";
@@ -52,15 +53,6 @@ type NativeHookRelayBridgeRequestAuth = {
   invokeRelay: InvokeNativeHookRelay;
 };
 
-function isNativeHookRelayBridgePidDead(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH";
-  }
-}
-
 export function registerNativeHookRelayBridge(
   registration: ActiveNativeHookRelayRegistration,
   stateDbPath: string,
@@ -71,7 +63,7 @@ export function registerNativeHookRelayBridge(
   try {
     const pruned = pruneNativeHookRelayBridgeRecords({
       currentPid: process.pid,
-      isPidDead: isNativeHookRelayBridgePidDead,
+      isPidDead: isNativeHookRelayProcessDead,
       stateDbPath,
     });
     for (const row of pruned) {
