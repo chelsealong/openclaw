@@ -757,7 +757,10 @@ function redactText(
     // Bounded patterns are vetted to never match a chunk without also matching the full,
     // unchunked text, so a cheap whole-text test() first lets non-matching patterns (the
     // common case across a large default pattern table) skip the chunked replace entirely.
-    if (!isChunkUnsafe && !pattern.test(next)) {
+    // Sticky (`y`) patterns only match at the regex's current lastIndex, so a whole-text
+    // test() only proves a match at position 0 and can miss a match that bounded replacement
+    // would still find at a later chunk start; exempt them from the prefilter.
+    if (!isChunkUnsafe && !pattern.sticky && !pattern.test(next)) {
       continue;
     }
     const replacer = (...args: unknown[]) => {
