@@ -126,7 +126,10 @@ export function shouldClearFailedCliSessionBinding(params: {
     return false;
   }
   if (isFailoverError(params.error)) {
-    return true;
+    // A "format" failover means openclaw failed to read/parse the CLI's own
+    // stdout stream (parser error, output-limit truncation); it says nothing
+    // about the session stored on disk, which is still resumable.
+    return params.error.reason !== "format";
   }
   // A pre-successor fork abort keeps its one-shot marker for the next turn.
   return params.binding?.forkNextResume !== true && readErrorName(params.error) === "AbortError";

@@ -658,4 +658,16 @@ describe("cli-session helpers", () => {
     ).toBe(false);
     expect(shouldClearFailedCliSessionBinding({ error: failover })).toBe(false);
   });
+
+  it("keeps a reusable binding after a format-class stream failover", () => {
+    const formatFailover = new FailoverError("Claude CLI turn output exceeded limit.", {
+      reason: "format",
+      provider: "claude-cli",
+      model: "claude-opus-4-8",
+    });
+    const binding = { sessionId: "reused" };
+
+    expect(shouldClearFailedCliSessionBinding({ error: formatFailover, binding })).toBe(false);
+    expect(resolveCliSessionClearReason(formatFailover)).toBe("format");
+  });
 });
