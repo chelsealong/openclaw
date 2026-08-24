@@ -1,9 +1,5 @@
-import { resolveAgentDir } from "openclaw/plugin-sdk/agent-runtime";
 // Codex plugin module implements conversation control behavior.
-import {
-  applyModelOverrideWithAuthProfileCompatibility,
-  ModelSelectionLockedError,
-} from "openclaw/plugin-sdk/model-session-runtime";
+import { ModelSelectionLockedError } from "openclaw/plugin-sdk/model-session-runtime";
 import {
   getSessionEntry,
   patchSessionEntry,
@@ -187,7 +183,6 @@ export async function setCodexConversationModel(params: {
   pluginConfig?: unknown;
   agentDir?: string;
   config?: CodexAppServerBindingLookup["config"];
-  session?: { agentId: string; sessionId: string; sessionKey: string };
 }): Promise<string> {
   const model = params.model.trim();
   if (!model) {
@@ -218,66 +213,16 @@ export async function setCodexConversationModel(params: {
   });
   const nextModel = modelSelection.model;
   const modelChanged = nextModel !== binding.model || nextModelProvider !== binding.modelProvider;
-  const session =
-    params.session ??
-    (params.identity.kind === "session" && params.identity.sessionKey
-      ? {
-          agentId: params.identity.agentId,
-          sessionId: params.identity.sessionId,
-          sessionKey: params.identity.sessionKey,
-        }
-      : undefined);
-  if (session) {
-    const updated = await patchSessionEntry({
-      agentId: session.agentId,
-      storePath: resolveStorePath(params.config?.session?.store, { agentId: session.agentId }),
-      sessionKey: session.sessionKey,
-      requireWriteSuccess: true,
-      // Model override helpers delete stale credentials and model metadata;
-      // replacing the snapshot is required because partial patches merge fields.
-      replaceEntry: true,
-      update: (entry) => {
-        if (entry.sessionId !== session.sessionId) {
-          throw new Error("Codex session changed while applying the model selection.");
-        }
-        applyModelOverrideWithAuthProfileCompatibility({
-          cfg: params.config ?? {},
-          agentDir: params.agentDir ?? resolveAgentDir(params.config ?? {}, session.agentId),
-          entry,
-          currentProvider: binding.modelProvider ?? "openai",
-          selection: { provider: nextModelProvider ?? "openai", model: nextModel },
-          markLiveSwitchPending: true,
-        });
-        return entry;
-      },
-    });
-    if (!updated) {
-      throw new Error("Codex session changed while applying the model selection.");
-    }
-    // SessionEntry owns desired selection; the native binding remains the
-    // currently loaded model so generation transitions still rotate safely.
-    if (params.identity.kind === "conversation") {
-      await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
-        model: nextModel,
-        modelProvider: nextModelProvider,
-        ...(modelChanged && binding.contextEngine?.projection
-          ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
-          : {}),
-      });
-    } else if (modelChanged && binding.contextEngine?.projection) {
-      await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
-        contextEngine: { ...binding.contextEngine, projection: undefined },
-      });
-    }
-  } else {
-    await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
-      model: nextModel,
-      modelProvider: nextModelProvider,
-      ...(modelChanged && binding.contextEngine?.projection
-        ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
-        : {}),
-    });
-  }
+  // The native binding is the sole owner of this selection; the outer
+  // OpenClaw session model override is a separate contract that only /model
+  // may change, so it must stay untouched here regardless of identity kind.
+  await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
+    model: nextModel,
+    modelProvider: nextModelProvider,
+    ...(modelChanged && binding.contextEngine?.projection
+      ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
+      : {}),
+  });
   return `Codex model set to ${formatCodexDisplayText(nextModel)}.`;
 }
 

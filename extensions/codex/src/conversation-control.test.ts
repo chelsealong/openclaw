@@ -420,7 +420,7 @@ describe("codex conversation controls", () => {
     expect(sharedClientMocks.getSharedCodexAppServerClient).not.toHaveBeenCalled();
   });
 
-  it("persists ordinary model selection on SessionEntry without overwriting native ownership", async () => {
+  it("updates the native binding without mutating the outer session model override", async () => {
     const sessionKey = "agent:main:model-session";
     const sessionId = "session-model-authority";
     const identity = { kind: "session" as const, agentId: "main", sessionId, sessionKey };
@@ -455,20 +455,19 @@ describe("codex conversation controls", () => {
     ).resolves.toBe("Codex model set to gpt-5.5.");
 
     expect(getSessionEntry({ storePath, sessionKey })).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
       authProfileOverride: "openai:personal",
       authProfileOverrideSource: "user",
-      liveModelSwitchPending: true,
     });
+    expect(getSessionEntry({ storePath, sessionKey })?.modelOverride).toBeUndefined();
+    expect(getSessionEntry({ storePath, sessionKey })?.liveModelSwitchPending).toBeUndefined();
     await expect(testCodexAppServerBindingStore.read(identity)).resolves.toMatchObject({
       threadId: "thread-model-authority",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
     });
     expect(sharedClientMocks.getSharedCodexAppServerClient).not.toHaveBeenCalled();
   });
 
-  it("drops an incompatible pinned auth profile when selecting another provider", async () => {
+  it("switches provider on the native binding without touching the outer session auth override", async () => {
     const sessionKey = "agent:main:model-provider-switch";
     const sessionId = "session-provider-switch";
     const identity = { kind: "session" as const, agentId: "main", sessionId, sessionKey };
@@ -502,12 +501,16 @@ describe("codex conversation controls", () => {
       }),
     ).resolves.toBe("Codex model set to gpt-5.5.");
 
-    expect(getSessionEntry({ storePath, sessionKey })).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      liveModelSwitchPending: true,
+    await expect(testCodexAppServerBindingStore.read(identity)).resolves.toMatchObject({
+      threadId: "thread-provider-switch",
+      model: "gpt-5.5",
+      modelProvider: "openai",
     });
-    expect(getSessionEntry({ storePath, sessionKey })?.authProfileOverride).toBeUndefined();
+    expect(getSessionEntry({ storePath, sessionKey })).toMatchObject({
+      authProfileOverride: "lmstudio:work",
+      authProfileOverrideSource: "user",
+    });
+    expect(getSessionEntry({ storePath, sessionKey })?.modelOverride).toBeUndefined();
   });
 
   it("escapes requested model names before chat display", async () => {

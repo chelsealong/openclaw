@@ -364,15 +364,6 @@ export async function setConversationModel(
     model: normalized,
     agentDir: target.agentDir,
     config: ctx.config,
-    ...(ctx.sessionId && ctx.sessionKey
-      ? {
-          session: {
-            agentId: target.agentId,
-            sessionId: ctx.sessionId,
-            sessionKey: ctx.sessionKey,
-          },
-        }
-      : {}),
   });
 }
 

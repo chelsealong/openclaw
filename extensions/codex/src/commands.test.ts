@@ -6109,6 +6109,45 @@ describe("codex command", () => {
     });
   });
 
+  it("does not forward an outer session identity when setting the model on a bound conversation", async () => {
+    const setCodexConversationModel = vi.fn(async () => "Codex model set to gpt-5.5.");
+    const deps = createDeps({ setCodexConversationModel });
+    const getCurrentConversationBinding = async () => ({
+      bindingId: "binding-1",
+      pluginId: "codex",
+      pluginRoot: "/plugin",
+      channel: "test",
+      accountId: "default",
+      conversationId: "conversation",
+      boundAt: 1,
+      data: {
+        kind: "codex-app-server-session" as const,
+        version: 2 as const,
+        bindingId: "binding-data-1",
+        workspaceDir: "/repo",
+      },
+    });
+
+    await expect(
+      handleCodexCommand(
+        createContext("model gpt-5.5", undefined, {
+          sessionKey: "agent:main:session-1",
+          getCurrentConversationBinding,
+        }),
+        { deps },
+      ),
+    ).resolves.toEqual({ text: "Codex model set to gpt-5.5." });
+
+    expect(setCodexConversationModel).toHaveBeenCalledWith({
+      identity: { kind: "conversation", bindingId: "binding-data-1" },
+      bindingStore: testCodexAppServerBindingStore,
+      pluginConfig: undefined,
+      model: "gpt-5.5",
+      agentDir: expect.any(String),
+      config: {},
+    });
+  });
+
   it.each([
     {
       name: "rejects owner yolo without admin scope",
