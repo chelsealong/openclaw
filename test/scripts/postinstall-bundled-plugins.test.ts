@@ -464,10 +464,29 @@ describe("bundled plugin postinstall", () => {
     expect(migratePluginRegistryForInstall).toHaveBeenCalledWith({
       env: { OPENCLAW_HOME: "/tmp/home" },
       packageRoot,
+      skipIfStateSchemaOutdated: true,
     });
     expect(log.log).toHaveBeenCalledWith(
       "[postinstall] migrated plugin registry: 1 plugin(s) indexed",
     );
+  });
+
+  it("honors the postinstall disable env var for registry migration", async () => {
+    const importModule = vi.fn();
+
+    await expect(
+      runPluginRegistryPostinstallMigration({
+        packageRoot: "/pkg",
+        existsSync: vi.fn(() => true),
+        importModule,
+        env: { OPENCLAW_DISABLE_BUNDLED_PLUGIN_POSTINSTALL: "1" },
+        log: { log: vi.fn(), warn: vi.fn() },
+      }),
+    ).resolves.toEqual({
+      status: "skipped",
+      reason: "disabled",
+    });
+    expect(importModule).not.toHaveBeenCalled();
   });
 
   it("does not migrate operator plugin state from a source checkout", async () => {

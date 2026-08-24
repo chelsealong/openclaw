@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 // Plugin registry migration tests cover doctor repair of persisted plugin registry state.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -139,7 +140,44 @@ function insertStalePersistedIndexRow(stateDir: string, installRecordsJson = "{}
   );
 }
 
+function createOutdatedStateDatabase(stateDir: string, userVersion: number): string {
+  const filePath = resolveInstalledPluginIndexStorePath({ stateDir });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const db = new DatabaseSync(filePath);
+  db.exec(`PRAGMA user_version = ${userVersion};`);
+  db.close();
+  return filePath;
+}
+
 describe("plugin registry install migration", () => {
+  it("skips instead of upgrading an older on-disk state schema when asked to", async () => {
+    const stateDir = makeTempDir();
+    const filePath = createOutdatedStateDatabase(stateDir, 5);
+    const readConfig = vi.fn(async () => ({}));
+
+    const result = await migratePluginRegistryForInstall({
+      stateDir,
+      readConfig,
+      skipIfStateSchemaOutdated: true,
+      env: hermeticEnv(),
+    });
+
+    expectRecordFields(requireRecord(result, "migration result"), {
+      status: "skip-outdated-schema",
+      migrated: false,
+    });
+    expectRecordFields(requireRecord(result.preflight, "migration preflight"), {
+      action: "skip-outdated-schema",
+      filePath,
+    });
+    expect(readConfig).not.toHaveBeenCalled();
+
+    const db = new DatabaseSync(filePath, { readOnly: true });
+    const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+    db.close();
+    expect(row.user_version).toBe(5);
+  });
+
   it("short-circuits when a current registry file already exists", async () => {
     const stateDir = makeTempDir();
     const filePath = resolveInstalledPluginIndexStorePath({ stateDir });

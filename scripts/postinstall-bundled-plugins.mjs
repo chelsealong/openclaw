@@ -823,6 +823,10 @@ export async function runPluginRegistryPostinstallMigration(params = {}) {
   const env = params.env ?? process.env;
   const pathExists = params.existsSync ?? existsSync;
 
+  if (env?.[DISABLE_POSTINSTALL_ENV]?.trim()) {
+    return { status: "skipped", reason: "disabled" };
+  }
+
   // Registry migration belongs to installed-package upgrades. Source checkouts
   // can contain stale dist from a different build and must not touch operator state.
   if (isSourceCheckoutRoot({ packageRoot, existsSync: pathExists })) {
@@ -844,6 +848,9 @@ export async function runPluginRegistryPostinstallMigration(params = {}) {
     const result = await migrationModule.migratePluginRegistryForInstall({
       env,
       packageRoot,
+      // Package install must never one-way-migrate an existing operator state DB;
+      // that belongs to the binary actually running or an explicit `doctor --fix`.
+      skipIfStateSchemaOutdated: true,
     });
     if (result.migrated) {
       log.log(

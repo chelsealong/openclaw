@@ -11,8 +11,10 @@ import {
   setPluginInstallRecordMapEntry,
 } from "../../../config/plugin-install-record-map.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { readSqliteUserVersion } from "../../../infra/sqlite-user-version.js";
 import { inspectPersistedInstalledPluginIndexInstallRecordsSync } from "../../../plugins/installed-plugin-index-record-state.js";
 import { loadInstalledPluginIndexInstallRecords } from "../../../plugins/installed-plugin-index-records.js";
+import { resolveInstalledPluginIndexStateDatabaseOptions } from "../../../plugins/installed-plugin-index-store-path.js";
 import {
   readPersistedInstalledPluginIndexSync,
   resolveInstalledPluginIndexStorePath,
@@ -27,6 +29,8 @@ import {
 } from "../../../plugins/installed-plugin-index.js";
 import { loadPluginManifestRegistryForInstalledIndex } from "../../../plugins/manifest-registry-installed.js";
 import type { PluginManifestRecord } from "../../../plugins/manifest-registry.js";
+import { OPENCLAW_STATE_SCHEMA_VERSION } from "../../../state/openclaw-state-db-contract.js";
+import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
 
 const DOCTOR_PLUGIN_ID_ALIASES: Readonly<Record<string, readonly string[]>> = {
   openai: ["openai-codex"],
@@ -42,13 +46,20 @@ type PluginRegistryInstallMigrationPreflight =
       current: InstalledPluginIndex;
     }
   | {
+      // A write here would open the shared state DB writable, which upgrades its schema.
+      // A caller that must not one-way-migrate operator state (package install) sets
+      // skipIfStateSchemaOutdated and gets this instead of "migrate"/"initialize".
+      action: "skip-outdated-schema";
+      filePath: string;
+    }
+  | {
       action: "initialize" | "migrate";
       filePath: string;
     };
 
 type PluginRegistryInstallMigrationResult =
   | {
-      status: "skip-existing" | "dry-run";
+      status: "skip-existing" | "skip-outdated-schema" | "dry-run";
       migrated: false;
       preflight: PluginRegistryInstallMigrationPreflight;
     }
@@ -76,13 +87,26 @@ export type PluginRegistryInstallMigrationParams = LoadInstalledPluginIndexParam
     dryRun?: boolean;
     existsSync?: (path: string) => boolean;
     readConfig?: () => Promise<OpenClawConfig> | OpenClawConfig;
+    /** Refuse to write (and thereby schema-upgrade) an existing older state DB. */
+    skipIfStateSchemaOutdated?: boolean;
   };
+
+function isPersistedStateSchemaOutdated(params: PluginRegistryInstallMigrationParams): boolean {
+  const onDiskVersion = withExistingOpenClawStateDatabaseReadOnly(
+    ({ db }) => readSqliteUserVersion(db),
+    resolveInstalledPluginIndexStateDatabaseOptions(params),
+  );
+  return onDiskVersion !== undefined && onDiskVersion < OPENCLAW_STATE_SCHEMA_VERSION;
+}
 
 /** Decide whether plugin install registry migration should run for this environment. */
 export function preflightPluginRegistryInstallMigration(
   params: PluginRegistryInstallMigrationParams = {},
 ): PluginRegistryInstallMigrationPreflight {
   const filePath = resolveInstalledPluginIndexStorePath(params);
+  if (params.skipIfStateSchemaOutdated && isPersistedStateSchemaOutdated(params)) {
+    return { action: "skip-outdated-schema", filePath };
+  }
   const persistedState = inspectPersistedInstalledPluginIndexInstallRecordsSync(params);
   if (persistedState.status === "invalid") {
     throw new InvalidPluginInstallRecordStateError(invalidPersistedInstallRecordMessage(filePath));
@@ -304,6 +328,9 @@ export async function migratePluginRegistryForInstall(
   const preflight = preflightPluginRegistryInstallMigration(params);
   if (preflight.action === "skip-existing") {
     return { status: "skip-existing", migrated: false, preflight };
+  }
+  if (preflight.action === "skip-outdated-schema") {
+    return { status: "skip-outdated-schema", migrated: false, preflight };
   }
   if (params.dryRun) {
     return { status: "dry-run", migrated: false, preflight };
