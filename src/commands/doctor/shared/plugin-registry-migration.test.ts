@@ -17,7 +17,11 @@ import {
   cleanupTrackedTempDirs,
   makeTrackedTempDir,
 } from "../../../plugins/test-helpers/fs-fixtures.js";
-import { runOpenClawStateWriteTransaction } from "../../../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
+} from "../../../state/openclaw-state-db.js";
 import { migratePluginRegistryForInstall } from "./plugin-registry-migration.js";
 const tempDirs: string[] = [];
 
@@ -140,12 +144,25 @@ function insertStalePersistedIndexRow(stateDir: string, installRecordsJson = "{}
   );
 }
 
+// A bare stamped-version file never reaches the ownership/table checks that
+// gate the real v5-to-v9 upgrade path, so build a full canonical database
+// first and mark it down to the older version instead — same downgrade
+// fixture precedent as src/state/openclaw-state-db.test.ts.
 function createOutdatedStateDatabase(stateDir: string, userVersion: number): string {
   const filePath = resolveInstalledPluginIndexStorePath({ stateDir });
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const db = new DatabaseSync(filePath);
-  db.exec(`PRAGMA user_version = ${userVersion};`);
-  db.close();
+  const opened = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: stateDir } });
+  opened.db
+    .prepare(
+      `INSERT INTO state_leases (
+        scope, lease_key, owner, expires_at, heartbeat_at, payload_json, created_at, updated_at
+      ) VALUES ('test', 'preinstall-marker', 'postinstall-test', 100, 50, '{}', 1, 2)`,
+    )
+    .run();
+  opened.db.exec(`
+    PRAGMA user_version = ${userVersion};
+    UPDATE schema_meta SET schema_version = ${userVersion} WHERE meta_key = 'primary';
+  `);
+  closeOpenClawStateDatabaseForTest();
   return filePath;
 }
 
@@ -173,9 +190,17 @@ describe("plugin registry install migration", () => {
     expect(readConfig).not.toHaveBeenCalled();
 
     const db = new DatabaseSync(filePath, { readOnly: true });
-    const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
-    db.close();
-    expect(row.user_version).toBe(5);
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 });
+      expect(
+        db.prepare("SELECT schema_version FROM schema_meta WHERE meta_key = 'primary'").get(),
+      ).toEqual({ schema_version: 5 });
+      expect(
+        db.prepare("SELECT owner FROM state_leases WHERE lease_key = 'preinstall-marker'").get(),
+      ).toEqual({ owner: "postinstall-test" });
+    } finally {
+      db.close();
+    }
   });
 
   it("short-circuits when a current registry file already exists", async () => {

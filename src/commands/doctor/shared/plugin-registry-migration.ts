@@ -30,7 +30,7 @@ import {
 import { loadPluginManifestRegistryForInstalledIndex } from "../../../plugins/manifest-registry-installed.js";
 import type { PluginManifestRecord } from "../../../plugins/manifest-registry.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../../../state/openclaw-state-db-contract.js";
-import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
+import { withExistingOpenClawStateDatabaseArtifactPreservingReadOnly } from "../../../state/openclaw-state-db-readonly.js";
 
 const DOCTOR_PLUGIN_ID_ALIASES: Readonly<Record<string, readonly string[]>> = {
   openai: ["openai-codex"],
@@ -92,7 +92,10 @@ export type PluginRegistryInstallMigrationParams = LoadInstalledPluginIndexParam
   };
 
 function isPersistedStateSchemaOutdated(params: PluginRegistryInstallMigrationParams): boolean {
-  const onDiskVersion = withExistingOpenClawStateDatabaseReadOnly(
+  // Package postinstall can run beside a live WAL-mode gateway; the artifact-
+  // preserving reader inspects a private snapshot so this check never creates
+  // or updates the on-disk database's journal/WAL/SHM sidecars.
+  const onDiskVersion = withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
     ({ db }) => readSqliteUserVersion(db),
     resolveInstalledPluginIndexStateDatabaseOptions(params),
   );
