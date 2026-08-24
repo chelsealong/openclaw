@@ -4,6 +4,7 @@ import {
   MAX_TIMER_TIMEOUT_MS,
   resolveExpiresAtMsFromDurationMs,
 } from "@openclaw/normalization-core/number-coercion";
+import { registerAgentEventLifecycleRotationHandler } from "../../infra/agent-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { retainBeforeToolCallForNativeHookRelay } from "./host-capability.js";
@@ -645,6 +646,28 @@ function pruneExpiredNativeHookRelays(now = Date.now()): void {
     }
   }
 }
+
+/** Retires every relay of the outgoing generation at the same boundary that revokes its authority. */
+function retireNativeHookRelaysForLifecycleRotation(): void {
+  const errors: unknown[] = [];
+  // Snapshot first: a reentrant `onDispose` may register a current-generation
+  // successor mid-loop, and only registrations present at rotation start are stale.
+  for (const [relayId, registration] of Array.from(relays)) {
+    try {
+      unregisterNativeHookRelay(relayId, registration);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Failed to retire stale native hook relays");
+  }
+}
+
+registerAgentEventLifecycleRotationHandler(
+  "native-hook-relays",
+  retireNativeHookRelaysForLifecycleRotation,
+);
 
 function normalizeAllowedEvents(
   events: readonly NativeHookRelayEvent[] | undefined,
