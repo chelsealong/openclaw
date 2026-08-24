@@ -21,10 +21,12 @@ const mocks = vi.hoisted(() => ({
       diagnostics: [],
     }),
   ),
-  loadPluginManifestRegistryForPluginRegistry: vi.fn(() => ({
-    plugins: [],
-    diagnostics: [],
-  })),
+  loadPluginManifestRegistryForPluginRegistry: vi.fn(
+    (): PluginManifestRegistry => ({
+      plugins: [],
+      diagnostics: [],
+    }),
+  ),
   registerCuaDriverDoctorChecks: vi.fn(),
   registerMemoryCoreDoctorChecks: vi.fn(),
   registerPolicyDoctorChecks: vi.fn(),
@@ -50,6 +52,7 @@ const mocks = vi.hoisted(() => ({
             }
           : { registerPolicyDoctorChecks: mocks.registerPolicyDoctorChecks },
   ),
+  loadPluginPublicArtifactModuleSync: vi.fn(),
   resolveProviderPolicySurface: vi.fn((): ProviderPolicySurface | null => ({
     inspectEmbeddingProviderSetup: mocks.inspectEmbeddingProviderSetup,
   })),
@@ -69,6 +72,7 @@ vi.mock("../plugins/public-surface-loader.js", () => ({
   loadBundledPluginPublicArtifactModuleFromCandidatesSync:
     mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync,
   loadBundledPluginPublicArtifactModuleSync: mocks.loadBundledPluginPublicArtifactModuleSync,
+  loadPluginPublicArtifactModuleSync: mocks.loadPluginPublicArtifactModuleSync,
 }));
 
 let workspaceDir: string;
@@ -408,6 +412,93 @@ describe("registerBundledHealthChecks", () => {
         artifactBasename: "api.js",
       });
     }
+  });
+
+  it("falls back to the trusted external plugin root when Codex is externalised from the bundled dist tree", () => {
+    mocks.loadBundledPluginPublicArtifactModuleSync
+      .mockImplementationOnce(() => ({
+        pluginStateIsolatedDoctorCheckIds: [STATE_DEFERRED_CHECK_ID],
+        registerMemoryCoreDoctorChecks: mocks.registerMemoryCoreDoctorChecks,
+      }))
+      .mockImplementationOnce(() => {
+        throw new Error("Unable to resolve bundled plugin public surface codex/api.js");
+      });
+    mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce({
+      plugins: [
+        {
+          id: "codex",
+          channels: [],
+          providers: [],
+          cliBackends: [],
+          skills: [],
+          hooks: [],
+          origin: "global",
+          rootDir: "/opt/homebrew/lib/node_modules/@openclaw/codex",
+          source: "global",
+          manifestPath: "/opt/homebrew/lib/node_modules/@openclaw/codex/openclaw.plugin.json",
+          trustedOfficialInstall: true,
+        },
+      ],
+      diagnostics: [],
+    });
+    mocks.loadPluginPublicArtifactModuleSync.mockReturnValueOnce({
+      registerCodexManagedAppServerDoctorChecks: mocks.registerCodexManagedAppServerDoctorChecks,
+    });
+
+    registerBundledHealthChecks({
+      cfg: {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-5.6-sol" },
+            models: {
+              "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+            },
+          },
+        },
+      },
+      cwd: workspaceDir,
+    });
+
+    expect(mocks.loadPluginPublicArtifactModuleSync).toHaveBeenCalledWith({
+      pluginRoot: "/opt/homebrew/lib/node_modules/@openclaw/codex",
+      artifactBasename: "api.js",
+    });
+    expect(mocks.registerCodexManagedAppServerDoctorChecks).toHaveBeenCalledWith({
+      registerHealthCheck: expect.any(Function),
+    });
+  });
+
+  it("does not throw when Codex is configured but no bundled or trusted external surface resolves", () => {
+    mocks.loadBundledPluginPublicArtifactModuleSync
+      .mockImplementationOnce(() => ({
+        pluginStateIsolatedDoctorCheckIds: [STATE_DEFERRED_CHECK_ID],
+        registerMemoryCoreDoctorChecks: mocks.registerMemoryCoreDoctorChecks,
+      }))
+      .mockImplementationOnce(() => {
+        throw new Error("Unable to resolve bundled plugin public surface codex/api.js");
+      });
+    mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce({
+      plugins: [],
+      diagnostics: [],
+    });
+
+    expect(() =>
+      registerBundledHealthChecks({
+        cfg: {
+          agents: {
+            defaults: {
+              model: { primary: "openai/gpt-5.6-sol" },
+              models: {
+                "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+              },
+            },
+          },
+        },
+        cwd: workspaceDir,
+      }),
+    ).not.toThrow();
+    expect(mocks.loadPluginPublicArtifactModuleSync).not.toHaveBeenCalled();
+    expect(mocks.registerCodexManagedAppServerDoctorChecks).not.toHaveBeenCalled();
   });
 
   it("does not use policy.jsonc existence as extension activation", () => {

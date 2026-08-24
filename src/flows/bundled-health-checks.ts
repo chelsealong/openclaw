@@ -14,6 +14,7 @@ import { resolveProviderPolicySurface } from "../plugins/provider-public-artifac
 import {
   loadBundledPluginPublicArtifactModuleFromCandidatesSync,
   loadBundledPluginPublicArtifactModuleSync,
+  loadPluginPublicArtifactModuleSync,
 } from "../plugins/public-surface-loader.js";
 import { collectConfiguredWorkerProviderIds } from "../plugins/worker-provider-config.js";
 import { listBundledWorkerProviderOwners } from "../plugins/worker-provider-manifest.js";
@@ -124,10 +125,9 @@ export function registerBundledHealthChecks(params: {
     memoryCoreActive: isMemoryCoreActive(params.cfg),
   });
   if (shouldRegisterCodexManagedHealth(params.cfg)) {
-    loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
-      dirName: "codex",
-      artifactBasename: "api.js",
-    }).registerCodexManagedAppServerDoctorChecks?.({ registerHealthCheck });
+    loadCodexManagedHealthApi(params, env)?.registerCodexManagedAppServerDoctorChecks?.({
+      registerHealthCheck,
+    });
   }
   if (shouldRegisterPolicyHealth(params)) {
     loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
@@ -161,6 +161,58 @@ function registerBundledWorkerProviderHealthChecks(
       dirName: pluginId,
       artifactCandidates: ["doctor-health-api.js"],
     })?.registerWorkerProviderDoctorChecks?.({ registerHealthCheck });
+  }
+}
+
+// Codex ships as an externalised plugin in published installs, so its api.js
+// is absent from the bundled dist tree. Fall back to the manifest-registered
+// trusted install root before treating the surface as unavailable.
+function loadCodexManagedHealthApi(
+  params: { cfg: OpenClawConfig; cwd?: string },
+  env: NodeJS.ProcessEnv,
+): BundledHealthApi | null {
+  try {
+    return loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
+      dirName: "codex",
+      artifactBasename: "api.js",
+    });
+  } catch (error) {
+    if (
+      !(
+        error instanceof Error &&
+        error.message.startsWith("Unable to resolve bundled plugin public surface ")
+      )
+    ) {
+      throw error;
+    }
+  }
+  const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({
+    config: params.cfg,
+    workspaceDir: params.cwd,
+    env,
+  });
+  const codexPlugin = manifestRegistry.plugins.find(
+    (plugin) =>
+      plugin.id === "codex" &&
+      plugin.origin !== "bundled" &&
+      plugin.trustedOfficialInstall === true,
+  );
+  if (!codexPlugin) {
+    return null;
+  }
+  try {
+    return loadPluginPublicArtifactModuleSync<BundledHealthApi>({
+      pluginRoot: codexPlugin.rootDir,
+      artifactBasename: "api.js",
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Unable to resolve plugin public surface ")
+    ) {
+      return null;
+    }
+    throw error;
   }
 }
 
