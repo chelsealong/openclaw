@@ -84,6 +84,51 @@ describe("Workboard dispatcher ownership", () => {
     await expect(store.get(unassigned.id)).resolves.toMatchObject({ status: "ready" });
   });
 
+  it("never persists the dispatcher's synthetic owner as the card's agentId (#128860)", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const card = await store.create({
+      title: "Ownerless card",
+      status: "ready",
+      workspaceAccess: { unrestricted: true },
+    });
+    const run = vi.fn().mockResolvedValue({ runId: "run-sentinel-not-assigned" });
+
+    await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { now: 10, maxStarts: 1 },
+    });
+
+    const dispatched = await store.get(card.id);
+    expect(dispatched?.agentId).toBeUndefined();
+    expect(dispatched).toMatchObject({
+      status: "running",
+      metadata: { claim: { ownerId: "workboard-dispatcher" } },
+    });
+  });
+
+  it("still assigns agentId when dispatch is given an explicit --owner", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const card = await store.create({
+      title: "Ownerless card, explicit owner",
+      status: "ready",
+      workspaceAccess: { unrestricted: true },
+    });
+    const run = vi.fn().mockResolvedValue({ runId: "run-explicit-owner" });
+
+    await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { now: 10, maxStarts: 1, ownerId: "alice" },
+    });
+
+    await expect(store.get(card.id)).resolves.toMatchObject({
+      status: "running",
+      agentId: "alice",
+      metadata: { claim: { ownerId: "alice" } },
+    });
+  });
+
   it("bounds failed worker attempts without draining the ready queue", async () => {
     const store = new WorkboardStore(createMemoryStore());
     const cards = [];

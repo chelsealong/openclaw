@@ -467,6 +467,10 @@ async function runWorkboardDispatch(
             workspaceAccess: card.metadata?.automation?.workspaceAccess,
           },
           adoptWorkspaceAccess: persistWorkspaceAccess ? workspaceAccess : undefined,
+          // An explicit --owner is a deliberate assignment; a resolved fallback
+          // (active claim owner or the dispatcher's own sentinel identity) is
+          // not, and must never become the card's owner of record (#128860).
+          assignOwnerToCard: ownerOverride !== undefined,
         },
       );
       claimValue = claimed.token;

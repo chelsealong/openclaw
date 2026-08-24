@@ -136,6 +136,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         throw new Error(`card already claimed by ${activeClaim.ownerId}.`);
       }
       const metadata = clearDiagnostics(guarded.metadata, ["stranded_ready"]);
+      const shouldAssignOwner = options.assignOwnerToCard ?? true;
       const card = await this.updateCard(
         id,
         {
@@ -143,7 +144,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
             guarded.status === "backlog" || guarded.status === "todo" || guarded.status === "ready"
               ? "running"
               : guarded.status,
-          agentId: guarded.agentId ?? ownerId,
+          agentId: shouldAssignOwner ? (guarded.agentId ?? ownerId) : guarded.agentId,
           ...(options.adoptWorkspaceAccess && !guarded.metadata?.automation?.workspaceAccess
             ? { workspaceAccess: options.adoptWorkspaceAccess }
             : {}),

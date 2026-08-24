@@ -96,6 +96,12 @@ export type WorkboardClaimOptions = {
   };
   /** Trusted legacy-card adoption; applied only while expectedAuthority still matches. */
   adoptWorkspaceAccess?: WorkboardWorkspaceAccess;
+  /**
+   * Trusted dispatcher guard; false when `ownerId` is a synthetic dispatch
+   * identity rather than a deliberate assignment, so it must not become the
+   * card's owner of record. Defaults to true for direct/tool/gateway claims.
+   */
+  assignOwnerToCard?: boolean;
 };
 export type WorkboardHeartbeatInput = {
   token?: unknown;
