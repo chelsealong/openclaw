@@ -10,6 +10,9 @@ import {
   getAdmittedRunDelegatedAuthority,
   prepareAgentRunAdmission,
 } from "./admitted-run-context.js";
+import { addSession } from "./bash-process-registry.js";
+import { createProcessSessionFixture } from "./bash-process-registry.test-helpers.js";
+import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
 import { applyCodeModeCatalog, createCodeModeTools } from "./code-mode.js";
 import {
   resetCodeModeTestState,
@@ -41,6 +44,7 @@ describe("Code Mode wait, scope, and suspended runs", () => {
   afterEach(() => {
     vi.useRealTimers();
     resetCodeModeTestState();
+    resetProcessRegistryForTests();
   });
 
   it("marks yield suspensions and resumes the snapshot with wait", async () => {
@@ -547,6 +551,18 @@ describe("Code Mode wait, scope, and suspended runs", () => {
       ),
     ).rejects.toThrow("code mode run is unavailable or expired");
     expect(testing.activeRuns.has("invalid-expiry-run")).toBe(false);
+  });
+
+  it("names the process tool when wait is given a backgrounded shell sessionId", async () => {
+    const { tools: codeModeTools } = createCodeModeHarness();
+    addSession(createProcessSessionFixture({ id: "lucky-glade", backgrounded: true }));
+
+    await expect(
+      expectDefined(codeModeTools[1], "codeModeTools[1] test invariant").execute(
+        "code-wait-shell-session-id",
+        { runId: "lucky-glade" },
+      ),
+    ).rejects.toThrow(/backgrounded shell session.*process.*poll.*lucky-glade/s);
   });
 
   it("rejects wait calls from a different session scope", async () => {

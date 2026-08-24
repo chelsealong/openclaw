@@ -3,6 +3,7 @@ import {
   observeAgentRunApprovalWait,
   type AgentRunApprovalWait,
 } from "./agent-run-approval-wait.js";
+import { getFinishedSession, getSession } from "./bash-process-registry.js";
 import { codeModeReplayIdForToolCall } from "./code-mode-bridge.js";
 import {
   createCodeModeCatalogProjection,
@@ -590,6 +591,14 @@ export async function runWait(params: {
   removeExpiredRuns();
   const state = activeRuns.get(params.runId);
   if (!state) {
+    // A backgrounded shell command reports its id as `sessionId`, not a code
+    // mode `runId`; direct the model at the process tool instead of leaving
+    // it to conclude the started command is lost.
+    if (getSession(params.runId) || getFinishedSession(params.runId)) {
+      throw new ToolInputError(
+        `"${params.runId}" is a backgrounded shell session, not a code mode run. Use process (action: "poll", sessionId: "${params.runId}") to check on it.`,
+      );
+    }
     throw new ToolInputError("code mode run is unavailable or expired.");
   }
   if (state.ctx.runId && state.ctx.runId !== params.ctx.runId) {
