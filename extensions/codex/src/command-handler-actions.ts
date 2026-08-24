@@ -352,7 +352,10 @@ export async function setConversationModel(
         ? (currentSession.modelOverride ?? currentSession.model)
         : undefined;
     const binding = await deps.bindingStore.read(target.identity);
-    const activeModel = selectedModel ?? binding?.model;
+    // The native binding owns the selection once it exists (set by /codex
+    // model or a completed Codex turn); the outer session model is only a
+    // fallback before any Codex-specific binding has been established.
+    const activeModel = binding?.model ?? selectedModel;
     return activeModel
       ? `Codex model: ${formatCodexDisplayText(activeModel)}`
       : "Usage: /codex model <model>";
