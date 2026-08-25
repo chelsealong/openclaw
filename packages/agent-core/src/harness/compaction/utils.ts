@@ -249,6 +249,9 @@ export function serializeConversation(messages: Message[]): string {
       }
 
       if (thinkingParts.length > 0) {
+        // Summarization needs conversation state, not reasoning: keep only a count
+        // instead of replaying raw internal-reasoning text into an unrelated
+        // downstream prompt.
         parts.push(
           `[Assistant thinking]: (${thinkingParts.length} internal reasoning block(s) omitted)`,
         );
