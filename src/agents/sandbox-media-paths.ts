@@ -83,14 +83,7 @@ export async function resolveSandboxedBridgeMediaPath(params: {
       filePath,
       cwd: params.sandbox.root,
     });
-  try {
-    const resolved = resolveDirect();
-    await enforceWorkspaceBoundary(resolved);
-    return {
-      resolved: resolved.hostPath ?? resolved.containerPath,
-      ...(rewrittenFrom ? { rewrittenFrom } : {}),
-    };
-  } catch (err) {
+  const resolveInboundFallback = async (err: unknown) => {
     const fallbackDir = params.inboundFallbackDir?.trim();
     if (!fallbackDir) {
       throw err;
@@ -116,5 +109,34 @@ export async function resolveSandboxedBridgeMediaPath(params: {
       resolved: resolvedFallback.hostPath ?? resolvedFallback.containerPath,
       rewrittenFrom: filePath,
     };
+  };
+  try {
+    const resolved = resolveDirect();
+    await enforceWorkspaceBoundary(resolved);
+    // A bare handle with no directory component (e.g. an opaque upload id)
+    // resolves syntactically fine under the workspace root even when no such
+    // file exists there; only existence, not resolution, can tell it apart
+    // from a real workspace-relative filename, so check it before trusting
+    // the direct path over the staged inbound fallback.
+    if (
+      !rewrittenFrom &&
+      params.inboundFallbackDir?.trim() &&
+      path.basename(filePath) === filePath
+    ) {
+      const directStat = await params.sandbox.bridge
+        .stat({ filePath, cwd: params.sandbox.root })
+        .catch(() => null);
+      if (!directStat) {
+        return await resolveInboundFallback(
+          new Error(`Sandbox media reference not found: ${filePath}`),
+        );
+      }
+    }
+    return {
+      resolved: resolved.hostPath ?? resolved.containerPath,
+      ...(rewrittenFrom ? { rewrittenFrom } : {}),
+    };
+  } catch (err) {
+    return await resolveInboundFallback(err);
   }
 }

@@ -161,6 +161,61 @@ describe("createSandboxBridgeReadFile", () => {
     ).rejects.toThrow("Sandbox media reference is not staged: media://inbound/missing.png");
     expect(resolvePath).not.toHaveBeenCalled();
   });
+
+  it("falls back to the staged inbound file for a bare upload handle with no matching workspace file", async () => {
+    // A bare handle like an upload id resolves fine syntactically under the
+    // workspace root even though no such file exists there; only the staged
+    // inbound directory has it.
+    const resolvePath = vi.fn(({ filePath }: { filePath: string }) => ({
+      hostPath: `/tmp/sandbox-root/${filePath}`,
+      relativePath: filePath,
+      containerPath: `/sandbox/${filePath}`,
+    }));
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_abc123" ? { type: "file", size: 1, mtimeMs: 1 } : null,
+    );
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: {
+        root: "/tmp/sandbox-root",
+        bridge: { resolvePath, stat } as unknown as SandboxFsBridge,
+      },
+      mediaPath: "file_abc123",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(stat).toHaveBeenCalledWith({ filePath: "file_abc123", cwd: "/tmp/sandbox-root" });
+    expect(stat).toHaveBeenCalledWith({
+      filePath: "media/inbound/file_abc123",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(resolved).toEqual({
+      resolved: "/tmp/sandbox-root/media/inbound/file_abc123",
+      rewrittenFrom: "file_abc123",
+    });
+  });
+
+  it("keeps a bare handle that matches a real workspace file, without an inbound stat fallback", async () => {
+    const resolvePath = vi.fn(({ filePath }: { filePath: string }) => ({
+      hostPath: `/tmp/sandbox-root/${filePath}`,
+      relativePath: filePath,
+      containerPath: `/sandbox/${filePath}`,
+    }));
+    const stat = vi.fn(async () => ({ type: "file", size: 1, mtimeMs: 1 }));
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: {
+        root: "/tmp/sandbox-root",
+        bridge: { resolvePath, stat } as unknown as SandboxFsBridge,
+      },
+      mediaPath: "photo.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/photo.png" });
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith({ filePath: "photo.png", cwd: "/tmp/sandbox-root" });
+  });
 });
 
 describe("sandbox media container file URLs", () => {
