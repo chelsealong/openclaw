@@ -280,6 +280,24 @@ describe("serializeConversation", () => {
     expect(serialized.split("ERROR: early failure")).toHaveLength(2);
     expect(serialized).toContain(`[... ${output.length - 2000} more characters truncated]`);
   });
+
+  it("omits raw assistant thinking content, keeping only a block count", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "secret chain-of-thought reasoning" },
+          { type: "text", text: "Here is my answer." },
+        ],
+      },
+    ] as unknown as Message[];
+
+    const serialized = serializeConversation(messages);
+
+    expect(serialized).not.toContain("secret chain-of-thought reasoning");
+    expect(serialized).toContain("[Assistant thinking]: (1 internal reasoning block(s) omitted)");
+    expect(serialized).toContain("[Assistant]: Here is my answer.");
+  });
 });
 
 describe("formatFileOperations bounds", () => {

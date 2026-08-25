@@ -249,7 +249,9 @@ export function serializeConversation(messages: Message[]): string {
       }
 
       if (thinkingParts.length > 0) {
-        parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+        parts.push(
+          `[Assistant thinking]: (${thinkingParts.length} internal reasoning block(s) omitted)`,
+        );
       }
       if (textParts.length > 0) {
         parts.push(`[Assistant]: ${textParts.join("\n")}`);
