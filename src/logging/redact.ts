@@ -48,6 +48,13 @@ const chunkUnsafePatterns = new WeakSet<RegExp>();
 // a fresh chunk-local start and would still redact it later in the string.
 const chunkSafePatterns = new WeakSet<RegExp>();
 const CHUNK_SAFE_PATTERN_SOURCES = new Set(DEFAULT_REDACT_PATTERNS);
+// A `(^|...)` boundary alternative matches "start of string", which chunking legitimately
+// re-invents at every chunk start; replacePatternBounded relies on that to catch a real match
+// that only happens to land at a chunk boundary. A whole-text test() cannot observe that
+// chunk-local match, so it is not a valid superset check for these patterns even though they are
+// otherwise default/vetted — exclude them from the prefilter allowlist, not from bounded
+// replacement itself.
+const START_OF_STRING_ALTERNATION = "(^|";
 const formAwareEqualsAssignmentPatterns = new WeakSet<RegExp>();
 let defaultResolvedPatterns: RegExp[] | undefined;
 let toolPayloadResolvedPatterns: RegExp[] | undefined;
@@ -195,7 +202,8 @@ function parsePattern(raw: RedactPattern): RegExp | null {
     pattern &&
     typeof raw === "string" &&
     CHUNK_SAFE_PATTERN_SOURCES.has(raw) &&
-    !chunkUnsafePatterns.has(pattern)
+    !chunkUnsafePatterns.has(pattern) &&
+    !raw.includes(START_OF_STRING_ALTERNATION)
   ) {
     chunkSafePatterns.add(pattern);
   }

@@ -1664,6 +1664,22 @@ describe("redactSensitiveText", () => {
     expect(output).not.toContain(secret);
   });
 
+  it("masks a default anchored assignment pattern that only matches at a chunk boundary", () => {
+    // STANDALONE_ASSIGNMENT_REDACT_PATTERN (`(^|[\s,;])token=...`) is a DEFAULT_REDACT_PATTERNS
+    // entry, not a user-configured one, so it must stay out of the whole-text prefilter allowlist
+    // for the same reason as the configured case above: `token=` here is preceded by a plain
+    // letter, not a boundary, so it never matches on the whole text, but a chunk boundary landing
+    // right before it gives replacePatternBounded's per-chunk `.replace()` a fresh `^` start.
+    const chunkSize = 16_384;
+    const secret = "SECRETVALUE12345";
+    const prefix = `${"x".repeat(chunkSize - "unsafe".length)}unsafe`;
+    expect(prefix.length).toBe(chunkSize);
+    const input = `${prefix}token=${secret}${"y".repeat(20_000)}`;
+    expect(input.length).toBeGreaterThan(32_768);
+    const output = redactSensitiveText(input, { mode: "tools" });
+    expect(output).not.toContain(secret);
+  });
+
   it("masks Fireworks tokens that cross bounded-replacement chunk boundaries", () => {
     const chunkSize = 16_384;
     const prefix = `${"x".repeat(chunkSize - 2)} `;
