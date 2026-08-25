@@ -132,6 +132,62 @@ describe("mattermost monitor resources", () => {
     });
   });
 
+  it("carries the downloaded file's original name into the fact (#128956)", async () => {
+    const saveRemoteMedia = vi.fn(async () => ({
+      path: "/tmp/file.png",
+      contentType: "image/png",
+      fileName: "jj.txt",
+    }));
+
+    const resources = createMattermostMonitorResources({
+      accountId: "default",
+      callbackUrl: "https://openclaw.test/callback",
+      client: {
+        apiBaseUrl: "https://chat.example.com/api/v4",
+        baseUrl: "https://chat.example.com",
+        token: "bot-token",
+      } as never,
+      logger: {},
+      mediaMaxBytes: 1024,
+      saveRemoteMedia,
+      mediaKindFromMime: () => "image",
+    });
+
+    await expect(resources.resolveMattermostMedia(["file-1"])).resolves.toEqual([
+      {
+        path: "/tmp/file.png",
+        contentType: "image/png",
+        kind: "image",
+        fileName: "jj.txt",
+      },
+    ]);
+  });
+
+  it("falls back to the file info endpoint's name when the download itself failed (#128956)", async () => {
+    const saveRemoteMedia = vi.fn().mockRejectedValue(new Error("download failed"));
+    const request = vi.fn(async (requestPath: string) => {
+      expect(requestPath).toBe("/files/file-1/info");
+      return { mime_type: "text/plain", name: "jj.txt" };
+    });
+
+    const resources = createMattermostMonitorResources({
+      accountId: "default",
+      client: {
+        apiBaseUrl: "https://chat.example.com/api/v4",
+        baseUrl: "https://chat.example.com",
+        request,
+      },
+      logger: {},
+      mediaMaxBytes: 1024,
+      saveRemoteMedia,
+      mediaKindFromMime: () => null,
+    } as unknown as Parameters<typeof createMattermostMonitorResources>[0]);
+
+    await expect(resources.resolveMattermostMedia(["file-1"])).resolves.toEqual([
+      { contentType: "text/plain", kind: "unknown", fileName: "jj.txt" },
+    ]);
+  });
+
   it("keeps a type-only fact for rejected unsafe file IDs so later facts stay aligned", async () => {
     const saveRemoteMedia = vi.fn(async () => ({
       path: "/tmp/file.png",

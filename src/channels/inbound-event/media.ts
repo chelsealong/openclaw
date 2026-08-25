@@ -20,6 +20,7 @@ export type ChannelInboundMediaInput = {
   url?: string | null;
   contentType?: string | null;
   kind?: InboundMediaFacts["kind"] | null;
+  fileName?: string | null;
   durationMs?: number | null;
   width?: number | null;
   height?: number | null;

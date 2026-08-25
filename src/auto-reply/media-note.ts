@@ -44,6 +44,7 @@ function formatMediaAttachedLine(params: {
   path: string;
   url?: string;
   type?: string;
+  fileName?: string;
   index?: number;
   total?: number;
 }): string {
@@ -54,12 +55,16 @@ function formatMediaAttachedLine(params: {
   const pathValue = sanitizeInlineMediaNoteValue(params.path);
   const typeRaw = sanitizeInlineMediaNoteValue(params.type);
   const typePart = typeRaw ? ` (${typeRaw})` : "";
+  // Original filename, when a producer has one; quoted so the model can
+  // distinguish it from the (often opaque) storage path (issue #128956).
+  const fileNameRaw = sanitizeInlineMediaNoteValue(params.fileName).replace(/"/g, "'");
+  const fileNamePart = fileNameRaw ? ` "${fileNameRaw}"` : "";
   const urlRaw = sanitizeInlineMediaNoteValue(params.url);
   // When the channel mirrors the local path into the fact URL (Telegram album
   // media is the canonical case), rendering ` | ${url}` adds no information
   // and clutters the prompt with `path | path` duplication (issue #47587).
   const urlPart = urlRaw && urlRaw !== pathValue ? ` | ${urlRaw}` : "";
-  return `${prefix}${pathValue}${typePart}${urlPart}]`;
+  return `${prefix}${pathValue}${typePart}${fileNamePart}${urlPart}]`;
 }
 
 // WebM is ambiguous, while WMA and ALAC do not have canonical extension mappings.
@@ -191,6 +196,7 @@ export function buildInboundMediaNoteProjection(ctx: MsgContext): InboundMediaNo
         path: visibleEntries[0]?.path ?? "",
         type: visibleEntries[0]?.type,
         url: visibleEntries[0]?.url,
+        fileName: visibleEntries[0]?.fact.fileName,
       }),
       media,
       mediaIndexes,
@@ -207,6 +213,7 @@ export function buildInboundMediaNoteProjection(ctx: MsgContext): InboundMediaNo
         total: count,
         type: entry.type,
         url: entry.url,
+        fileName: entry.fact.fileName,
       }),
     );
   }

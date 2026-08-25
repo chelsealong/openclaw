@@ -27,7 +27,10 @@ import {
 } from "./client.js";
 import { buildButtonProps, type MattermostInteractionResponse } from "./interactions.js";
 
-type MattermostMediaInfo = Omit<MediaPlaceholderTextFact, "kind" | "url"> & { kind: MediaKind };
+type MattermostMediaInfo = Omit<MediaPlaceholderTextFact, "kind" | "url"> & {
+  kind: MediaKind;
+  fileName?: string;
+};
 
 export async function buildMattermostInboundMediaPayload(
   media: readonly MattermostMediaInfo[],
@@ -76,7 +79,7 @@ type SaveRemoteMedia = (params: {
   ssrfPolicy?: { allowedHostnames?: string[] };
   responseHeaderTimeoutMs?: number;
   readIdleTimeoutMs?: number;
-}) => Promise<{ path: string; contentType?: string | null }>;
+}) => Promise<{ path: string; contentType?: string | null; fileName?: string }>;
 
 export function createMattermostMonitorResources(params: {
   accountId: string;
@@ -172,13 +175,18 @@ export function createMattermostMonitorResources(params: {
           path: saved.path,
           contentType,
           kind: mediaKindFromMime(contentType) ?? "unknown",
+          ...(saved.fileName ? { fileName: saved.fileName } : {}),
         });
       } catch (err) {
         logger.debug?.(`mattermost: failed to download file ${fileId}: ${String(err)}`);
         let contentType: string | undefined;
+        let fileName: string | undefined;
         try {
-          const info = await client.request<{ mime_type?: string | null }>(`/files/${fileId}/info`);
+          const info = await client.request<{ mime_type?: string | null; name?: string | null }>(
+            `/files/${fileId}/info`,
+          );
           contentType = info.mime_type?.trim() || undefined;
+          fileName = info.name?.trim() || undefined;
         } catch (infoErr) {
           logger.debug?.(
             `mattermost: failed to resolve metadata for file ${fileId}: ${String(infoErr)}`,
@@ -187,6 +195,7 @@ export function createMattermostMonitorResources(params: {
         out.push({
           contentType,
           kind: mediaKindFromMime(contentType) ?? "unknown",
+          ...(fileName ? { fileName } : {}),
         });
       }
     }
