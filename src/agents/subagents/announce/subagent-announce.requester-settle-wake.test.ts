@@ -208,6 +208,10 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
     expect(message).toContain("social findings");
     expect(message).toContain("network findings");
     expect(message).toContain("NO_REPLY");
+    expect(message).toContain(
+      "If work such as a further subagent wave is still required, start it now",
+    );
+    expect(message).not.toContain("send your consolidated final answer to the user now");
     expect(registryRuntimeMock.hasDescendantRunAwaitingSettle).toHaveBeenCalledWith(
       REQUESTER,
       "run-b",

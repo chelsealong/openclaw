@@ -53,8 +53,8 @@ function buildRequesterSettleWakeMessage(params: {
 }): string {
   return [
     "[Subagent Context] Every subagent spawned from this session has now settled — none are still running or awaiting completion delivery.",
-    "[Subagent Context] Do not keep waiting or call sessions_yield again for this batch; no further completion events will arrive.",
-    "[Subagent Context] Review the completion results and send your consolidated final answer to the user now.",
+    "[Subagent Context] Do not keep waiting or call sessions_yield again for this batch; no further completion events will arrive for it.",
+    "[Subagent Context] Review the completion results against the original request. If work such as a further subagent wave is still required, start it now and yield again; only send your consolidated final answer to the user once the request is fully complete.",
     params.requireVisibleReply
       ? "[Subagent Context] Child completion delivery is internal; the original user request still requires your visible final answer."
       : `[Subagent Context] Reply ONLY: ${SILENT_REPLY_TOKEN} only if you already delivered the consolidated final answer for this batch.`,
