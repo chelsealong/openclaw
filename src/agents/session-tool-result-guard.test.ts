@@ -6,6 +6,7 @@ import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { createOpenClawReadTool } from "./agent-tools.read.js";
+import { buildExecForegroundResult } from "./bash-tools.exec-support.js";
 import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 import { redactTranscriptMessage } from "./transcript-redact.js";
@@ -178,6 +179,28 @@ describe("installSessionToolResultGuard", () => {
     );
 
     expectPersistedRoles(sm, ["assistant", "toolResult"]);
+  });
+
+  it("keeps the exec retention-cap disclosure visible after session truncation", () => {
+    const sm = SessionManager.inMemory();
+    installSessionToolResultGuard(sm);
+
+    const execResult = buildExecForegroundResult({
+      outcome: {
+        status: "completed",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        aggregated: "x".repeat(80_000),
+        timedOut: false,
+      },
+      aggregateOutputDropped: true,
+    });
+    appendToolResultText(sm, (execResult.content[0] as { text: string }).text);
+
+    const text = getToolResultText(getPersistedMessages(sm));
+    expect(text).toContain("discarded at the retention cap and cannot be recovered");
+    expect(text).toContain("more characters truncated");
   });
 
   it("applies count-based truncation wording when persisting oversized tool results", () => {

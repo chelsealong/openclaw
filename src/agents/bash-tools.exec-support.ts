@@ -31,8 +31,11 @@ export function buildExecForegroundResult(params: {
   aggregateOutputDropped?: boolean;
 }): AgentToolResult<ExecToolDetails> {
   const warningText = params.warningText?.trim() ? `${params.warningText}\n\n` : "";
+  // Placed ahead of the retained text, not appended after it: a later
+  // head-preserving session-result cap truncates the tail, and a trailing
+  // note there would be silently discarded along with it (openclaw#128967).
   const retentionCapNote = params.aggregateOutputDropped
-    ? "\n\n[earlier output was discarded at the retention cap and cannot be recovered]"
+    ? "[earlier output was discarded at the retention cap and cannot be recovered]\n\n"
     : "";
   if (params.outcome.status === "failed") {
     const linuxOomGuidance =
@@ -44,7 +47,7 @@ export function buildExecForegroundResult(params: {
           "SIGKILL alone does not identify whether the Linux OOM killer, an operator, or another process sent it. " +
           "Check cgroup memory events or kernel logs. If they show memory pressure, narrow the command or adjust memory, concurrency, or resource limits."
         : "";
-    const outputText = `${warningText}${params.outcome.reason}${linuxOomGuidance}${retentionCapNote}`;
+    const outputText = `${warningText}${retentionCapNote}${params.outcome.reason}${linuxOomGuidance}`;
     return failedTextResult(outputText, {
       status: "failed",
       exitCode: params.outcome.exitCode ?? null,
@@ -58,7 +61,7 @@ export function buildExecForegroundResult(params: {
       cwd: params.cwd,
     });
   }
-  const outputText = `${warningText}${renderExecOutputText(params.outcome.aggregated)}${retentionCapNote}`;
+  const outputText = `${warningText}${retentionCapNote}${renderExecOutputText(params.outcome.aggregated)}`;
   return textResult(outputText, {
     status: "completed",
     exitCode: params.outcome.exitCode,
