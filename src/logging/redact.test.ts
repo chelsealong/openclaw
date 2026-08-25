@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { DEFAULT_REDACT_PATTERNS } from "./redact-patterns.js";
 import {
@@ -1616,6 +1616,21 @@ describe("redactSensitiveText", () => {
     const output = redactSensitiveText(input, { mode: "tools" });
     expect(performance.now() - startedAt).toBeLessThan(200);
     expect(output).toBe(input);
+  });
+
+  it("skips the whole-text prefilter test() for payloads under the chunk threshold", () => {
+    // Below the chunk threshold, replacePatternBounded already falls through to a single
+    // text.replace() with no chunking to skip, so the prefilter's whole-text pattern.test()
+    // would be a redundant extra scan; it must not run for sub-threshold payloads.
+    const input = "the quick brown fox jumps over the lazy dog ".repeat(100);
+    expect(input.length).toBeLessThan(32_768);
+    const testSpy = vi.spyOn(RegExp.prototype, "test");
+    try {
+      redactSensitiveText(input, { mode: "tools", patterns: [/NEVER_MATCHES_ANYTHING/g] });
+      expect(testSpy).not.toHaveBeenCalled();
+    } finally {
+      testSpy.mockRestore();
+    }
   });
 
   it("masks a configured sticky pattern that only matches at a chunk boundary", () => {

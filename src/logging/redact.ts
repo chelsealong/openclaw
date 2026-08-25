@@ -9,7 +9,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { compileConfigRegex } from "../security/config-regex.js";
 import { readLoggingConfig } from "./config.js";
-import { replacePatternBounded } from "./redact-bounded.js";
+import { REDACT_REGEX_CHUNK_THRESHOLD, replacePatternBounded } from "./redact-bounded.js";
 import { isFullContextToolPayloadRedaction } from "./redact-internal.js";
 import {
   AWS_SECRET_ACCESS_KEY_FIELD_KEYS,
@@ -759,8 +759,11 @@ function redactText(
     // common case across a large default pattern table) skip the chunked replace entirely.
     // Sticky (`y`) patterns only match at the regex's current lastIndex, so a whole-text
     // test() only proves a match at position 0 and can miss a match that bounded replacement
-    // would still find at a later chunk start; exempt them from the prefilter.
-    if (!isChunkUnsafe && !pattern.sticky && !pattern.test(next)) {
+    // would still find at a later chunk start; exempt them from the prefilter. Below the chunk
+    // threshold, replacePatternBounded already falls through to a single text.replace() with no
+    // chunking to skip, so the prefilter's extra test() only adds a redundant scan; skip it.
+    const canChunk = next.length > REDACT_REGEX_CHUNK_THRESHOLD;
+    if (!isChunkUnsafe && canChunk && !pattern.sticky && !pattern.test(next)) {
       continue;
     }
     const replacer = (...args: unknown[]) => {
