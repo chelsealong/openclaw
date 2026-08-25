@@ -1648,6 +1648,22 @@ describe("redactSensitiveText", () => {
     expect(output).not.toContain(secret);
   });
 
+  it("masks a configured non-sticky anchored pattern that only matches at a chunk boundary", () => {
+    // An anchored (`^`) configured pattern only matches at the start of the whole text (no `m`
+    // flag), so a whole-text test() proves nothing about a later chunk; it must still fall
+    // through to bounded replacement, which gives `^` a fresh chunk-local start at every chunk
+    // (here, offset 16_384) since it is not part of the vetted default/tool-payload table.
+    const chunkSize = 16_384;
+    const secret = "SECRETVALUE12345";
+    const input = `${"x".repeat(chunkSize)}${secret}${"y".repeat(20_000)}`;
+    expect(input.length).toBeGreaterThan(32_768);
+    const output = redactSensitiveText(input, {
+      mode: "tools",
+      patterns: [/^SECRETVALUE\d+/g],
+    });
+    expect(output).not.toContain(secret);
+  });
+
   it("masks Fireworks tokens that cross bounded-replacement chunk boundaries", () => {
     const chunkSize = 16_384;
     const prefix = `${"x".repeat(chunkSize - 2)} `;
