@@ -1433,7 +1433,7 @@ describe("codex command", () => {
 
     await expect(
       handleCodexCommand(createSandboxedContext("model", sessionFile), { deps: createDeps() }),
-    ).resolves.toEqual({ text: "Codex model: codex-execution-model" });
+    ).resolves.toEqual({ text: "Codex model: gpt-5.6-sol" });
     await expect(
       handleCodexCommand(createSandboxedContext("fast status", sessionFile), {
         deps: createDeps(),
@@ -6109,9 +6109,27 @@ describe("codex command", () => {
     });
   });
 
-  it("does not forward an outer session identity when setting the model on a bound conversation", async () => {
-    const setCodexConversationModel = vi.fn(async () => "Codex model set to gpt-5.5.");
-    const deps = createDeps({ setCodexConversationModel });
+  it("updates a bound conversation without changing its ambient outer session", async () => {
+    const sessionKey = "agent:main:session-1";
+    const storePath = resolveStorePath(undefined, { agentId: "main" });
+    await upsertSessionEntry({
+      agentId: "main",
+      storePath,
+      sessionKey,
+      entry: {
+        sessionId: "session-1",
+        updatedAt: Date.now(),
+        providerOverride: "anthropic",
+        modelOverride: "claude-sonnet-4-6",
+        agentRuntimeOverride: "claude-cli",
+        authProfileOverride: "anthropic:personal",
+        authProfileOverrideSource: "user",
+      },
+    });
+    await writeTestBinding(
+      { kind: "conversation", bindingId: "binding-data-1" },
+      { threadId: "thread-conversation", cwd: "/repo", model: "gpt-5.4", modelProvider: "openai" },
+    );
     const getCurrentConversationBinding = async () => ({
       bindingId: "binding-1",
       pluginId: "codex",
@@ -6131,20 +6149,26 @@ describe("codex command", () => {
     await expect(
       handleCodexCommand(
         createContext("model gpt-5.5", undefined, {
-          sessionKey: "agent:main:session-1",
+          sessionKey,
           getCurrentConversationBinding,
         }),
-        { deps },
+        { deps: createDeps() },
       ),
     ).resolves.toEqual({ text: "Codex model set to gpt-5.5." });
 
-    expect(setCodexConversationModel).toHaveBeenCalledWith({
-      identity: { kind: "conversation", bindingId: "binding-data-1" },
-      bindingStore: testCodexAppServerBindingStore,
-      pluginConfig: undefined,
+    await expect(
+      testCodexAppServerBindingStore.read({ kind: "conversation", bindingId: "binding-data-1" }),
+    ).resolves.toMatchObject({
+      threadId: "thread-conversation",
       model: "gpt-5.5",
-      agentDir: expect.any(String),
-      config: {},
+      modelProvider: "openai",
+    });
+    expect(getSessionEntry({ storePath, sessionKey })).toMatchObject({
+      providerOverride: "anthropic",
+      modelOverride: "claude-sonnet-4-6",
+      agentRuntimeOverride: "claude-cli",
+      authProfileOverride: "anthropic:personal",
+      authProfileOverrideSource: "user",
     });
   });
 
@@ -6325,7 +6349,7 @@ describe("codex command", () => {
     expect(setCodexConversationPermissions).toHaveBeenCalledOnce();
   });
 
-  it("reports the bound model, not a diverged outer session override", async () => {
+  it("reports the desired direct-session model before its stale native binding reloads", async () => {
     const sessionKey = "agent:main:diverged-model";
     const storePath = resolveStorePath(undefined, { agentId: "main" });
     await upsertSessionEntry({
@@ -6350,7 +6374,56 @@ describe("codex command", () => {
           deps: createDeps(),
         },
       ),
-    ).resolves.toEqual({ text: "Codex model: bound-model" });
+    ).resolves.toEqual({ text: "Codex model: outer-override-model" });
+  });
+
+  it.each([
+    { boundModel: "bound-model", expected: "Codex model: bound-model" },
+    { boundModel: undefined, expected: "Usage: /codex model <model>" },
+  ])("keeps conversation model status independent from its ambient session", async (testCase) => {
+    const sessionKey = "agent:main:conversation-model";
+    await upsertSessionEntry({
+      agentId: "main",
+      storePath: resolveStorePath(undefined, { agentId: "main" }),
+      sessionKey,
+      entry: {
+        sessionId: "session-1",
+        updatedAt: Date.now(),
+        modelOverride: "outer-override-model",
+      },
+    });
+    await writeTestBinding(
+      { kind: "conversation", bindingId: "binding-data-1" },
+      {
+        threadId: "thread-conversation",
+        cwd: "/repo",
+        ...(testCase.boundModel ? { model: testCase.boundModel } : {}),
+      },
+    );
+
+    const result = await handleCodexCommand(
+      createContext("model", undefined, {
+        sessionKey,
+        getCurrentConversationBinding: async () => ({
+          bindingId: "binding-1",
+          pluginId: "codex",
+          pluginRoot: "/plugin",
+          channel: "test",
+          accountId: "default",
+          conversationId: "conversation",
+          boundAt: 1,
+          data: {
+            kind: "codex-app-server-session",
+            version: 2,
+            bindingId: "binding-data-1",
+            workspaceDir: tempDir,
+          },
+        }),
+      }),
+      { deps: createDeps() },
+    );
+
+    expect(result).toEqual({ text: testCase.expected });
   });
 
   it("escapes current bound model status before chat display", async () => {

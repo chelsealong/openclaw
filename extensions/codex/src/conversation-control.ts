@@ -1,5 +1,9 @@
 // Codex plugin module implements conversation control behavior.
-import { ModelSelectionLockedError } from "openclaw/plugin-sdk/model-session-runtime";
+import { resolveAgentDir } from "openclaw/plugin-sdk/agent-runtime";
+import {
+  applyModelOverrideWithAuthProfileCompatibility,
+  ModelSelectionLockedError,
+} from "openclaw/plugin-sdk/model-session-runtime";
 import {
   getSessionEntry,
   patchSessionEntry,
@@ -213,16 +217,50 @@ export async function setCodexConversationModel(params: {
   });
   const nextModel = modelSelection.model;
   const modelChanged = nextModel !== binding.model || nextModelProvider !== binding.modelProvider;
-  // The native binding is the sole owner of this selection; the outer
-  // OpenClaw session model override is a separate contract that only /model
-  // may change, so it must stay untouched here regardless of identity kind.
-  await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
-    model: nextModel,
-    modelProvider: nextModelProvider,
-    ...(modelChanged && binding.contextEngine?.projection
+  const projectionPatch =
+    modelChanged && binding.contextEngine?.projection
       ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
-      : {}),
-  });
+      : {};
+  if (params.identity.kind === "session" && params.identity.sessionKey) {
+    const identity = params.identity;
+    // SessionEntry owns the desired model; retain the loaded binding until
+    // lifecycle reconciliation can rotate its native generation safely.
+    const updated = await patchSessionEntry({
+      agentId: identity.agentId,
+      storePath: resolveStorePath(params.config?.session?.store, { agentId: identity.agentId }),
+      sessionKey: identity.sessionKey,
+      requireWriteSuccess: true,
+      replaceEntry: true,
+      update: (entry) => {
+        if (entry.sessionId !== identity.sessionId) {
+          throw new Error("Codex session changed while applying the model selection.");
+        }
+        applyModelOverrideWithAuthProfileCompatibility({
+          cfg: params.config ?? {},
+          agentDir: params.agentDir ?? resolveAgentDir(params.config ?? {}, identity.agentId),
+          entry,
+          currentProvider: binding.modelProvider ?? "openai",
+          selection: { provider: nextModelProvider ?? "openai", model: nextModel },
+          markLiveSwitchPending: true,
+        });
+        return entry;
+      },
+    });
+    if (!updated) {
+      throw new Error("Codex session changed while applying the model selection.");
+    }
+    if (modelChanged && binding.contextEngine?.projection) {
+      await patchThreadBinding(params.bindingStore, identity, binding.threadId, projectionPatch);
+    }
+  } else {
+    // Conversation bindings and ephemeral sessions own native selection;
+    // ambient outer-session metadata must never redirect their runtime.
+    await patchThreadBinding(params.bindingStore, params.identity, binding.threadId, {
+      model: nextModel,
+      modelProvider: nextModelProvider,
+      ...projectionPatch,
+    });
+  }
   return `Codex model set to ${formatCodexDisplayText(nextModel)}.`;
 }
 
