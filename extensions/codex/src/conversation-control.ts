@@ -221,8 +221,8 @@ export async function setCodexConversationModel(params: {
     modelChanged && binding.contextEngine?.projection
       ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
       : {};
-  if (params.identity.kind === "session" && params.identity.sessionKey) {
-    const identity = params.identity;
+  const identity = params.identity;
+  if (identity.kind === "session" && identity.sessionKey) {
     // SessionEntry owns the desired model; retain the loaded binding until
     // lifecycle reconciliation can rotate its native generation safely.
     const updated = await patchSessionEntry({
