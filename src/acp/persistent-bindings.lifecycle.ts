@@ -60,6 +60,10 @@ export async function ensureConfiguredAcpBindingSession(params: {
 }): Promise<{ ok: true; sessionKey: string } | { ok: false; sessionKey: string; error: string }> {
   const sessionKey = buildConfiguredAcpSessionKey(params.spec);
   const acpManager = getAcpSessionManager();
+  const runtimeOptions = {
+    ...(params.spec.model ? { model: params.spec.model } : {}),
+    ...(params.spec.thinking ? { thinking: params.spec.thinking } : {}),
+  };
   try {
     const resolution = acpManager.resolveSession({
       cfg: params.cfg,
@@ -73,22 +77,19 @@ export async function ensureConfiguredAcpBindingSession(params: {
         meta: resolution.meta,
       })
     ) {
-      // Model/thinking drift is live-configurable; preserve the bound conversation and patch in place.
-      // Thinking also reconciles the explicit-to-unset transition: an undefined desired value still
-      // patches (to undefined) when a prior explicit value is pinned, clearing the stale session state.
-      const currentThinking = normalizeText(resolution.meta.runtimeOptions?.thinking);
-      const runtimeOptionsPatch = {
-        ...(params.spec.model &&
-        normalizeText(resolution.meta.runtimeOptions?.model) !== params.spec.model
-          ? { model: params.spec.model }
-          : {}),
-        ...(currentThinking !== params.spec.thinking ? { thinking: params.spec.thinking } : {}),
-      };
-      if (Object.keys(runtimeOptionsPatch).length > 0) {
+      // Omitted options retain the current selection: ACP has no generic unset control,
+      // and recreating a bound conversation to restore defaults would discard its history.
+      if (
+        (["model", "thinking"] as const).some(
+          (key) =>
+            runtimeOptions[key] !== undefined &&
+            normalizeText(resolution.meta.runtimeOptions?.[key]) !== runtimeOptions[key],
+        )
+      ) {
         await acpManager.updateSessionRuntimeOptions({
           cfg: params.cfg,
           sessionKey,
-          patch: runtimeOptionsPatch,
+          patch: runtimeOptions,
         });
       }
       return {
@@ -113,13 +114,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
       sessionKey,
       agent: params.spec.acpAgentId ?? params.spec.agentId,
       mode: params.spec.mode,
-      runtimeOptions:
-        params.spec.model || params.spec.thinking
-          ? {
-              ...(params.spec.model ? { model: params.spec.model } : {}),
-              ...(params.spec.thinking ? { thinking: params.spec.thinking } : {}),
-            }
-          : undefined,
+      runtimeOptions,
       cwd: params.spec.cwd,
       backendId: params.spec.backend,
     });

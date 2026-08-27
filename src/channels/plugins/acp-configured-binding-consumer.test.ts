@@ -1,5 +1,6 @@
 /** Tests configured ACP binding thinking-default precedence. */
 import { describe, expect, it } from "vitest";
+import { resolveConfiguredAcpBindingSpecFromRecord } from "../../acp/persistent-bindings.types.js";
 import type { AgentAcpBinding } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { acpConfiguredBindingConsumer } from "./acp-configured-binding-consumer.js";
@@ -23,7 +24,10 @@ function materializeThinking(cfg: OpenClawConfig): string | undefined {
     accountId: "default",
     conversation: { conversationId: "convo-1" },
   });
-  return materialized?.record.metadata?.thinking as string | undefined;
+  if (!materialized) {
+    throw new Error("expected a configured ACP binding");
+  }
+  return resolveConfiguredAcpBindingSpecFromRecord(materialized.record)?.thinking;
 }
 
 const baseCfg = {
@@ -63,5 +67,35 @@ describe("acpConfiguredBindingConsumer thinking precedence", () => {
     } satisfies OpenClawConfig;
 
     expect(materializeThinking(cfg)).toBe("adaptive");
+  });
+
+  it.each([false, "disabled", "none"])("forwards per-model thinking %s as off", (thinking) => {
+    expect(
+      materializeThinking({
+        ...baseCfg,
+        agents: {
+          ...baseCfg.agents,
+          defaults: {
+            thinkingDefault: "high",
+            models: { "ollama-cloud/glm-5.2:cloud": { params: { thinking } } },
+          },
+        },
+      }),
+    ).toBe("off");
+  });
+
+  it.each([undefined, "anthropic/claude-sonnet-4-6"])(
+    "leaves unconfigured thinking to the harness with model %s",
+    (model) => {
+      expect(materializeThinking({ agents: { list: [{ id: "codex", model }] } })).toBeUndefined();
+    },
+  );
+
+  it("forwards global thinking without requiring a configured model", () => {
+    expect(
+      materializeThinking({
+        agents: { list: [{ id: "codex" }], defaults: { thinkingDefault: "off" } },
+      }),
+    ).toBe("off");
   });
 });

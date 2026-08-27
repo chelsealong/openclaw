@@ -122,14 +122,17 @@ describe("ensureConfiguredAcpBindingSession", () => {
     expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
   });
 
-  it("updates a configured model in place for a structurally matching session", async () => {
-    const spec = createPersistentSpec({
-      model: "anthropic/claude-sonnet-4-6",
-    });
+  it.each([
+    { model: "anthropic/claude-sonnet-4-6" },
+    { thinking: "off" },
+    { model: "anthropic/claude-sonnet-4-6", thinking: "off" },
+  ])("updates configured runtime options %j in place", async (runtimeOptions) => {
+    const spec = createPersistentSpec(runtimeOptions);
     const sessionKey = mockReadySession({
       spec,
       cwd: "/workspace/openclaw",
       model: "anthropic/claude-haiku-4-5",
+      thinking: "high",
     });
 
     const ensured = await ensureConfiguredAcpBindingSession({
@@ -141,8 +144,21 @@ describe("ensureConfiguredAcpBindingSession", () => {
     expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
       cfg: baseCfg,
       sessionKey,
-      patch: { model: "anthropic/claude-sonnet-4-6" },
+      patch: runtimeOptions,
     });
+    expect(managerMocks.closeSession).not.toHaveBeenCalled();
+    expect(managerMocks.initializeSession).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite matching runtime options", async () => {
+    const spec = createPersistentSpec({ model: "selected/model", thinking: "off" });
+    const sessionKey = mockReadySession({ spec, cwd: "/workspace/openclaw", ...spec });
+
+    expect(await ensureConfiguredAcpBindingSession({ cfg: baseCfg, spec })).toEqual({
+      ok: true,
+      sessionKey,
+    });
+    expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
@@ -252,11 +268,12 @@ describe("ensureConfiguredAcpBindingSession", () => {
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
 
-  it("clears a previously pinned thinking value once the configured default is removed", async () => {
+  it("preserves the session selection once configured defaults are removed", async () => {
     const spec = createPersistentSpec();
     const sessionKey = mockReadySession({
       spec,
       cwd: "/workspace/openclaw",
+      model: "manual/selected-model",
       thinking: "off",
     });
 
@@ -266,11 +283,7 @@ describe("ensureConfiguredAcpBindingSession", () => {
     });
 
     expect(ensured).toEqual({ ok: true, sessionKey });
-    expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
-      cfg: baseCfg,
-      sessionKey,
-      patch: { thinking: undefined },
-    });
+    expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
