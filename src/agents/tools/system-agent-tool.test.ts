@@ -6,6 +6,7 @@ import {
   resolveSystemAgentDirectiveTransition,
   resolveSystemAgentProposalTransition,
   type SystemAgentToolDirective,
+  type SystemAgentToolOptions,
 } from "./system-agent-tool.js";
 
 const mocks = vi.hoisted(() => ({
@@ -159,7 +160,7 @@ describe("openclaw tool", () => {
   });
 
   it("keeps the first staged config_set proposal instead of overwriting it with a second", async () => {
-    const proposalRef: { current?: string } = {};
+    const proposalRef: NonNullable<SystemAgentToolOptions["proposalRef"]> = {};
     const tool = createSystemAgentTool({ surface: "gateway", proposalRef });
 
     const first = await tool.execute("multi-a", {
@@ -181,6 +182,11 @@ describe("openclaw tool", () => {
     // operation: only one operation can ever be approved and applied.
     expect(toolText(second)).toContain("proposal-conflict");
     expect(proposalRef.current).toBe(firstHash);
+    expect(proposalRef.operation).toEqual({
+      kind: "config-set",
+      path: "tts.providers.fish-audio.model",
+      value: "s2.1-pro",
+    });
     expect(mocks.executeSystemAgentOperation).not.toHaveBeenCalled();
   });
 
