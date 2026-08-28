@@ -379,10 +379,16 @@ policy. Thinking uses the agent's `thinkingDefault`, then per-model
 harness keeps its own defaults.
 
 Changing a configured model or thinking value updates the existing session
-before its next turn without replacing the conversation. Removing a default
+before its next turn without replacing the conversation. Each option is saved
+only after the harness accepts it; a rejected option returns an error and keeps
+that option's previous selection. Model and thinking changes are independent,
+not an atomic batch. Removing a default
 uses any remaining configured policy; if none remains, OpenClaw retains the
 session's last selection. Omission is not a backend reset. To change thinking
 explicitly, use `/acp set thinking <level>` with a level supported by the harness.
+For Codex ACP, `off` only omits a fresh session's startup override. Switching an
+existing session to `off` is unsupported and returns an error without clearing
+its current reasoning effort or conversation.
 
 ### Example
 

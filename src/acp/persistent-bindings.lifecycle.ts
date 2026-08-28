@@ -77,20 +77,13 @@ export async function ensureConfiguredAcpBindingSession(params: {
         meta: resolution.meta,
       })
     ) {
-      // Omitted options retain the current selection: ACP has no generic unset control,
-      // and recreating a bound conversation to restore defaults would discard its history.
-      if (
-        (["model", "thinking"] as const).some(
-          (key) =>
-            runtimeOptions[key] !== undefined &&
-            normalizeText(resolution.meta.runtimeOptions?.[key]) !== runtimeOptions[key],
-        )
-      ) {
-        await acpManager.updateSessionRuntimeOptions({
-          cfg: params.cfg,
-          sessionKey,
-          patch: runtimeOptions,
-        });
+      // Apply before persisting: rejected controls must not overwrite accepted options.
+      // Model precedes effort; omission retains the selection because ACP has no unset.
+      for (const key of ["model", "thinking"] as const) {
+        const value = runtimeOptions[key];
+        if (value !== undefined && normalizeText(resolution.meta.runtimeOptions?.[key]) !== value) {
+          await acpManager.setSessionConfigOption({ cfg: params.cfg, sessionKey, key, value });
+        }
       }
       return {
         ok: true,

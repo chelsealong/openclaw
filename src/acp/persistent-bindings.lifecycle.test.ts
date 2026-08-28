@@ -10,7 +10,7 @@ const managerMocks = vi.hoisted(() => ({
   resolveSession: vi.fn(),
   closeSession: vi.fn(),
   initializeSession: vi.fn(),
-  updateSessionRuntimeOptions: vi.fn(),
+  setSessionConfigOption: vi.fn(),
 }));
 
 vi.mock("./control-plane/manager.js", () => ({
@@ -18,7 +18,7 @@ vi.mock("./control-plane/manager.js", () => ({
     resolveSession: managerMocks.resolveSession,
     closeSession: managerMocks.closeSession,
     initializeSession: managerMocks.initializeSession,
-    updateSessionRuntimeOptions: managerMocks.updateSessionRuntimeOptions,
+    setSessionConfigOption: managerMocks.setSessionConfigOption,
   }),
 }));
 
@@ -39,7 +39,7 @@ beforeEach(async () => {
     metaCleared: false,
   });
   managerMocks.initializeSession.mockReset().mockResolvedValue(undefined);
-  managerMocks.updateSessionRuntimeOptions.mockReset().mockResolvedValue(undefined);
+  managerMocks.setSessionConfigOption.mockReset().mockResolvedValue(undefined);
   ({ ensureConfiguredAcpBindingSession } = await import("./persistent-bindings.lifecycle.js"));
 });
 
@@ -119,7 +119,7 @@ describe("ensureConfiguredAcpBindingSession", () => {
     expect(ensured).toEqual({ ok: true, sessionKey });
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
-    expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
+    expect(managerMocks.setSessionConfigOption).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -141,11 +141,11 @@ describe("ensureConfiguredAcpBindingSession", () => {
     });
 
     expect(ensured).toEqual({ ok: true, sessionKey });
-    expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
-      cfg: baseCfg,
-      sessionKey,
-      patch: runtimeOptions,
-    });
+    expect(managerMocks.setSessionConfigOption.mock.calls).toEqual(
+      Object.entries(runtimeOptions).map(([key, value]) => [
+        { cfg: baseCfg, sessionKey, key, value },
+      ]),
+    );
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
@@ -158,7 +158,28 @@ describe("ensureConfiguredAcpBindingSession", () => {
       ok: true,
       sessionKey,
     });
-    expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
+    expect(managerMocks.setSessionConfigOption).not.toHaveBeenCalled();
+    expect(managerMocks.closeSession).not.toHaveBeenCalled();
+    expect(managerMocks.initializeSession).not.toHaveBeenCalled();
+  });
+
+  it("reports rejected live thinking without replacing or overwriting the existing session", async () => {
+    const spec = createPersistentSpec({ thinking: "off" });
+    const sessionKey = mockReadySession({
+      spec,
+      cwd: "/workspace/openclaw",
+      thinking: "high",
+    });
+    managerMocks.setSessionConfigOption.mockRejectedValue(new Error("Live off is unsupported"));
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await ensureConfiguredAcpBindingSession({ cfg: baseCfg, spec })).toEqual({
+        ok: false,
+        sessionKey,
+        error: "Live off is unsupported",
+      });
+    }
+    expect(managerMocks.setSessionConfigOption).toHaveBeenCalledTimes(2);
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
@@ -259,10 +280,11 @@ describe("ensureConfiguredAcpBindingSession", () => {
     });
 
     expect(ensured).toEqual({ ok: true, sessionKey });
-    expect(managerMocks.updateSessionRuntimeOptions).toHaveBeenCalledWith({
+    expect(managerMocks.setSessionConfigOption).toHaveBeenCalledWith({
       cfg: baseCfg,
       sessionKey,
-      patch: { thinking: "off" },
+      key: "thinking",
+      value: "off",
     });
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
@@ -283,7 +305,7 @@ describe("ensureConfiguredAcpBindingSession", () => {
     });
 
     expect(ensured).toEqual({ ok: true, sessionKey });
-    expect(managerMocks.updateSessionRuntimeOptions).not.toHaveBeenCalled();
+    expect(managerMocks.setSessionConfigOption).not.toHaveBeenCalled();
     expect(managerMocks.closeSession).not.toHaveBeenCalled();
     expect(managerMocks.initializeSession).not.toHaveBeenCalled();
   });
