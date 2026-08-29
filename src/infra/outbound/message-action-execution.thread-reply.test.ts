@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { annotateSourceDelivery } from "./message-action-execution.js";
 
+const actionParams = {
+  action: "thread-reply",
+  to: "direct:user-1",
+  threadId: "thread-1",
+  message: "visible reply",
+};
+
 const input = {
+  cfg: {},
+  action: "thread-reply" as const,
+  params: { channel: "testchat", ...actionParams },
   messageActionAuthorization: {
     requesterAccountId: "default",
     toolContext: {
@@ -16,12 +26,7 @@ const input = {
 
 const annotationParams = {
   cfg: {},
-  actionParams: {
-    action: "thread-reply",
-    to: "direct:user-1",
-    threadId: "thread-1",
-    message: "visible reply",
-  },
+  actionParams,
   channel: "testchat" as const,
   accountId: "default",
   input,

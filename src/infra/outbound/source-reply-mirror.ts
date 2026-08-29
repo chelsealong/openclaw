@@ -434,12 +434,14 @@ function resolveOwnerCurrentConversationMatch(
   if (!toolContext) {
     return undefined;
   }
+  // SAFETY: message actions reach this boundary only after channel resolution.
   const registration = resolveChannelPluginRegistration(params.channel as ChannelId);
   if (registration?.origin !== "bundled") {
     return undefined;
   }
   const matcher =
     registration.plugin.actions?.messageActionTargetAliases?.[
+      // SAFETY: action alias lookup accepts the normalized runtime action name.
       params.action as ChannelMessageActionName
     ]?.matchesCurrentConversation;
   if (!matcher) {

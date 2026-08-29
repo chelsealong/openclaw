@@ -189,7 +189,7 @@ describe("subscribeEmbeddedAgentSession", () => {
     expect(onBlockReply).not.toHaveBeenCalled();
   });
 
-  it("keeps a divergent automatic final after a confirmed current-source thread reply", async () => {
+  it("suppresses the automatic final after a confirmed current-source thread reply", async () => {
     const { emit, onBlockReply } = createBlockReplyHarness("message_end", {
       sourceReplyDeliveryMode: "automatic",
     });
@@ -213,10 +213,7 @@ describe("subscribeEmbeddedAgentSession", () => {
     emitAssistantMessageEnd(emit, "QA-THREAD-RECEIPT-FINAL-OK");
     await Promise.resolve();
 
-    expect(onBlockReply).toHaveBeenCalledTimes(1);
-    expect(onBlockReply.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ text: "QA-THREAD-RECEIPT-FINAL-OK" }),
-    );
+    expect(onBlockReply).not.toHaveBeenCalled();
   });
 
   it("reports bridged message-tool-only source delivery to the attempt", async () => {
