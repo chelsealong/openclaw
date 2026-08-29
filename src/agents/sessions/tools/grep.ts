@@ -7,6 +7,7 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { Text } from "@earendil-works/pi-tui";
+import { resolveNonNegativeIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import { Type } from "typebox";
 import { releaseChildProcessOutputAfterExit } from "../../../process/child-process.js";
 import { spawnCommand } from "../../../process/exec.js";
@@ -74,7 +75,7 @@ export interface GrepToolOptions {
 
 function formatGrepCall(
   args: { pattern: string; path?: string; glob?: string; limit?: number } | undefined,
-  theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+  theme: typeof import("../../modes/interactive/theme/theme.js").interactiveAgentTheme,
 ): string {
   const pattern = str(args?.pattern);
   const rawPath = str(args?.path);
@@ -102,7 +103,7 @@ function formatGrepResult(
     details?: GrepToolDetails;
   },
   options: ToolRenderResultOptions,
-  theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+  theme: typeof import("../../modes/interactive/theme/theme.js").interactiveAgentTheme,
   showImages: boolean,
 ): string {
   const matchLimit = result.details?.matchLimitReached;
@@ -224,7 +225,8 @@ export function createGrepToolDefinition(
               return;
             }
 
-            const contextValue = context && context > 0 ? context : 0;
+            // Fractional line indices would omit the matching row.
+            const contextValue = resolveNonNegativeIntegerOption(context, 0);
             const effectiveLimit = normalizePositiveLimit(limit, DEFAULT_LIMIT);
             const formatPath = (filePath: string): string => {
               if (isDirectory) {
@@ -284,7 +286,7 @@ export function createGrepToolDefinition(
             // cannot split multibyte characters into U+FFFD replacement noise.
             spawnedChild.stderr?.setEncoding("utf8");
             spawnedChild.stderr?.on("data", (chunk: string) => {
-              stderr = appendBoundedTextTail(stderr, chunk);
+              stderr = appendBoundedTextTail(stderr, chunk).tail;
             });
             const onStreamError = (stream: "stdout" | "stderr", error: Error) => {
               if (settled) {

@@ -18,16 +18,16 @@ import { pluginCommands } from "../plugins/command-registry-state.js";
 import { getCurrentPluginConversationBinding } from "../plugins/conversation-binding.js";
 import { seedPluginConversationBindingApprovalForTest } from "../plugins/conversation-binding.test-fixtures.js";
 import { clearPluginLoaderCache } from "../plugins/loader.test-fixtures.js";
-import { getActivePluginRegistry, resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
+import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
 import { clearSecretsRuntimeSnapshot } from "../secrets/runtime.js";
 import { extractFirstTextBlock } from "../shared/chat-message-content.js";
-import { createTestRegistry } from "../test-utils/channel-plugins.js";
+import { activateTestChannelRegistry, createTestRegistry } from "../test-utils/channel-plugins.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { sleep } from "../utils.js";
 import type { GatewayClient } from "./client.js";
 import {
   connectTestGatewayClient,
-  getFreeGatewayPort,
+  getCliBackendPortBlock,
 } from "./gateway-cli-backend.live-helpers.js";
 import { restoreLiveEnv, snapshotLiveEnv, type LiveEnvSnapshot } from "./live-env-test-helpers.js";
 import { startGatewayServer } from "./server.js";
@@ -395,7 +395,7 @@ describeLive("gateway live (native Codex conversation binding)", () => {
       const workspace = path.join(tempRoot, "workspace");
       const configPath = path.join(tempRoot, "openclaw.json");
       const token = `test-${randomUUID()}`;
-      const port = await getFreeGatewayPort();
+      const port = await getCliBackendPortBlock();
       const sessionKey = "main";
       const accountId = "default";
       const slackUserId = `U${randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`;
@@ -479,6 +479,10 @@ describeLive("gateway live (native Codex conversation binding)", () => {
           auth: { mode: "token", token },
           controlUiEnabled: false,
         });
+        await server.startupSettled;
+        await activateTestChannelRegistry(
+          createSlackCurrentConversationBindingRegistry(outboundReplies),
+        );
         client = await connectTestGatewayClient({
           url: `ws://127.0.0.1:${port}`,
           token,
@@ -487,12 +491,6 @@ describeLive("gateway live (native Codex conversation binding)", () => {
           clientDisplayName: "vitest-codex-bind-live",
         });
         const activeClient = client;
-        const channelRegistry = createSlackCurrentConversationBindingRegistry(outboundReplies);
-        const activeRegistry = getActivePluginRegistry();
-        if (!activeRegistry) {
-          throw new Error("expected gateway root plugin registry");
-        }
-        activeRegistry.channels.push(...channelRegistry.channels);
 
         seedPluginConversationBindingApprovalForTest({
           pluginRoot: resolveCodexPluginRoot(),

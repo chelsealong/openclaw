@@ -26,6 +26,12 @@ extension OnboardingView {
         GatewayDiscoveryPreferences.setPreferredStableID(nil)
     }
 
+    func handleRemoteSelection() {
+        defaultsToLocalGateway = false
+        state.connectionMode = .remote
+        showRemoteChoices.toggle()
+    }
+
     func selectRemoteGateway(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) {
         let shouldResetGatewayState = Self.shouldResetGatewayBoundAIState(
             connectionMode: state.connectionMode,
@@ -84,8 +90,20 @@ extension OnboardingView {
     }
 
     func handleNext() {
-        // All callers (Next button, chat handoff) honor the same page gates.
         guard canAdvance else { return }
+        let remoteDecision = Self.remoteGatewayAdvanceDecision(
+            connectionMode: state.connectionMode,
+            activePageIndex: activePageIndex,
+            connectionPageIndex: connectionPageIndex,
+            authIssue: remoteAuthIssue,
+            probeState: remoteProbeState,
+            input: remoteGatewayProbeInput)
+        guard remoteDecision.canAdvance else {
+            if remoteDecision.shouldProbe {
+                Task { await self.probeRemoteConnection(advanceOnSuccess: true) }
+            }
+            return
+        }
         self.commitRecommendedConnectionIfNeeded(for: activePageIndex)
         if currentPage < pageCount - 1 {
             withAnimation { self.currentPage += 1 }
@@ -103,19 +121,18 @@ extension OnboardingView {
         }
     }
 
-    func finish(agentDraft: SystemAgentDraft? = nil) {
+    @discardableResult
+    func finish() -> Bool {
+        guard !finishState.didFinish else { return false }
+        finishState.didFinish = true
         aiSetup.clearCompletedHandoffIfOwned()
         OnboardingController.markComplete()
         OnboardingController.shared.close()
-        guard state.connectionMode != .unconfigured else { return }
-        // An explicit agent handoff from the helper chat carries a composer
-        // draft; land that in the chat it was written for.
-        if let agentDraft {
-            AppNavigationActions.openChat(draft: agentDraft.composerValue)
-            return
-        }
-        // Inference works; the dashboard's custodian onboarding owns the rest
-        // (memory import, channels, permissions guidance, hatch).
-        AppNavigationActions.openDashboardOnboarding()
+        guard state.connectionMode != .unconfigured else { return true }
+        // Fresh activation hands off to the dashboard's custodian onboarding, which
+        // owns the remaining first-run steps (memory import, channels, permissions,
+        // hatch). A live-verified pre-existing setup reopens the normal dashboard.
+        dashboardHandoffOpener(aiSetup.verifiedExistingInference ? .dashboard : .custodianOnboarding)
+        return true
     }
 }

@@ -21,7 +21,7 @@ Each agent in a multi-agent setup can override the global sandbox and tool polic
 </CardGroup>
 
 <Warning>
-Auth is scoped by agent: each agent has its own `agentDir` auth store in `~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite`. Never reuse `agentDir` across agents. Agents can read through to the default/main agent's auth profiles when they do not have a local profile, but OAuth refresh tokens are not cloned into secondary agent stores. If you copy credentials manually, copy only portable static `api_key` or `token` profiles.
+Auth is scoped by agent: each agent has its own `<agentDir>/openclaw-agent.sqlite` auth store (by default, `~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite`). Never reuse `agentDir` across agents. Agents can read through to the default/main agent's auth profiles when they do not have a local profile, but OAuth refresh tokens are not cloned into secondary agent stores. If you copy credentials manually, copy only portable static `api_key` or `token` profiles.
 </Warning>
 
 ---
@@ -228,7 +228,7 @@ The filtering order is:
     - Each level can further restrict tools, but cannot grant back denied tools from earlier levels.
     - If `agents.entries.*.tools.sandbox.tools` is set, it replaces `tools.sandbox.tools` for that agent.
     - If `agents.entries.*.tools.profile` is set, it overrides `tools.profile` for that agent.
-    - Provider tool keys accept either `provider` (e.g. `google-antigravity`) or `provider/model` (e.g. `openai/gpt-5.4`).
+    - Provider tool keys accept either `provider` (e.g. `anthropic`) or `provider/model` (e.g. `openai/gpt-5.4`).
 
   </Accordion>
   <Accordion title="Empty allowlist behavior">

@@ -25,6 +25,7 @@ import {
 } from "../tool-search.js";
 import { applyAgentToolSurfaceCatalog, resolveAgentToolSurfacePlan } from "../tool-surface-plan.js";
 import type { AnyAgentTool } from "../tools/common.js";
+import { createAgentHarnessPromptToolPolicy } from "./prompt-tool-policy.js";
 
 const TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES = [
   TOOL_SEARCH_CODE_MODE_TOOL_NAME,
@@ -41,6 +42,7 @@ export type AgentHarnessToolSurfaceRuntime = {
     options?: { hookContext?: HookContext; localModelLeanApplied?: boolean },
   ) => {
     tools: AnyAgentTool[];
+    promptToolPolicy: ReturnType<typeof createAgentHarnessPromptToolPolicy<AnyAgentTool>>;
   };
   config: OpenClawConfig | undefined;
   includeToolSearchControls: boolean;
@@ -51,7 +53,7 @@ export type AgentHarnessToolSurfaceRuntime = {
   toolSearchCatalogExecutor: ToolSearchCatalogToolExecutor | undefined;
 };
 
-export function createAgentHarnessToolSurfaceRuntime(params: {
+export function createAgentHarnessToolSurfaceRuntimeCore(params: {
   abortSignal?: AbortSignal;
   agentId?: string;
   config?: OpenClawConfig;
@@ -63,6 +65,7 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
   model?: { compat?: unknown };
   modelId?: string;
   modelProvider?: string;
+  codeModeOverride?: boolean | "auto";
   modelToolsEnabled: boolean;
   prompt?: string;
   runId?: string;
@@ -71,7 +74,6 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
   sessionKey?: string;
   scheduledToolPolicy?: ScheduledToolPolicyContext;
   sourceReplyDeliveryMode?: string;
-  skillWorkshopProposalOnly?: boolean;
   toolsAllow?: readonly string[];
 }): AgentHarnessToolSurfaceRuntime {
   const forceDirectMessageTool = messageToolOwnsVisibleReply(params);
@@ -86,10 +88,12 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
     sessionKey: params.sessionKey,
     forceDirectMessageTool,
     model: params.model,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
+    codeModeOverride: params.codeModeOverride,
     toolsEnabled: params.modelToolsEnabled,
     disableTools: params.disableTools,
     isRawModelRun: params.isRawModelRun === true,
-    skillWorkshopProposalOnly: params.skillWorkshopProposalOnly,
     toolsAllow: params.toolsAllow,
   });
   const toolSearchCatalogRef =
@@ -125,7 +129,7 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
   const compactTools = (
     tools: AnyAgentTool[],
     options: { hookContext?: HookContext; localModelLeanApplied?: boolean } = {},
-  ): { tools: AnyAgentTool[] } => {
+  ) => {
     // Native harness callers may supply raw tools, while the bundled tool constructor
     // already applied the full prepared policy and must not be filtered a second time.
     const projectedUncompactedTools = options.localModelLeanApplied
@@ -178,7 +182,14 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
           preserveToolNames,
         });
     effectiveTools = [...filterRuntimeCompatibleTools(projectedCompactedTools).tools];
-    return { tools: effectiveTools };
+    return {
+      tools: effectiveTools,
+      promptToolPolicy: createAgentHarnessPromptToolPolicy({
+        tools: effectiveTools,
+        catalogRef: toolSearchCatalogRef,
+        codeModeControlsEnabled,
+      }),
+    };
   };
   return {
     codeModeControlsEnabled,

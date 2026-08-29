@@ -8,7 +8,9 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { resolveStateDir } from "../config/paths.js";
+import { isErrno } from "../infra/errors.js";
 import { pathExists } from "../utils.js";
+import { publishOutputFileAtomically } from "./output-file.runtime.js";
 
 export const COMPLETION_SHELLS = ["zsh", "bash", "powershell", "fish"] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
@@ -30,10 +32,13 @@ function resolveShellBasename(
   return normalizeLowercaseStringOrEmpty(basename.replace(/\.(?:exe|cmd|bat)$/i, ""));
 }
 
-/** Resolves the active shell from environment paths, defaulting to zsh for unknown shells. */
-export function resolveShellFromEnv(env: NodeJS.ProcessEnv = process.env): CompletionShell {
+/** Resolves the active shell from environment paths, using the platform's native default. */
+export function resolveShellFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): CompletionShell {
   const shellPath = normalizeOptionalString(env.SHELL) ?? "";
-  const shellName = shellPath ? resolveShellBasename(shellPath) : "";
+  const shellName = shellPath ? resolveShellBasename(shellPath, platform) : "";
   if (shellName === "zsh") {
     return "zsh";
   }
@@ -46,7 +51,7 @@ export function resolveShellFromEnv(env: NodeJS.ProcessEnv = process.env): Compl
   if (shellName === "pwsh" || shellName === "powershell") {
     return "powershell";
   }
-  return "zsh";
+  return platform === "win32" ? "powershell" : "zsh";
 }
 
 function sanitizeCompletionBasename(value: string): string {
@@ -271,6 +276,38 @@ function updateCompletionProfile(
   return { next, changed: next !== content, hadExisting };
 }
 
+async function resolveCompletionProfileWritePath(profilePath: string): Promise<string> {
+  const profileDir = path.dirname(profilePath);
+  // Shell startup follows a symlink before `..`; create and canonicalize that lexical parent first.
+  await fs.mkdir(profileDir, { recursive: true });
+  const canonicalDir = await fs.realpath(profileDir);
+  try {
+    // Existing dotfile-manager symlinks must keep pointing at the atomically replaced referent.
+    return await fs.realpath(profilePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const linkTarget = await fs.readlink(profilePath).catch((error: unknown) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") {
+      return undefined;
+    }
+    throw error;
+  });
+  if (linkTarget === undefined) {
+    return path.join(canonicalDir, path.basename(profilePath));
+  }
+  // A dangling relative link is resolved from the directory that physically owns the link.
+  const targetPath = path.isAbsolute(linkTarget)
+    ? linkTarget
+    : `${canonicalDir}${path.sep}${linkTarget}`;
+  const targetDir = path.dirname(targetPath);
+  await fs.mkdir(targetDir, { recursive: true });
+  return path.join(await fs.realpath(targetDir), path.basename(targetPath));
+}
+
 /** Resolves the shell startup profile path that should contain the OpenClaw completion block. */
 export function resolveCompletionProfilePath(
   shell: CompletionShell,
@@ -386,6 +423,15 @@ export async function usesSlowDynamicCompletion(
   return false;
 }
 
+const PROFILE_WRITE_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
+
+export function findCompletionProfileWriteError(err: unknown): NodeJS.ErrnoException | undefined {
+  if (isErrno(err) && PROFILE_WRITE_ERROR_CODES.has(err.code ?? "")) {
+    return err;
+  }
+  return err instanceof Error ? findCompletionProfileWriteError(err.cause) : undefined;
+}
+
 export async function installCompletion(shell: string, yes: boolean, binName = "openclaw") {
   const isShellSupported = isCompletionShell(shell);
   if (!isShellSupported) {
@@ -404,17 +450,19 @@ export async function installCompletion(shell: string, yes: boolean, binName = "
   const sourceLine = formatCompletionSourceLine(shell, cachePath);
 
   try {
+    let content: string;
     try {
-      await fs.access(profilePath);
-    } catch {
-      if (!yes) {
-        console.warn(`Profile not found at ${profilePath}. Created a new one.`);
+      content = await fs.readFile(profilePath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
       }
-      await fs.mkdir(path.dirname(profilePath), { recursive: true });
-      await fs.writeFile(profilePath, "", "utf-8");
+      if (!yes) {
+        console.warn(`Profile not found at ${profilePath}. Creating a new one.`);
+      }
+      content = "";
     }
 
-    const content = await fs.readFile(profilePath, "utf-8");
     const update = updateCompletionProfile(content, binName, cachePath, sourceLine);
     if (!update.changed) {
       if (!yes) {
@@ -428,7 +476,14 @@ export async function installCompletion(shell: string, yes: boolean, binName = "
       console.log(`${action} completion in ${profilePath}...`);
     }
 
-    await fs.writeFile(profilePath, update.next, "utf-8");
+    await publishOutputFileAtomically({
+      filePath: await resolveCompletionProfileWritePath(profilePath),
+      tempPrefix: ".openclaw-completion-profile",
+      durable: true,
+      writeTemp: async (tempPath) => {
+        await fs.writeFile(tempPath, update.next, { encoding: "utf-8", flag: "wx" });
+      },
+    });
     if (!yes) {
       console.log(
         `Completion installed. Restart your shell or run: ${formatCompletionReloadCommand(shell, resolveCompletionProfileHint(shell))}`,

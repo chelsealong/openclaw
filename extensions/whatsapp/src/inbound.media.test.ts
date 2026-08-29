@@ -258,11 +258,16 @@ let resetLogger: typeof import("openclaw/plugin-sdk/runtime-env").resetLogger;
 let setLoggerOverride: typeof import("openclaw/plugin-sdk/runtime-env").setLoggerOverride;
 
 const LOG_PATH = path.join(os.tmpdir(), `openclaw-inbound-media-${crypto.randomUUID()}.log`);
+const DIRECT_SYNTHETIC_BEARER = "synthetic-direct-bearer-never-real";
+const QUOTED_SYNTHETIC_API_KEY = "synthetic-quoted-api-key-never-real";
+const DEPLOYMENT_REDACTION_SENTINEL = "deployment-secret-never-real";
 
 async function waitForMessage(onMessage: ReturnType<typeof vi.fn>) {
+  // Saturated no-isolate suite runs can stall the worker (sync module fetches
+  // against the shared transform queue) well past a 2s delivery budget.
   await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(1), {
     interval: 1,
-    timeout: 2_000,
+    timeout: 5_000,
   });
   return onMessage.mock.calls[0]?.[0];
 }
@@ -339,6 +344,12 @@ describe("web inbound media saves with extension", () => {
 
   beforeAll(async () => {
     await fs.rm(HOME, { recursive: true, force: true });
+    const configDir = path.join(HOME, ".openclaw");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, "openclaw.json"),
+      JSON.stringify({ logging: { redactPatterns: ["deployment-secret-[a-z-]+"] } }),
+    );
     ({ resetLogger, setLoggerOverride } = await import("openclaw/plugin-sdk/runtime-env"));
     setLoggerOverride({ level: "trace", consoleLevel: "info", file: LOG_PATH });
     ({ monitorWebInbox, resetWebInboundDedupe } = await import("./inbound.js"));
@@ -637,7 +648,7 @@ describe("web inbound media saves with extension", () => {
     downloadMediaMessageMock.mockRejectedValueOnce(
       await createBaileysMediaHttpError(
         410,
-        "expired media reference +15551234567 111@s.whatsapp.net 789@hosted.lid 42@c.us",
+        `expired media reference +15551234567 111@s.whatsapp.net 789@hosted.lid 42@c.us Authorization: Bearer ${DIRECT_SYNTHETIC_BEARER} ${DEPLOYMENT_REDACTION_SENTINEL}`,
       ),
     );
     const onMessage = vi.fn();
@@ -694,6 +705,8 @@ describe("web inbound media saves with extension", () => {
     expect(diagnostic).not.toContain("111@s.whatsapp.net");
     expect(diagnostic).not.toContain("789@hosted.lid");
     expect(diagnostic).not.toContain("42@c.us");
+    expect(diagnostic).not.toContain(DIRECT_SYNTHETIC_BEARER);
+    expect(diagnostic).not.toContain(DEPLOYMENT_REDACTION_SENTINEL);
     const terminalDiagnostic = observedConsoleWarnings.mock.calls.find(
       ([message]) => message === "WhatsApp inbound media materialization failed",
     )?.[1]?.consoleMessage;
@@ -703,6 +716,8 @@ describe("web inbound media saves with extension", () => {
     expect(terminalDiagnostic).not.toContain("media.example/private");
     expect(terminalDiagnostic).not.toContain("789@hosted.lid");
     expect(terminalDiagnostic).not.toContain("42@c.us");
+    expect(terminalDiagnostic).not.toContain(DIRECT_SYNTHETIC_BEARER);
+    expect(terminalDiagnostic).not.toContain(DEPLOYMENT_REDACTION_SENTINEL);
 
     await listener.close();
   });
@@ -711,7 +726,7 @@ describe("web inbound media saves with extension", () => {
     downloadMediaMessageMock.mockRejectedValueOnce(
       await createBaileysMediaHttpError(
         410,
-        "quoted media reference expired 7@hosted 88@newsletter",
+        `quoted media reference expired 7@hosted 88@newsletter api_key=${QUOTED_SYNTHETIC_API_KEY} ${DEPLOYMENT_REDACTION_SENTINEL}`,
       ),
     );
     const onMessage = vi.fn();
@@ -759,6 +774,8 @@ describe("web inbound media saves with extension", () => {
     expect(diagnostic).toContain("quoted media reference expired");
     expect(diagnostic).not.toContain("7@hosted");
     expect(diagnostic).not.toContain("88@newsletter");
+    expect(diagnostic).not.toContain(QUOTED_SYNTHETIC_API_KEY);
+    expect(diagnostic).not.toContain(DEPLOYMENT_REDACTION_SENTINEL);
     const terminalDiagnostic = observedConsoleWarnings.mock.calls.find(
       ([message]) => message === "WhatsApp inbound media materialization failed",
     )?.[1]?.consoleMessage;
@@ -766,6 +783,8 @@ describe("web inbound media saves with extension", () => {
     expect(terminalDiagnostic).toContain("status=410");
     expect(terminalDiagnostic).not.toContain("7@hosted");
     expect(terminalDiagnostic).not.toContain("88@newsletter");
+    expect(terminalDiagnostic).not.toContain(QUOTED_SYNTHETIC_API_KEY);
+    expect(terminalDiagnostic).not.toContain(DEPLOYMENT_REDACTION_SENTINEL);
 
     await listener.close();
   });

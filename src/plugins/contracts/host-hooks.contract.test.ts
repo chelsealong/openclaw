@@ -15,7 +15,7 @@ import {
 import type { SessionEntry } from "../../config/sessions.js";
 import {
   clearPluginOwnedSessionState,
-  listSessionEntries,
+  listSessionEntriesCore,
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { APPROVALS_SCOPE, READ_SCOPE, WRITE_SCOPE } from "../../gateway/operator-scopes.js";
@@ -109,7 +109,7 @@ function loadSessionStore(
   _options?: { skipCache?: boolean },
 ): Record<string, SessionEntry> {
   return Object.fromEntries(
-    listSessionEntries({ agentId: "main", storePath }).map(({ sessionKey, entry }) => [
+    listSessionEntriesCore({ agentId: "main", storePath }).map(({ sessionKey, entry }) => [
       sessionKey,
       entry,
     ]),
@@ -934,6 +934,38 @@ describe("host-hook fixture plugin contract", () => {
       block: true,
       blockReason: "blocked by fuzzpolicy: policy decision is unreadable",
     });
+  });
+
+  it("preserves cancellation while deriving a trusted policy rewrite", async () => {
+    const controller = new AbortController();
+    const abortError = new Error("aborted during rewrite derivation");
+    const registry = createEmptyPluginRegistry();
+    registry.trustedToolPolicies = [
+      {
+        pluginId: "rewrite-plugin",
+        source: "test",
+        policy: {
+          id: "rewrite-policy",
+          description: "rewrite",
+          evaluate: () => ({ params: { input: "rewritten" } }),
+        },
+      },
+    ];
+
+    await expect(
+      runTrustedToolPolicies(
+        { toolName: "apply_patch", params: { input: "original" } },
+        { toolName: "apply_patch", abortSignal: controller.signal },
+        {
+          registry,
+          deriveEvent: async () => {
+            controller.abort(abortError);
+            controller.signal.throwIfAborted();
+            return {};
+          },
+        },
+      ),
+    ).rejects.toBe(abortError);
   });
 
   it("lets later trusted policy blocks override earlier approval requests", async () => {

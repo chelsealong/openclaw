@@ -85,14 +85,11 @@ function hasSlackCommentaryLaneMarker(
   message: { blockText?: string[]; text: string },
   marker: string,
 ) {
-  if (message.text.includes(`💬 ${marker}`)) {
+  if (message.text.includes(`💬 ${marker}`) || message.text.trim() === `_${marker}_`) {
     return true;
   }
   const blockText = message.blockText ?? [];
-  return (
-    blockText.some((text) => text.trim() === "Update") &&
-    blockText.some((text) => text.includes(marker))
-  );
+  return blockText.some((text) => text.trim() === `• *Update* — ${marker}`);
 }
 
 export function buildSlackProgressCommentaryRun(
@@ -110,7 +107,7 @@ export function buildSlackProgressCommentaryRun(
     input: [
       `<@${sutUserId}> This is a Slack progress protocol test. First, emit an assistant commentary message whose entire text is exactly ${commentaryMarker}.`,
       "Do not call any tool until that commentary message is complete.",
-      `Then use the exec tool exactly once to run: grep '${toolMarker}' /dev/null || sleep 5.`,
+      `Then use the exec tool exactly once to run: sleep 5 # ${toolMarker}.`,
       `After the command finishes, reply with only this exact marker: ${finalMarker}`,
     ].join(" "),
     matchText: finalMarker,
@@ -138,23 +135,23 @@ export function buildSlackProgressCommentaryRun(
       if (commentaryTs === finalMessage.ts) {
         throw new Error("expected Slack progress commentary to stay separate from the fresh final");
       }
-      const commentaryLaneTimestamps = new Set(
-        commentaryMessages
-          .filter((message) => hasSlackCommentaryLaneMarker(message, commentaryMarker))
-          .map((message) => message.ts),
-      );
-      if (
-        expectation.commentary === "lane" &&
-        (commentaryLaneTimestamps.size !== 1 || !commentaryLaneTimestamps.has(commentaryTs))
-      ) {
-        throw new Error("expected commentary in the Slack progress commentary lane");
-      }
-      if (expectation.commentary !== "lane" && commentaryLaneTimestamps.size !== 0) {
-        throw new Error(
-          expectation.commentary === "headline"
-            ? "expected the preamble as the Slack progress status headline"
-            : "expected commentary only in the standalone verbose message",
+      // Slack prefixes durable standalone commentary with the same glyph used by
+      // draft-lane rendering, so message identity—not that marker—owns dedupe proof.
+      if (expectation.commentary !== "standalone") {
+        const commentaryLaneTimestamps = new Set(
+          commentaryMessages
+            .filter((message) => hasSlackCommentaryLaneMarker(message, commentaryMarker))
+            .map((message) => message.ts),
         );
+        if (
+          expectation.commentary === "lane" &&
+          (commentaryLaneTimestamps.size !== 1 || !commentaryLaneTimestamps.has(commentaryTs))
+        ) {
+          throw new Error("expected commentary in the Slack progress commentary lane");
+        }
+        if (expectation.commentary === "headline" && commentaryLaneTimestamps.size !== 0) {
+          throw new Error("expected the preamble as the Slack progress status headline");
+        }
       }
       const toolTimestamps = new Set(
         progressMessages

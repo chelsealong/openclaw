@@ -22,7 +22,7 @@ import {
   resolveNpmLockJobs,
   shouldUseLegacyPeerDepsForNpmLock,
   npmLockPackageDirsForChangedPaths,
-} from "../../scripts/generate-npm-package-lock.mjs";
+} from "../../scripts/generate-npm-package-lock.mts";
 
 describe("generate-npm-package-lock", () => {
   function repoRelativePath(value: string): string {
@@ -102,6 +102,22 @@ describe("generate-npm-package-lock", () => {
       tar: "7.5",
     });
   });
+
+  it.each([false, true])(
+    "retains parent and child overrides during normalization (childrenFirst=%s)",
+    (childrenFirst) => {
+      const entries = [
+        ["parent", "1.2.3"],
+        ["parent>child", "2.0.0"],
+        ["parent>sibling", "3.0.0"],
+      ];
+      expect(
+        normalizeOverrides(Object.fromEntries(childrenFirst ? entries.toReversed() : entries)),
+      ).toEqual({
+        parent: { ".": "1.2.3", child: "2.0.0", sibling: "3.0.0" },
+      });
+    },
+  );
 
   it("rejects short flag package selectors before resolving npm-lock targets", () => {
     expect(() => resolvePackageDirs(["--package-dir", "-h"])).toThrow(

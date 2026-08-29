@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
  */
 import os from "node:os";
 import path from "node:path";
+import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { GatewayClientRequestError } from "../gateway/client.js";
@@ -38,6 +39,7 @@ import { createHookRunner, type HookRunner } from "../plugins/hooks.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { setPluginToolMeta } from "../plugins/tools.js";
+import { consumeRunSkillUsage } from "../skills/runtime/run-usage.js";
 import { createCanonicalFixtureSkill } from "../skills/test-support/test-helpers.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
@@ -279,13 +281,16 @@ describe("before_tool_call loop detection behavior", () => {
     }
   }
 
-  function createGenericReadRepeatFixture() {
+  function createGenericReadRepeatFixture(
+    loopDetectionContext?: Parameters<typeof createWrappedTool>[2],
+  ) {
     const execute = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "same output" }],
       details: { ok: true },
     });
     return {
-      tool: createWrappedTool("read", execute),
+      tool: createWrappedTool("read", execute, loopDetectionContext),
+      execute,
       params: { path: "/tmp/file" },
     };
   }
@@ -341,12 +346,7 @@ describe("before_tool_call loop detection behavior", () => {
     return result;
   }
 
-  function requireRecord(value: unknown, label: string): Record<string, unknown> {
-    if (typeof value !== "object" || value === null) {
-      throw new Error(`${label} was not an object`);
-    }
-    return value as Record<string, unknown>;
-  }
+  const requireRecord = createRequireRecord("object", "label-not-object");
 
   function requireArray(value: unknown, label: string): unknown[] {
     expect(Array.isArray(value)).toBe(true);
@@ -493,6 +493,49 @@ describe("before_tool_call loop detection behavior", () => {
 
     const result = await tool.execute(`read-${CRITICAL_THRESHOLD}`, params, undefined, undefined);
     expectToolLoopBlockedResult(result, "identical outcomes");
+  });
+
+  it("blocks changing-argument terminal exec failures and escalates vetoes", async () => {
+    const output = "Traceback: missing package\n\n(Command exited with code 1)";
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: output }],
+      details: { status: "completed", exitCode: 1, aggregated: output },
+    });
+    const tool = createWrappedTool("exec", execute);
+
+    await withToolLoopEvents(async (emitted) => {
+      for (let index = 0; index <= GLOBAL_CIRCUIT_BREAKER_THRESHOLD; index += 1) {
+        const result = await tool.execute(
+          `exec-semantic-${index}`,
+          { command: `python job-${index}.py` },
+          undefined,
+          undefined,
+        );
+        if (index >= CRITICAL_THRESHOLD) {
+          expectToolLoopBlockedResult(
+            result,
+            index === GLOBAL_CIRCUIT_BREAKER_THRESHOLD
+              ? "global circuit breaker"
+              : "identical outcomes",
+          );
+        }
+      }
+
+      expect(execute).toHaveBeenCalledTimes(CRITICAL_THRESHOLD);
+      expect(emitted.find((event) => event.detector === "generic_repeat")).toMatchObject({
+        level: "critical",
+        action: "block",
+        count: CRITICAL_THRESHOLD,
+        toolName: "exec",
+      });
+      expect(emitted.at(-1)).toMatchObject({
+        detector: "global_circuit_breaker",
+        level: "critical",
+        action: "block",
+        count: GLOBAL_CIRCUIT_BREAKER_THRESHOLD,
+        toolName: "exec",
+      });
+    });
   });
 
   it("warns on non-strict same-tool argument churn while preserving tool execution", async () => {
@@ -918,12 +961,29 @@ describe("before_tool_call loop detection behavior", () => {
 
   it("escalates repeated critical vetoes to the global circuit breaker", async () => {
     await withToolLoopEvents(async (emitted) => {
-      const { tool, params } = createGenericReadRepeatFixture();
+      const runId = "codex-native-global-breaker";
+      const { tool, params, execute } = createGenericReadRepeatFixture({
+        ...enabledLoopDetectionContext,
+        runId,
+      });
 
-      for (let i = 0; i <= 30; i += 1) {
-        await tool.execute(`read-global-${i}`, params, undefined, undefined);
+      for (let i = 0; i <= GLOBAL_CIRCUIT_BREAKER_THRESHOLD; i += 1) {
+        const toolCallId = `read-global-${i}`;
+        const nativeOutcome = await runBeforeToolCallHook({
+          toolName: "read",
+          params,
+          toolCallId,
+          ctx: {
+            agentId: enabledLoopDetectionContext.agentId,
+            sessionKey: enabledLoopDetectionContext.sessionKey,
+            runId,
+          },
+        });
+        expect(nativeOutcome.blocked).toBe(false);
+        await tool.execute(toolCallId, params, undefined, undefined);
       }
 
+      expect(execute).toHaveBeenCalledTimes(CRITICAL_THRESHOLD);
       expect(emitted.at(-1)).toMatchObject({
         type: "tool.loop",
         level: "critical",
@@ -1145,6 +1205,7 @@ describe("before_tool_call loop detection behavior", () => {
         agentId: "main",
         sessionKey: "session-key",
         runId: "run-1",
+        loopDetection: { enabled: true },
       },
     );
 
@@ -1435,6 +1496,15 @@ describe("before_tool_call loop detection behavior", () => {
       expect(JSON.stringify(emitted)).not.toContain("SKILL.md");
       expect(JSON.stringify(emitted)).not.toContain(skillBaseDir);
       expect(privateData[0]?.skillUsage?.skillFile).toBe(skillFilePath);
+      expect(consumeRunSkillUsage("run-1")).toEqual([
+        {
+          name: "demo-skill",
+          source: "workspace",
+          activation: "read",
+          skillFile: skillFilePath,
+        },
+      ]);
+      expect(consumeRunSkillUsage("run-1")).toEqual([]);
     });
   });
 
@@ -1954,12 +2024,7 @@ describe("before_tool_call requireApproval handling", () => {
   let hookRunner: TestHookRunner;
   const mockCallGateway = vi.mocked(callGatewayTool);
 
-  function requireRecord(value: unknown, label: string): Record<string, unknown> {
-    if (typeof value !== "object" || value === null) {
-      throw new Error(`${label} was not an object`);
-    }
-    return value as Record<string, unknown>;
-  }
+  const requireRecord = createRequireRecord("object", "label-not-object");
 
   function requireHookCall(
     index: number,
@@ -2217,6 +2282,130 @@ describe("before_tool_call requireApproval handling", () => {
     expectRecordFields(event, {
       toolName: "apply_patch",
       derivedPaths: ["/host/sandbox/src/new.ts"],
+    });
+  });
+
+  it("derives remote apply_patch shorthand and literal paths like execution", async () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: @reference.md",
+      "@@",
+      "+reference",
+      "*** Update File: @literal.md",
+      "@@",
+      "+literal",
+      "*** End Patch",
+    ].join("\n");
+    hookRunner.runBeforeToolCall.mockResolvedValue(undefined);
+    const resolvePath = ({ filePath }: { filePath: string }) => ({
+      containerPath: path.posix.resolve("/workspace", filePath),
+      relativePath: filePath,
+    });
+
+    const result = await runBeforeToolCallHook({
+      toolName: "apply_patch",
+      params: { input: patch },
+      toolCallId: "patch-remote-at",
+      ctx: {
+        agentId: "main",
+        cwd: "/workspace",
+        sandbox: {
+          root: "/workspace",
+          bridge: {
+            resolvePath,
+            stat: async ({ filePath }: { filePath: string }) =>
+              filePath === "./@literal.md" ? { type: "file", size: 7, mtimeMs: 0 } : null,
+          } as never,
+        },
+        sessionKey: "main",
+        runId: "run-patch",
+      },
+    });
+
+    expect(result.blocked).toBe(false);
+    const [event] = requireHookCall(0);
+    expectRecordFields(event, {
+      toolName: "apply_patch",
+      derivedPaths: ["/workspace/reference.md", "/workspace/@literal.md"],
+    });
+  });
+
+  it("preserves bridge-native absolute apply_patch paths", async () => {
+    const rawPath = "/workspace//src/new.ts";
+    const patch = ["*** Begin Patch", `*** Add File: ${rawPath}`, "+new", "*** End Patch"].join(
+      "\n",
+    );
+    const resolvePath = vi.fn(({ filePath }: { filePath: string }) => ({
+      containerPath: path.posix.normalize(filePath),
+      relativePath: filePath,
+    }));
+    hookRunner.runBeforeToolCall.mockResolvedValue(undefined);
+
+    const result = await runBeforeToolCallHook({
+      toolName: "apply_patch",
+      params: { input: patch },
+      ctx: {
+        cwd: "/workspace",
+        sandbox: {
+          root: "/workspace",
+          bridge: { resolvePath } as never,
+        },
+      },
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(resolvePath).toHaveBeenCalledWith({ filePath: rawPath, cwd: "/workspace" });
+  });
+
+  it("cancels remote apply_patch path derivation with the run", async () => {
+    const controller = new AbortController();
+    let reportStatSignal!: (signal: AbortSignal | undefined) => void;
+    const statStarted = new Promise<AbortSignal | undefined>((resolve) => {
+      reportStatSignal = resolve;
+    });
+    hookRunner.runBeforeToolCall.mockResolvedValue(undefined);
+
+    const running = runBeforeToolCallHook({
+      toolName: "apply_patch",
+      params: {
+        input: ["*** Begin Patch", "*** Update File: @remote.md", "*** End Patch"].join("\n"),
+      },
+      signal: controller.signal,
+      ctx: {
+        cwd: "/workspace",
+        sandbox: {
+          root: "/workspace",
+          bridge: {
+            resolvePath: ({ filePath }: { filePath: string }) => ({
+              containerPath: path.posix.resolve("/workspace", filePath),
+              relativePath: filePath,
+            }),
+            stat: ({ signal }: { signal?: AbortSignal }) => {
+              reportStatSignal(signal);
+              if (!signal) {
+                return Promise.resolve(null);
+              }
+              return new Promise((_, reject) => {
+                signal.addEventListener(
+                  "abort",
+                  () =>
+                    reject(signal.reason instanceof Error ? signal.reason : new Error("aborted")),
+                  { once: true },
+                );
+              });
+            },
+          } as never,
+        },
+      },
+    });
+
+    const statSignal = await statStarted;
+    controller.abort();
+    expect(statSignal).toBe(controller.signal);
+    await expect(running).resolves.toMatchObject({
+      blocked: true,
+      kind: "failure",
+      disposition: "cancelled",
     });
   });
 

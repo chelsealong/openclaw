@@ -347,7 +347,7 @@ describe("message-normalizer", () => {
       ]);
     });
 
-    it("preserves a canvas preview sandbox ceiling from history", () => {
+    it("preserves canvas dashboard identity and sandbox ceiling from history", () => {
       const result = normalizeMessage({
         role: "assistant",
         content: [
@@ -359,6 +359,7 @@ describe("message-normalizer", () => {
               render: "url",
               url: "/__openclaw__/canvas/documents/cv_widget/index.html",
               sandbox: "scripts",
+              boardWidgetName: "release-status",
             },
           },
         ],
@@ -366,8 +367,29 @@ describe("message-normalizer", () => {
 
       expect(result.content[0]).toMatchObject({
         type: "canvas",
-        preview: { sandbox: "scripts" },
+        preview: { sandbox: "scripts", boardWidgetName: "release-status" },
       });
+    });
+
+    it("drops invalid canvas dashboard identity from history", () => {
+      const result = normalizeMessage({
+        role: "assistant",
+        content: [
+          {
+            type: "canvas",
+            preview: {
+              kind: "canvas",
+              surface: "assistant_message",
+              render: "url",
+              url: "/__openclaw__/canvas/documents/cv_widget/index.html",
+              boardWidgetName: "Invalid widget name",
+            },
+          },
+        ],
+      });
+
+      expect(result.content[0]).toMatchObject({ type: "canvas" });
+      expect(result.content[0]).not.toHaveProperty("preview.boardWidgetName");
     });
 
     it("ignores [embed] shortcodes inside fenced code blocks", () => {
@@ -398,11 +420,12 @@ describe("message-normalizer", () => {
       ]);
     });
 
-    it("extracts MEDIA attachments and reply metadata from assistant text", () => {
+    it("extracts MEDIA attachments and reads persisted delivery facts", () => {
       const result = normalizeMessage({
         role: "assistant",
         content:
-          "[[reply_to:thread-123]]Intro\nMEDIA:https://example.com/image.png\nOutro\nMEDIA:https://example.com/voice.ogg\n[[audio_as_voice]]",
+          "Intro\nMEDIA:https://example.com/image.png\nOutro\nMEDIA:https://example.com/voice.ogg",
+        openclawDelivery: { audioAsVoice: true, replyToId: "thread-123" },
       });
 
       expect(result.replyTarget).toEqual({ kind: "id", id: "thread-123" });
@@ -488,7 +511,7 @@ describe("message-normalizer", () => {
       },
     );
 
-    it("preserves canonical code fences after removing reply and audio directives", () => {
+    it("preserves canonical code fences with structured delivery facts", () => {
       const code = ["```python", "value = 'a  b'", "``` not a close", "other = 'c  d'", "```"].join(
         "\n",
       );
@@ -496,7 +519,8 @@ describe("message-normalizer", () => {
       expect(
         normalizeMessage({
           role: "assistant",
-          content: `[[reply_to_current]]\n[[audio_as_voice]]\n${code}\nMEDIA:https://example.com/image.png`,
+          content: `${code}\nMEDIA:https://example.com/image.png`,
+          openclawDelivery: { audioAsVoice: true, replyToCurrent: true },
         }).content,
       ).toEqual([
         { type: "text", text: code },
@@ -512,10 +536,11 @@ describe("message-normalizer", () => {
       ]);
     });
 
-    it("marks media-only audio attachments as voice notes when audio_as_voice is present", () => {
+    it("marks media-only audio attachments as voice notes from delivery facts", () => {
       const result = normalizeMessage({
         role: "assistant",
-        content: "MEDIA:https://example.com/voice.ogg\n[[audio_as_voice]]",
+        content: "MEDIA:https://example.com/voice.ogg",
+        openclawDelivery: { audioAsVoice: true },
       });
 
       expect(result.audioAsVoice).toBe(true);
@@ -582,6 +607,36 @@ describe("message-normalizer", () => {
       ]);
     });
 
+    it("classifies signed same-origin MEDIA image and audio routes", () => {
+      const imageUrl = "/media/inbound/photo.png?mediaTicket=signed#preview";
+      const audioUrl = "/__openclaw__/media/voice%2Eogg?mediaTicket=signed";
+      const result = normalizeMessage({
+        role: "assistant",
+        content: `MEDIA:${imageUrl}\nMEDIA:${audioUrl}`,
+      });
+
+      expect(result.content).toEqual([
+        {
+          type: "attachment",
+          attachment: {
+            url: imageUrl,
+            kind: "image",
+            label: "photo.png?mediaTicket=signed#preview",
+            mimeType: "image/png",
+          },
+        },
+        {
+          type: "attachment",
+          attachment: {
+            url: audioUrl,
+            kind: "audio",
+            label: "voice%2Eogg?mediaTicket=signed",
+            mimeType: "audio/ogg",
+          },
+        },
+      ]);
+    });
+
     it("keeps valid local MEDIA paths as assistant attachments", () => {
       const result = normalizeMessage({
         role: "assistant",
@@ -600,6 +655,25 @@ describe("message-normalizer", () => {
           },
         },
         { type: "text", text: "World" },
+      ]);
+    });
+
+    it("classifies absolute WebM MEDIA paths as video attachments", () => {
+      const result = normalizeMessage({
+        role: "assistant",
+        content: "MEDIA:/tmp/openclaw/clip.webm",
+      });
+
+      expect(result.content).toEqual([
+        {
+          type: "attachment",
+          attachment: {
+            url: "/tmp/openclaw/clip.webm",
+            kind: "video",
+            label: "clip.webm",
+            mimeType: "video/webm",
+          },
+        },
       ]);
     });
 
@@ -650,24 +724,93 @@ describe("message-normalizer", () => {
       expect(result.content).toEqual([{ type: "text", text: "MEDIA:chart.png" }]);
     });
 
-    it("strips reply_to_current without rendering a quoted preview", () => {
+    it.each([
+      ["bare image", "Generated image\nMEDIA:image.png", "Generated image\nMEDIA:image.png"],
+      ["bare audio", "Generated audio\nMEDIA:voice.ogg", "Generated audio\nMEDIA:voice.ogg"],
+      [
+        "bare document",
+        "Generated document\nMEDIA:report.pdf",
+        "Generated document\nMEDIA:report.pdf",
+      ],
+      [
+        "caption after bare filename",
+        "MEDIA:image.png\nGenerated image",
+        "MEDIA:image.png\nGenerated image",
+      ],
+      [
+        "quoted bare filename",
+        'Generated image\nMEDIA:"image.png"',
+        "Generated image\nMEDIA:image.png",
+      ],
+      [
+        "quoted bare filename with spaces",
+        'Generated image\nMEDIA:"render final.png"',
+        "Generated image\nMEDIA:render final.png",
+      ],
+      [
+        "explicit relative sibling",
+        "Generated image\nMEDIA:./image.png",
+        "Generated image\nMEDIA:./image.png",
+      ],
+    ] as const)(
+      "preserves relative assistant media beside its caption: %s",
+      (_name, input, text) => {
+        expect(normalizeMessage({ role: "assistant", content: input }).content).toEqual([
+          { type: "text", text },
+        ]);
+      },
+    );
+
+    it("preserves bare assistant media references around a renderable attachment", () => {
+      expect(
+        normalizeMessage({
+          role: "assistant",
+          content:
+            "Generated artifacts\nMEDIA:image.png\nMEDIA:https://example.com/remote.png\nMEDIA:voice.ogg",
+        }).content,
+      ).toEqual([
+        { type: "text", text: "Generated artifacts\nMEDIA:image.png" },
+        {
+          type: "attachment",
+          attachment: {
+            url: "https://example.com/remote.png",
+            kind: "image",
+            label: "remote.png",
+            mimeType: "image/png",
+          },
+        },
+        { type: "text", text: "MEDIA:voice.ogg" },
+      ]);
+    });
+
+    it("uses persisted delivery facts for the current-message reply target", () => {
       const result = normalizeMessage({
         role: "assistant",
-        content: "[[reply_to_current]]\nReply body",
+        content: "Reply body",
+        openclawDelivery: { replyToCurrent: true },
       });
 
       expect(result.replyTarget).toEqual({ kind: "current" });
       expect(result.content).toEqual([{ type: "text", text: "Reply body" }]);
     });
 
-    it("does not restore stripped reply tags when no visible text remains", () => {
+    it("keeps a fact-only current-message reply target", () => {
       const result = normalizeMessage({
         role: "assistant",
-        content: "[[reply_to_current]]",
+        content: "",
+        openclawDelivery: { replyToCurrent: true },
       });
 
       expect(result.replyTarget).toEqual({ kind: "current" });
       expect(result.content).toStrictEqual([]);
+    });
+
+    it("renders quoted delivery and TTS markers verbatim", () => {
+      const text = "Use `[[reply_to_current]]` and `[[tts]]` literally.";
+      const result = normalizeMessage({ role: "assistant", content: text });
+
+      expect(result.replyTarget).toBeUndefined();
+      expect(result.content).toEqual([{ type: "text", text }]);
     });
 
     it("preserves structured attachment content items", () => {
@@ -698,6 +841,71 @@ describe("message-normalizer", () => {
             mimeType: "image/png",
             width: 1280,
             height: 720,
+          },
+        },
+      ]);
+    });
+
+    it("preserves named attachment failures beside successful attachments", () => {
+      const result = normalizeMessage({
+        role: "assistant",
+        content: [
+          {
+            type: "attachment",
+            attachment: {
+              url: "https://files.example/deploy.yaml",
+              kind: "document",
+              label: "deploy.yaml",
+              mimeType: "application/yaml",
+            },
+          },
+          {
+            type: "attachment_error",
+            attachment: {
+              code: "unsupported-format",
+              kind: "document",
+              label: "settings.toml",
+              mimeType: "application/toml",
+            },
+          },
+          {
+            type: "attachment_error",
+            attachment: {
+              code: "delivery-failed",
+              kind: "document",
+              label: "bundle.7z",
+              mimeType: "application/x-7z-compressed",
+            },
+          },
+        ],
+      });
+
+      expect(result.content).toEqual([
+        {
+          type: "attachment",
+          attachment: {
+            url: "https://files.example/deploy.yaml",
+            kind: "document",
+            label: "deploy.yaml",
+            mimeType: "application/yaml",
+          },
+        },
+        {
+          type: "attachment_error",
+          attachment: {
+            code: "unsupported-format",
+            kind: "document",
+            label: "settings.toml",
+            mimeType: "application/toml",
+          },
+        },
+        {
+          type: "attachment_error",
+          attachment: {
+            code: "delivery-failed",
+            kind: "document",
+            label: "bundle.7z",
+            mimeType: "application/x-7z-compressed",
           },
         },
       ]);
@@ -801,17 +1009,57 @@ describe("message-normalizer", () => {
 });
 
 describe("sender label opaque-id stripping", () => {
-  it("strips a baked profile-UUID suffix and preserves it as sender identity", () => {
+  it.each([
+    { type: "profile", id: "x".repeat(513) },
+    { type: "profile", id: "profile", label: "untrusted extra field" },
+    { type: "observation", id: "profile" },
+  ])("drops invalid sender provenance without losing display attribution: %j", (senderIdentity) => {
+    expect(
+      normalizeMessage({
+        role: "user",
+        content: "hello",
+        __openclaw: {
+          senderIdentity,
+          senderId: "profile",
+          senderName: "Display",
+          senderProfileAvatarUrl: "/api/users/profile/avatar",
+        },
+      }).sender,
+    ).toEqual({ id: "profile", name: "Display" });
+  });
+
+  it("sender provenance preserves typed identity and refuses unqualified profile display", () => {
+    const identity = { type: "profile", id: "shared-id" };
+    const metadata = {
+      senderId: "shared-id",
+      senderName: "Person",
+      senderProfileAvatarUrl: "/api/users/shared-id/avatar",
+    };
+    expect(
+      normalizeMessage({
+        role: "user",
+        content: "hello",
+        __openclaw: { ...metadata, senderIdentity: identity },
+      }).sender,
+    ).toEqual({
+      id: "shared-id",
+      name: "Person",
+      profileAvatarUrl: metadata.senderProfileAvatarUrl,
+      identity,
+    });
+    expect(
+      normalizeMessage({ role: "user", content: "hello", __openclaw: metadata }).sender,
+    ).toEqual({ id: "shared-id", name: "Person" });
+  });
+
+  it("strips a baked UUID suffix without inventing profile identity", () => {
     const normalized = normalizeMessage({
       role: "user",
       content: "hi",
       senderLabel: "steipete (c3e32452-0467-47e5-aafa-233cd5dae29f)",
     });
     expect(normalized.senderLabel).toBe("steipete");
-    // Legacy rows have no structured sender; the UUID from the label is the
-    // only author key, so it must survive as non-display identity.
     expect(normalized.sender).toEqual({
-      id: "c3e32452-0467-47e5-aafa-233cd5dae29f",
       name: "steipete",
     });
   });
@@ -847,16 +1095,13 @@ describe("sender label opaque-id stripping", () => {
     ).toBe("(c3e32452-0467-47e5-aafa-233cd5dae29f)");
   });
 
-  it("attributes a bare-UUID legacy label to that profile", () => {
+  it("keeps a bare-UUID legacy label as display only", () => {
     const normalized = normalizeMessage({
       role: "user",
       content: "hi",
       senderLabel: "c3e32452-0467-47e5-aafa-233cd5dae29f",
     });
-    // Nameless legacy senders keep the UUID as last-resort display, but the
-    // row still attributes (and resolves its avatar) to that profile instead
-    // of falling back to the local viewer identity.
     expect(normalized.senderLabel).toBe("c3e32452-0467-47e5-aafa-233cd5dae29f");
-    expect(normalized.sender).toEqual({ id: "c3e32452-0467-47e5-aafa-233cd5dae29f" });
+    expect(normalized.sender).toEqual({ name: "c3e32452-0467-47e5-aafa-233cd5dae29f" });
   });
 });

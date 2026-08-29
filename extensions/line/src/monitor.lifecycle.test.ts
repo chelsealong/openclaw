@@ -1,8 +1,9 @@
 // Line tests cover monitor.lifecycle plugin behavior.
 import crypto from "node:crypto";
-import { EventEmitter } from "node:events";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, IncomingMessage, type ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { createMockIncomingRequest } from "openclaw/plugin-sdk/test-env";
 import { WEBHOOK_IN_FLIGHT_DEFAULTS } from "openclaw/plugin-sdk/webhook-request-guards";
@@ -10,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 type LineNodeWebhookHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 type LineHandleWebhook = (...args: unknown[]) => Promise<void>;
+type LineBotOptions = Parameters<typeof import("./bot.js").createLineBot>[0];
 
 const {
   createLineBotMock,
@@ -18,7 +20,7 @@ const {
   runDetachedWebhookWorkMock,
   unregisterHttpMock,
 } = vi.hoisted(() => ({
-  createLineBotMock: vi.fn(() => ({
+  createLineBotMock: vi.fn((_options: LineBotOptions) => ({
     account: { accountId: "default" },
     handleWebhook: vi.fn<LineHandleWebhook>(),
     stop: vi.fn(),
@@ -41,6 +43,8 @@ type RegisteredRoute = {
   path?: string;
   pluginId?: string;
   replaceExisting?: boolean;
+  source?: string;
+  throwOnFailure?: boolean;
 };
 
 type RegisteredTarget = {
@@ -88,7 +92,6 @@ vi.mock("openclaw/plugin-sdk/runtime-env", async () => {
     ...actual,
     danger: (value: unknown) => String(value),
     logVerbose: vi.fn(),
-    waitForAbortSignal: vi.fn(),
   };
 });
 
@@ -134,7 +137,6 @@ vi.mock("./send.js", () => ({
   createFlexMessage: vi.fn(),
   createImageMessage: vi.fn(),
   createLocationMessage: vi.fn(),
-  createQuickReplyItems: vi.fn(),
   getUserDisplayName: vi.fn(),
   pushMessagesLine: vi.fn(),
   replyMessageLine: vi.fn(),
@@ -169,7 +171,7 @@ describe("monitorLineProvider lifecycle", () => {
     createLineBotMock.mockImplementation(() => ({
       account: { accountId: "default" },
       handleWebhook: vi.fn<LineHandleWebhook>(),
-      stop: vi.fn(),
+      stop: vi.fn(async () => undefined),
     }));
     // Clear call history only; the implementation was wired to the actual
     // helper once in the module mock factory.
@@ -184,9 +186,10 @@ describe("monitorLineProvider lifecycle", () => {
         ? params.target.path
         : `/${params.target.path}`;
       const key =
-        withLeadingSlash.length > 1 && withLeadingSlash.endsWith("/")
-          ? withLeadingSlash.slice(0, -1)
-          : withLeadingSlash;
+        withLeadingSlash
+          .replace(/\/{2,}/g, "/")
+          .replace(/\/+$/, "")
+          .toLowerCase() || "/";
       const normalizedTarget = { ...params.target, path: key };
       const existing = params.targetsByPath.get(key) ?? [];
       params.targetsByPath.set(key, [...existing, normalizedTarget]);
@@ -221,6 +224,7 @@ describe("monitorLineProvider lifecycle", () => {
 
   it("waits for abort before resolving", async () => {
     const abort = new AbortController();
+    const statusSink = vi.fn();
     let resolved = false;
 
     const task = monitorLineProvider({
@@ -229,6 +233,7 @@ describe("monitorLineProvider lifecycle", () => {
       config: {} as OpenClawConfig,
       runtime: {} as RuntimeEnv,
       abortSignal: abort.signal,
+      statusSink,
     }).then((monitor) => {
       resolved = true;
       return monitor;
@@ -236,11 +241,19 @@ describe("monitorLineProvider lifecycle", () => {
 
     expect(registerWebhookTargetWithPluginRouteMock).toHaveBeenCalledTimes(1);
     expect(requireWebhookRegistration().route.auth).toBe("plugin");
+    await vi.waitFor(() =>
+      expect(statusSink).toHaveBeenCalledWith(
+        expect.objectContaining({ lifecycle: "ready", connected: true }),
+      ),
+    );
     expect(resolved).toBe(false);
 
     abort.abort();
     await task;
     expect(unregisterHttpMock).toHaveBeenCalledTimes(1);
+    expect(statusSink).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lifecycle: "stopped", running: false }),
+    );
   });
 
   it("registers an account target without replacing existing route ownership", async () => {
@@ -258,6 +271,8 @@ describe("monitorLineProvider lifecycle", () => {
     expect(registration.route.accountId).toBe("work");
     expect(registration.route.auth).toBe("plugin");
     expect(registration.route.pluginId).toBe("line");
+    expect(registration.route.source).toBe("line-webhook");
+    expect(registration.route.throwOnFailure).toBe(true);
     expect(registration.route).not.toHaveProperty("path");
     expect(registration.route).not.toHaveProperty("replaceExisting");
     await monitor.stop();
@@ -334,6 +349,89 @@ describe("monitorLineProvider lifecycle", () => {
     ).rejects.toThrow("line bot startup failed");
 
     expect(registerWebhookTargetWithPluginRouteMock).not.toHaveBeenCalled();
+  });
+
+  it("stops the bot and rejects startup when the webhook route cannot bind", async () => {
+    const statusSink = vi.fn();
+    registerWebhookTargetWithPluginRouteMock.mockImplementationOnce(() => {
+      throw new Error("LINE route conflict");
+    });
+
+    await expect(
+      monitorLineProvider({
+        channelAccessToken: "token",
+        channelSecret: "secret", // pragma: allowlist secret
+        config: {} as OpenClawConfig,
+        runtime: {} as RuntimeEnv,
+        statusSink,
+      }),
+    ).rejects.toThrow("LINE route conflict");
+
+    const bot = createLineBotMock.mock.results[0]?.value as
+      | { stop: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(bot?.stop).toHaveBeenCalledOnce();
+    expect(statusSink).not.toHaveBeenCalledWith(expect.objectContaining({ lifecycle: "ready" }));
+  });
+
+  it("resolves a reply's presentation into LINE controls before delivering it", async () => {
+    // The turn adapter owns this preparation: core renders presentations inside
+    // the outbound send pipeline, which replies delivered here never enter.
+    const { setLineRuntime } = await import("./runtime.js");
+    type ResolvedTurn = { delivery: { preparePayload?: (payload: ReplyPayload) => ReplyPayload } };
+    let resolvedTurn: ResolvedTurn | undefined;
+    const runTurn = async (params: {
+      adapter: { resolveTurn: () => ResolvedTurn };
+    }): Promise<{ dispatched: false }> => {
+      resolvedTurn = params.adapter.resolveTurn();
+      return { dispatched: false };
+    };
+    setLineRuntime({
+      channel: { inbound: { run: runTurn } },
+    } as unknown as Parameters<typeof setLineRuntime>[0]);
+    const monitor = await monitorLineProvider({
+      channelAccessToken: "token",
+      channelSecret: "secret", // pragma: allowlist secret
+      config: {} as OpenClawConfig,
+      runtime: {} as RuntimeEnv,
+    });
+    const onMessage = createLineBotMock.mock.calls[0]?.[0]?.onMessage;
+    if (!onMessage) {
+      throw new Error("expected the LINE bot to receive an inbound message handler");
+    }
+
+    try {
+      await onMessage(
+        {
+          ctxPayload: { From: "line:group:C1", MessageSid: "m1", RawBody: "approve?" },
+          replyToken: "reply-token",
+          route: { accountId: "default", agentId: "main", sessionKey: "line:C1" },
+          isGroup: true,
+          accountId: "default",
+          turn: { record: {} },
+        } as unknown as Parameters<typeof onMessage>[0],
+        {} as Parameters<typeof onMessage>[1],
+      );
+
+      const prepared = resolvedTurn?.delivery.preparePayload?.({
+        text: "Approve this run?",
+        presentation: {
+          blocks: [
+            {
+              type: "buttons",
+              buttons: [{ label: "Approve", action: { type: "callback", value: "approve" } }],
+            },
+          ],
+        },
+      });
+      const line = prepared?.channelData?.line as { flexMessage?: unknown } | undefined;
+
+      expect(prepared?.presentation).toBeUndefined();
+      expect(line?.flexMessage).toBeDefined();
+    } finally {
+      // A leaked registration makes later shared-path signature tests ambiguous.
+      await monitor.stop();
+    }
   });
 
   it("dispatches shared-path webhook posts to the account matching the signature", async () => {
@@ -526,18 +624,18 @@ describe("monitorLineProvider lifecycle", () => {
     }
   });
 
-  it("dispatches a signed POST to a configured trailing-slash webhook path", async () => {
+  it("dispatches a signed POST through the canonical configured webhook route", async () => {
     const monitor = await monitorLineProvider({
       channelAccessToken: "token",
       channelSecret: "secret", // pragma: allowlist secret
-      webhookPath: "/line/webhook/",
+      webhookPath: "/Line//Webhook/",
       accountId: "default",
       config: {} as OpenClawConfig,
       runtime: {} as RuntimeEnv,
     });
 
     const registration = requireWebhookRegistration();
-    expect(registration.target.path).toBe("/line/webhook");
+    expect(registration.target.path).toBe("/Line//Webhook");
 
     const route = requireRegisteredRoute();
     const payload = JSON.stringify({ events: [{ type: "message" }] });
@@ -679,7 +777,7 @@ describe("monitorLineProvider lifecycle", () => {
 
   it("rejects webhook requests above the shared in-flight limit before body handling", async () => {
     const limit = WEBHOOK_IN_FLIGHT_DEFAULTS.maxInFlightPerKey;
-    const heldRequests: Array<EventEmitter & { destroy: () => void }> = [];
+    const heldRequests: IncomingMessage[] = [];
 
     const monitor = await monitorLineProvider({
       channelAccessToken: "token",
@@ -690,13 +788,7 @@ describe("monitorLineProvider lifecycle", () => {
 
     const route = requireRegisteredRoute();
     const createHeldPostRequest = () => {
-      const req = Object.assign(new EventEmitter(), {
-        destroyed: false,
-        destroy(this: EventEmitter & { destroyed: boolean }) {
-          this.destroyed = true;
-          this.emit("close");
-        },
-      });
+      const req = new IncomingMessage(new Socket());
       heldRequests.push(req);
       return Object.assign(req, {
         method: "POST",

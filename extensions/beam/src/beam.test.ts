@@ -1,6 +1,8 @@
 import http from "node:http";
+import type { ActiveSessionCatalog } from "openclaw/plugin-sdk/session-catalog-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBeamRequestHandler } from "./http.js";
+import { createBeamMirrorRunner } from "./mirror.js";
 import { createBeamSessionCatalog } from "./session-catalog.js";
 import type { BeamStore } from "./store.js";
 import { BEAM_MAX_BODY_BYTES, parseBeamUpload, type BeamStoredSession } from "./types.js";
@@ -24,6 +26,7 @@ function sampleUpload(overrides: Record<string, unknown> = {}): BeamUploadFixtur
 }
 
 const writeClient = () => ({ clientIp: "127.0.0.1", scopes: ["operator.write"] });
+const mainControlUiTarget = () => ({ agentId: "main" });
 
 function memoryStore(): BeamStore & { values: Map<string, BeamStoredSession> } {
   const values = new Map<string, BeamStoredSession>();
@@ -67,8 +70,20 @@ async function requestStatus(
   });
 }
 
-async function serve(handler: ReturnType<typeof createBeamRequestHandler>): Promise<string> {
+async function serve(
+  handler: ReturnType<typeof createBeamRequestHandler>,
+  intercept?: (
+    requestNumber: number,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) => boolean,
+): Promise<string> {
+  let requestNumber = 0;
   const server = http.createServer((req, res) => {
+    requestNumber += 1;
+    if (intercept?.(requestNumber, req, res)) {
+      return;
+    }
     void handler(req, res)
       .then((handled) => {
         if (!handled && !res.writableEnded) {
@@ -92,6 +107,30 @@ async function serve(handler: ReturnType<typeof createBeamRequestHandler>): Prom
     throw new Error("test server did not bind a TCP port");
   }
   return `http://127.0.0.1:${address.port}/api/v1/beam/sessions`;
+}
+
+function mirrorRuntime(endpoint: string): Parameters<typeof createBeamMirrorRunner>[0]["runtime"] {
+  return {
+    config: {
+      current: () => ({
+        plugins: {
+          entries: {
+            beam: {
+              enabled: true,
+              config: {
+                mirror: {
+                  endpoint,
+                  catalogs: ["claude"],
+                  pollSeconds: 30,
+                  activeWindowMinutes: 180,
+                },
+              },
+            },
+          },
+        },
+      }),
+    },
+  };
 }
 
 describe("Beam payload validation", () => {
@@ -138,7 +177,12 @@ describe("Beam receiver", () => {
     const store = memoryStore();
     let now = 100;
     const endpoint = await serve(
-      createBeamRequestHandler({ store, now: () => now, resolveClient: writeClient }),
+      createBeamRequestHandler({
+        store,
+        now: () => now,
+        resolveClient: writeClient,
+        resolveControlUiTarget: mainControlUiTarget,
+      }),
     );
     const first = await fetch(endpoint, {
       method: "POST",
@@ -149,7 +193,7 @@ describe("Beam receiver", () => {
     expect(await first.json()).toEqual({
       ok: true,
       beamId: "0123456789abcdef0123456789abcdef",
-      url: "/chat?session=catalog%3Abeam%3Agateway%3A0123456789abcdef0123456789abcdef",
+      url: "/chat/main?catalog=beam&host=gateway&thread=0123456789abcdef0123456789abcdef",
     });
     expect(store.values.get("0123456789abcdef0123456789abcdef")).toMatchObject({
       createdAt: 100,
@@ -169,13 +213,16 @@ describe("Beam receiver", () => {
     });
   });
 
-  it("returns a catalog URL beneath the configured Control UI base path", async () => {
+  it("returns a catalog URL beneath a nested base path for the configured default agent", async () => {
     const store = memoryStore();
     const endpoint = await serve(
       createBeamRequestHandler({
         store,
         resolveClient: writeClient,
-        resolveControlUiBasePath: () => "/openclaw/",
+        resolveControlUiTarget: () => ({
+          agentId: "research",
+          basePath: "/admin/openclaw/",
+        }),
       }),
     );
     const response = await fetch(endpoint, {
@@ -188,7 +235,7 @@ describe("Beam receiver", () => {
     expect(await response.json()).toEqual({
       ok: true,
       beamId: "0123456789abcdef0123456789abcdef",
-      url: "/openclaw/chat?session=catalog%3Abeam%3Agateway%3A0123456789abcdef0123456789abcdef",
+      url: "/admin/openclaw/chat/research?catalog=beam&host=gateway&thread=0123456789abcdef0123456789abcdef",
     });
   });
 
@@ -198,6 +245,7 @@ describe("Beam receiver", () => {
       createBeamRequestHandler({
         store,
         resolveClient: () => ({ clientIp: "127.0.0.1", scopes: ["operator.read"] }),
+        resolveControlUiTarget: mainControlUiTarget,
       }),
     );
     const response = await fetch(endpoint, {
@@ -213,7 +261,13 @@ describe("Beam receiver", () => {
 
   it("rejects method, media type, malformed JSON, and oversized bodies", async () => {
     const store = memoryStore();
-    const endpoint = await serve(createBeamRequestHandler({ store, resolveClient: writeClient }));
+    const endpoint = await serve(
+      createBeamRequestHandler({
+        store,
+        resolveClient: writeClient,
+        resolveControlUiTarget: mainControlUiTarget,
+      }),
+    );
     expect((await fetch(endpoint)).status).toBe(405);
     expect(
       (
@@ -244,6 +298,95 @@ describe("Beam receiver", () => {
   });
 });
 
+describe("Beam mirror receiver boundary", () => {
+  it("retries a rejected terminal upload through the real loopback receiver", async () => {
+    const store = memoryStore();
+    const requests: string[] = [];
+    const endpoint = await serve(
+      createBeamRequestHandler({
+        store,
+        resolveClient: writeClient,
+        resolveControlUiTarget: mainControlUiTarget,
+      }),
+      (requestNumber, req, res) => {
+        const status = requestNumber === 2 ? 503 : 200;
+        requests.push(`${requestNumber === 1 ? "live" : "completed"}:${status}`);
+        if (status === 200) {
+          return false;
+        }
+        req.resume();
+        res.statusCode = status;
+        res.end("temporary receiver failure");
+        return true;
+      },
+    );
+    let active = true;
+    let clock = Date.parse("2026-07-20T12:00:00.000Z");
+    let readCount = 0;
+    const catalog: ActiveSessionCatalog = {
+      pluginId: "claude",
+      id: "claude",
+      label: "Claude",
+      processHomeFallbackAllowed: true,
+      list: async () => [
+        {
+          hostId: "gateway:local",
+          label: "Local",
+          kind: "gateway",
+          connected: true,
+          sessions: active
+            ? [
+                {
+                  threadId: "terminal-retry-proof",
+                  name: "Terminal retry proof",
+                  status: "stored",
+                  createdAt: clock - 60_000,
+                  updatedAt: clock - 60_000,
+                  recencyAt: clock - 60_000,
+                  archived: false,
+                  canContinue: false,
+                  canArchive: false,
+                },
+              ]
+            : [],
+        },
+      ],
+      read: async ({ hostId, threadId }) => {
+        readCount += 1;
+        return {
+          hostId,
+          label: "Local",
+          threadId,
+          items: [{ type: "agentMessage", text: `Receiver-boundary proof ${readCount}.` }],
+        };
+      },
+    };
+    const runner = createBeamMirrorRunner({
+      runtime: mirrorRuntime(endpoint),
+      logger: { warn: () => {}, info: () => {} },
+      now: () => clock,
+      listCatalogs: () => [catalog],
+    });
+
+    try {
+      await runner.tick();
+      active = false;
+      clock += 4 * 60 * 60_000;
+      await runner.tick();
+      expect([...store.values.values()][0]?.completed).toBe(false);
+      expect([...store.values.values()][0]?.items[0]?.text).toBe("Receiver-boundary proof 1.");
+
+      await runner.tick();
+
+      expect(requests).toEqual(["live:200", "completed:503", "completed:200"]);
+      expect([...store.values.values()][0]?.completed).toBe(true);
+      expect([...store.values.values()][0]?.items[0]?.text).toBe("Receiver-boundary proof 3.");
+    } finally {
+      await runner.stop();
+    }
+  });
+});
+
 describe("Beam session catalog", () => {
   it("lists newest sessions and reads paginated transcript items without mutation capabilities", async () => {
     const store = memoryStore();
@@ -264,7 +407,7 @@ describe("Beam session catalog", () => {
     });
     const catalog = createBeamSessionCatalog(store);
 
-    const [host] = await catalog.list({ limitPerHost: 1 });
+    const [host] = await catalog.list({ agentId: "main", limitPerHost: 1 });
     expect(host).toBeDefined();
     if (!host) {
       throw new Error("Beam catalog did not return its gateway host");
@@ -280,6 +423,7 @@ describe("Beam session catalog", () => {
     expect(host.nextCursor).toBe("1");
 
     const transcript = await catalog.read({
+      agentId: "main",
       hostId: "gateway",
       threadId: "0123456789abcdef0123456789abcdef",
       limit: 1,
@@ -291,6 +435,7 @@ describe("Beam session catalog", () => {
     expect(transcript.nextCursor).toEqual(expect.any(String));
 
     const older = await catalog.read({
+      agentId: "main",
       hostId: "gateway",
       threadId: "0123456789abcdef0123456789abcdef",
       limit: 1,
@@ -316,6 +461,7 @@ describe("Beam session catalog", () => {
 
     await expect(
       catalog.read({
+        agentId: "main",
         hostId: "gateway",
         threadId: "0123456789abcdef0123456789abcdef",
         limit: 1,

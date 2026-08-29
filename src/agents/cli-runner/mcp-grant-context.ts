@@ -3,6 +3,7 @@ import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { McpLoopbackRequestContext } from "../../gateway/mcp-grant-store.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
+import { SESSION_PERMISSION_BY_EXEC_MODE } from "../session-permission-exec-mode.js";
 import type { RunCliAgentParams } from "./types.js";
 
 export function normalizeOptionalMcpContextValue(value: string | undefined): string | undefined {
@@ -11,12 +12,19 @@ export function normalizeOptionalMcpContextValue(value: string | undefined): str
 
 function buildCliMcpExecSession(
   sessionEntry: RunCliAgentParams["sessionEntry"],
+  execOverrides: RunCliAgentParams["execOverrides"],
 ): McpLoopbackRequestContext["execSession"] {
+  const permissionMode = sessionEntry?.permissionMode;
+  const effectivePermissionMode =
+    permissionMode && execOverrides?.mode
+      ? SESSION_PERMISSION_BY_EXEC_MODE[execOverrides.mode]
+      : permissionMode;
   const execSession = {
     execHost: normalizeOptionalMcpContextValue(sessionEntry?.execHost),
     execSecurity: normalizeOptionalMcpContextValue(sessionEntry?.execSecurity),
     execAsk: normalizeOptionalMcpContextValue(sessionEntry?.execAsk),
     execNode: normalizeOptionalMcpContextValue(sessionEntry?.execNode),
+    ...(effectivePermissionMode ? { permissionMode: effectivePermissionMode } : {}),
   };
   return Object.values(execSession).some(Boolean) ? execSession : undefined;
 }
@@ -28,6 +36,7 @@ function buildCliMcpExecOverrides(
     return undefined;
   }
   const scopedOverrides = {
+    ...(execOverrides.mode !== undefined ? { mode: execOverrides.mode } : {}),
     ...(execOverrides.host !== undefined ? { host: execOverrides.host } : {}),
     ...(execOverrides.security !== undefined ? { security: execOverrides.security } : {}),
     ...(execOverrides.ask !== undefined ? { ask: execOverrides.ask } : {}),
@@ -100,10 +109,16 @@ export function buildCliMcpGrantContext(params: {
   toolsAllow?: string[];
 }): McpLoopbackRequestContext {
   const sessionKey = resolveCliMcpSessionKey(params.run, params.config, params.agentId);
+  const runtimePolicySessionKey = normalizeOptionalMcpContextValue(
+    params.run.runtimePolicySessionKey,
+  );
+  const runtimePolicyAgentId = runtimePolicySessionKey
+    ? normalizeOptionalMcpContextValue(params.run.agentId)
+    : undefined;
   const clientCaps = uniqueStrings(
     (params.run.clientCaps ?? []).map((cap) => cap.trim()).filter(Boolean),
   );
-  const execSession = buildCliMcpExecSession(params.run.sessionEntry);
+  const execSession = buildCliMcpExecSession(params.run.sessionEntry, params.run.execOverrides);
   const execOverrides = buildCliMcpExecOverrides(params.run.execOverrides);
   const bashElevated = buildCliMcpBashElevated(params.run.bashElevated);
   const channelContext = buildCliMcpChannelContext(params.run.channelContext, params.run.senderId);
@@ -127,7 +142,8 @@ export function buildCliMcpGrantContext(params: {
     grantedToolsAllow[0] === "message";
   return {
     sessionKey,
-    runtimePolicySessionKey: normalizeOptionalMcpContextValue(params.run.runtimePolicySessionKey),
+    runtimePolicySessionKey,
+    ...(runtimePolicyAgentId ? { runtimePolicyAgentId } : {}),
     agentId: params.agentId,
     sessionId: normalizeOptionalMcpContextValue(params.run.sessionId),
     runId: normalizeOptionalMcpContextValue(params.run.runId),
@@ -136,11 +152,18 @@ export function buildCliMcpGrantContext(params: {
     // Restricted runs get their allowlist stamped into the grant; the
     // loopback server enforces it on tools/list and tools/call.
     ...(params.toolsAllow ? { toolsAllow: params.toolsAllow } : {}),
+    ...(params.run.skillWorkshopProposalRevision
+      ? { skillWorkshop: { proposalRevision: params.run.skillWorkshopProposalRevision } }
+      : {}),
     ...(params.run.scheduledToolPolicy
       ? { scheduledToolPolicy: { ...params.run.scheduledToolPolicy } }
       : {}),
+    ...(params.run.cronCreatorCallerOrigin
+      ? { cronCreatorCallerOrigin: { ...params.run.cronCreatorCallerOrigin } }
+      : {}),
     modelProvider: params.modelProvider,
     modelId: params.modelId,
+    modelHasVision: params.run.modelHasVision,
     messageProvider,
     clientCaps: clientCaps.length > 0 ? clientCaps : undefined,
     currentChannelId,
@@ -149,6 +172,7 @@ export function buildCliMcpGrantContext(params: {
       params.run.currentMessageId == null
         ? undefined
         : normalizeOptionalMcpContextValue(String(params.run.currentMessageId)),
+    replyToMode: params.run.replyToMode,
     currentInboundAudio: params.run.currentInboundAudio === true ? true : undefined,
     accountId: normalizeOptionalMcpContextValue(params.run.agentAccountId),
     inboundEventKind: params.run.currentInboundEventKind,

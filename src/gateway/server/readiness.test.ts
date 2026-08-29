@@ -30,11 +30,13 @@ function snapshotWith(
 function createManager(snapshot: ChannelRuntimeSnapshot): ChannelManager {
   return {
     getRuntimeSnapshot: vi.fn(() => snapshot),
+    getPluginCommandCatalogAccounts: vi.fn(() => new Map()),
     startChannels: vi.fn(),
     startChannel: vi.fn(),
     stopChannel: vi.fn(),
     setAutostartSuppression: vi.fn(),
     getAutostartSuppression: vi.fn(() => null),
+    recoverAutostartSuppression: vi.fn(async () => false),
     setAmbientAutostartSuppressedChannelIds: vi.fn(),
     isAmbientAutostartSuppressed: vi.fn(() => false),
     markChannelLoggedOut: vi.fn(),
@@ -256,6 +258,20 @@ describe("createReadinessChecker", () => {
         },
       });
       expect(readiness()).toEqual(failingSnapshot(["discord"]));
+    });
+  });
+
+  it("keeps a long-running Reef account ready during fresh reconnect grace", () => {
+    withReadinessClock(() => {
+      const { readiness } = createLongRunningReadinessHarness({
+        reef: managedAccount({
+          connected: false,
+          lifecycle: "recovering",
+          lastStartAt: Date.now() - THIRTY_ONE_MIN_MS,
+          lastDisconnect: { at: Date.now() - 5_000, error: "socket closed" },
+        }),
+      });
+      expect(readiness()).toEqual(readySnapshot(THIRTY_ONE_MIN_MS));
     });
   });
 
@@ -482,11 +498,30 @@ describe("createReadinessChecker", () => {
     });
   });
 
+  it("refreshes stopped channels when the clock moves behind cached readiness", () => {
+    withReadinessClock(() => {
+      const { manager, readiness } = createReadinessHarness({
+        accounts: { discord: managedAccount({ lifecycle: "ready" }) },
+        cacheTtlMs: 1_000,
+      });
+
+      expect(readiness()).toEqual(readySnapshot());
+      vi.mocked(manager.getRuntimeSnapshot).mockReturnValue(
+        snapshotWith({ discord: stoppedAccount({ connected: false, lifecycle: "stopped" }) }),
+      );
+      vi.setSystemTime(Date.now() - 60_000);
+
+      expect(readiness()).toEqual(failingSnapshot(["discord"], FIVE_MIN_MS - 60_000));
+      expect(manager.getRuntimeSnapshot).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("adds event-loop health to detailed readiness without changing readiness state", () => {
     withReadinessClock(() => {
       const { readiness } = createReadinessHarness({
         getEventLoopHealth: () => ({
           degraded: true,
+          degradedSinceMs: 61_000,
           reasons: ["cpu", "event_loop_utilization"],
           intervalMs: 2_000,
           delayP99Ms: 42.1,
@@ -500,6 +535,7 @@ describe("createReadinessChecker", () => {
         readySnapshot(FIVE_MIN_MS, {
           eventLoop: {
             degraded: true,
+            degradedSinceMs: 61_000,
             reasons: ["cpu", "event_loop_utilization"],
             intervalMs: 2_000,
             delayP99Ms: 42.1,

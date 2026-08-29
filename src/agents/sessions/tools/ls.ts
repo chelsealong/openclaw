@@ -57,7 +57,7 @@ export interface LsToolOptions {
 
 function formatLsCall(
   args: { path?: string; limit?: number } | undefined,
-  theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+  theme: typeof import("../../modes/interactive/theme/theme.js").interactiveAgentTheme,
 ): string {
   const rawPath = str(args?.path);
   const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
@@ -76,7 +76,7 @@ function formatLsResult(
     details?: LsToolDetails;
   },
   options: ToolRenderResultOptions,
-  theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+  theme: typeof import("../../modes/interactive/theme/theme.js").interactiveAgentTheme,
   showImages: boolean,
 ): string {
   const entryLimit = result.details?.entryLimitReached;
@@ -160,8 +160,7 @@ export function createLsToolDefinition(
                 suffix = "/";
               }
             } catch {
-              // Skip entries we cannot stat.
-              continue;
+              // Directory metadata is optional; keep names even when a symlink target is missing.
             }
             results.push(entry + suffix);
           }

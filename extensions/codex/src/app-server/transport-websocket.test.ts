@@ -55,7 +55,10 @@ describe("Codex app-server websocket transport", () => {
         const message = JSON.parse(rawDataToText(data)) as { id?: number; method?: string };
         if (message.method === "initialize") {
           socket.send(
-            JSON.stringify({ id: message.id, result: { userAgent: "openclaw/0.146.0" } }),
+            JSON.stringify({
+              id: message.id,
+              result: { userAgent: `openclaw/${CODEX_APP_SERVER_VERSION}` },
+            }),
           );
           return;
         }
@@ -71,7 +74,7 @@ describe("Codex app-server websocket transport", () => {
     if (!address || typeof address === "string") {
       throw new Error("expected websocket test server port");
     }
-    const client = CodexAppServerClient.start({
+    const client = await CodexAppServerClient.start({
       transport: "websocket",
       url: `ws://127.0.0.1:${address.port}`,
       authToken: "secret",
@@ -286,11 +289,18 @@ describe("Codex app-server websocket transport", () => {
   }, 5_000);
 
   it("can speak JSON-RPC over the canonical unix control socket", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-codex-unix-"));
+    // macOS socket paths must fit sockaddr_un even when the runner nests TMPDIR.
+    const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+    const tempDir = await mkdtemp(path.join(tempRoot, "openclaw-codex-unix-"));
     tempDirs.push(tempDir);
     const socketPath = path.join(tempDir, "app-server.sock");
     const httpServer = http.createServer();
     httpServers.push(httpServer);
+    // Bind before ws forwards HTTP errors, so a listen failure rejects this test.
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once("error", reject);
+      httpServer.listen(socketPath, resolve);
+    });
     const server = new WebSocketServer({ server: httpServer });
     servers.push(server);
     const upgradeExtensions: Array<string | undefined> = [];
@@ -312,12 +322,8 @@ describe("Codex app-server websocket transport", () => {
         }
       });
     });
-    await new Promise<void>((resolve, reject) => {
-      httpServer.once("error", reject);
-      httpServer.listen(socketPath, resolve);
-    });
 
-    const client = CodexAppServerClient.start({
+    const client = await CodexAppServerClient.start({
       transport: "unix",
       homeScope: "user",
       url: `unix://${socketPath}`,

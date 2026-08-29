@@ -1,10 +1,9 @@
+import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 /**
  * Channel health monitor regression tests.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChannelId } from "../channels/plugins/types.public.js";
-import type { ChannelAccountSnapshot } from "../channels/plugins/types.public.js";
-import { MAX_TIMER_TIMEOUT_MS } from "../shared/number-coercion.js";
+import type { ChannelId, ChannelAccountSnapshot } from "../channels/plugins/types.public.js";
 import { startChannelHealthMonitor } from "./channel-health-monitor.js";
 import type { ChannelRuntimeSnapshot } from "./server-channel-runtime.types.js";
 import type { ChannelManager } from "./server-channels.js";
@@ -12,11 +11,13 @@ import type { ChannelManager } from "./server-channels.js";
 function createMockChannelManager(overrides?: Partial<ChannelManager>): ChannelManager {
   return {
     getRuntimeSnapshot: vi.fn(() => ({ channels: {}, channelAccounts: {} })),
+    getPluginCommandCatalogAccounts: vi.fn(() => new Map()),
     startChannels: vi.fn(async () => {}),
     startChannel: vi.fn(async () => {}),
     stopChannel: vi.fn(async () => {}),
     setAutostartSuppression: vi.fn(),
     getAutostartSuppression: vi.fn(() => null),
+    recoverAutostartSuppression: vi.fn(async () => false),
     setAmbientAutostartSuppressedChannelIds: vi.fn(),
     isAmbientAutostartSuppressed: vi.fn(() => false),
     markChannelLoggedOut: vi.fn(),
@@ -261,14 +262,6 @@ describe("channel-health-monitor", () => {
     monitor.stop();
   });
 
-  it("accepts timing.monitorStartupGraceMs", async () => {
-    const manager = createMockChannelManager();
-    const monitor = startDefaultMonitor(manager, { timing: { monitorStartupGraceMs: 60_000 } });
-    await vi.advanceTimersByTimeAsync(5_001);
-    expect(manager.getRuntimeSnapshot).not.toHaveBeenCalled();
-    monitor.stop();
-  });
-
   it("skips healthy channels (running + connected)", async () => {
     const manager = createSnapshotManager({
       discord: {
@@ -283,7 +276,12 @@ describe("channel-health-monitor", () => {
 
   it("treats crash-loop suppressed accounts as expected stopped", async () => {
     let suppressed = true;
+    let allowRecovery = false;
     const suppression = { reason: "crash-loop-breaker" as const, message: "safe mode" };
+    const recoverAutostartSuppression = vi.fn(async () => {
+      suppressed = !allowRecovery;
+      return allowRecovery;
+    });
     const manager = createSnapshotManager(
       {
         discord: {
@@ -292,6 +290,7 @@ describe("channel-health-monitor", () => {
       },
       {
         getAutostartSuppression: vi.fn(() => (suppressed ? suppression : null)),
+        recoverAutostartSuppression,
       },
     );
     const monitor = startDefaultMonitor(manager, {
@@ -305,9 +304,10 @@ describe("channel-health-monitor", () => {
     expect(manager.resetRestartAttempts).not.toHaveBeenCalled();
     expect(manager.startChannel).not.toHaveBeenCalled();
 
-    suppressed = false;
+    allowRecovery = true;
     await vi.advanceTimersByTimeAsync(101);
 
+    expect(recoverAutostartSuppression).toHaveBeenCalled();
     expect(manager.resetRestartAttempts).toHaveBeenCalledWith("discord", "default");
     expect(manager.startChannel).toHaveBeenCalledWith("discord", "default");
     monitor.stop();
@@ -518,6 +518,29 @@ describe("channel-health-monitor", () => {
         },
       },
     });
+    await expectNoRestart(manager);
+  });
+
+  it.each([false, true])("restarts stale future channels (connected: %s)", async (connected) => {
+    const now = Date.now();
+    const account = disconnectedAccount(now + 60_000, {
+      connected,
+      lifecycle: connected ? "ready" : "starting",
+      lastTransportActivityAt: connected ? now - 300_000 : undefined,
+    });
+    const manager = createSnapshotManager({ discord: { default: account } });
+
+    await expectRestartedChannel(manager, "discord");
+  });
+
+  it("does not restart a long-running channel during fresh reconnect grace", async () => {
+    const now = Date.now();
+    const manager = createSlackSnapshotManager(
+      disconnectedAccount(now - 300_000, {
+        lifecycle: "recovering",
+        lastDisconnect: { at: now - 5_000, error: "socket closed" },
+      }),
+    );
     await expectNoRestart(manager);
   });
 

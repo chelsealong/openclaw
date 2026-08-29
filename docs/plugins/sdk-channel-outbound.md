@@ -47,13 +47,21 @@ the transport callback instead of dispatching an event that was not made
 durable. At claim time it decodes the versioned payload, re-runs `inspect`, and
 rejects an id or lane mismatch before delivery.
 
-`deliver` receives `onAdopted`, `onDeferred`, `onAdoptionFinalizing`,
-`onAbandoned`, and `abortSignal`. Returning without an explicit handoff marks a
-terminal no-dispatch event adopted. `admission` is always `exclusive`. A
-deferred handoff keeps the claim held, while shutdown or abort leaves unadopted
-work retryable. The monitor tracks delivery independently from claim settlement
-because adoption can tombstone a row before the channel's delivery promise
-returns.
+`onDurableAdmission(raw, context)` runs after every durable enqueue, including
+duplicates. `context.isNew` is `true` if and only if this admission inserted the
+`(queue_name, event_id)` row. It does not indicate claim ownership or eventual
+delivery. If retention previously pruned the row, a later admission may insert
+it again and report `isNew: true`.
+
+`deliver` receives `onAdopted`, `onDeferred`, `onAdoptionFinalizing`, `onFailed`,
+`onCancelled`, `onAbandoned`, and `abortSignal`. Use `onFailed` for delivery
+errors, `onCancelled` for explicit pre-adoption cancellation that must preserve
+retry accounting, and `onAbandoned` when a non-adopted turn should consume a
+retry attempt. Returning without an explicit handoff marks a terminal
+no-dispatch event adopted. `admission` is always `exclusive`. A deferred handoff
+keeps the claim held, while shutdown or abort leaves unadopted work retryable.
+The monitor tracks delivery independently from claim settlement because
+adoption can tombstone a row before the channel's delivery promise returns.
 
 Optional settings include custom append delays, a `drain` option block for
 advanced drain ordering/concurrency/retry policy, an external `abortSignal`, a
@@ -146,9 +154,23 @@ the channel boundary instead of rewriting marker text after sanitization.
 A `MessageReceipt` records the result returned by a channel adapter. Concrete
 platform message identifiers show that the platform send path accepted the
 message; they do not prove that a recipient's device displayed or read it.
-Receipts without platform message identifiers are local receipt metadata only.
-Channels with read receipts or device-delivery state should track those facts
-through a separate channel-specific path.
+Destination and routing identifiers such as chat, channel, room, conversation,
+or recipient JID are metadata, never `platformMessageIds`. Receipts without
+platform message identifiers are local receipt metadata only. A
+provider-observed receipt thread overrides the requested route thread. If a
+batch contains conflicting provider threads, each part retains its thread and
+the aggregate receipt omits `threadId`. Channels with read receipts or
+device-delivery state should track those facts through a separate
+channel-specific path.
+
+When an adapter intentionally omits a send before dispatch, return
+`outcome: "not_sent"` with an empty receipt and no message ID (legacy outbound
+adapters use an empty `messageId`). Core records `adapter_returned_no_send` as
+an intentional suppression, counts no physical send, and skips send-success
+and commit hooks. Do not use this outcome for an acknowledged send without a
+platform ID or for an unknown result after dispatch. An empty receipt alone
+does not distinguish those states; existing acknowledgement behavior is
+unchanged when `outcome` is omitted.
 
 If a channel adapter can prove that retrying a failure cannot duplicate a
 recipient-visible send and no finalization-capable call began, throw
@@ -200,6 +222,13 @@ Runtime send helpers also live on `channel-outbound`:
 Use `payloadOutcomes` when a batch mixes sent, suppressed, and failed
 payloads. Do not infer hook cancellation from an empty legacy
 direct-delivery result.
+
+When a transport creates a thread during its first successful send, the
+outbound adapter may implement `adoptTargetFromDelivery(...)`. Return the
+typed thread ID from the platform receipt and core carries it into later
+payloads, pins, and post-delivery hooks in that durable batch. Core never
+replaces an explicit caller thread, and it does not infer adoption from
+`receipt.threadId` without the adapter opt-in.
 
 ### Automatic unknown-send reconciliation
 
