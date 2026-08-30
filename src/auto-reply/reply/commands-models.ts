@@ -177,8 +177,12 @@ export async function buildPreparedModelsProviderData(
     if (!(error instanceof PreparedModelCatalogConfigReplacedError)) {
       throw error;
     }
+    // Only the replacement config is needed here; the rebuilt browse call below performs its
+    // own bounded catalog read, so this must not materialize a cold full catalog outside that
+    // timeout (openclaw#133221 review).
     const owner = await loadPublishedPreparedModelCatalogOwnerSnapshot({
       config: cfg,
+      readOnly: true,
       ...(agentId ? { agentId, agentDir: resolveAgentDir(cfg, agentId) } : {}),
       ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
     });

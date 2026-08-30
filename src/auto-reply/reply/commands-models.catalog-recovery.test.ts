@@ -65,6 +65,19 @@ describe("/models browse catalog recovery", () => {
     expect(catalogMocks.loadSnapshot.mock.calls[1]?.[0]).toMatchObject({ config: replacementCfg });
   });
 
+  it("reads the replacement owner read-only so recovery never starts a cold full catalog", async () => {
+    catalogMocks.loadSnapshot
+      .mockRejectedValueOnce(new PreparedModelCatalogConfigReplacedError("/tmp/agent-dir"))
+      .mockResolvedValueOnce({ entries: [], routeVariants: [] });
+    catalogMocks.loadPublishedOwner.mockResolvedValueOnce({ config: replacementCfg });
+
+    await buildPreparedModelsProviderData(staleCfg);
+
+    // readOnly: true keeps this owner read on the bounded browse path — it must never await
+    // loadFullModelCatalog() outside the browse timeout just to fetch the replacement config.
+    expect(catalogMocks.loadPublishedOwner.mock.calls[0]?.[0]).toMatchObject({ readOnly: true });
+  });
+
   it("does not mask unrelated failures", async () => {
     const error = new Error("boom");
     catalogMocks.loadSnapshot.mockRejectedValueOnce(error);
