@@ -202,9 +202,15 @@ async function reservePort(): Promise<number> {
     server.close();
     throw new Error("Could not reserve a source Gateway port");
   }
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
   return address.port;
 }
 
@@ -214,7 +220,9 @@ async function resolveBuiltModule(params: {
   exportMarker: string;
 }): Promise<string> {
   for (const name of await fs.readdir(params.distDir)) {
-    if (!name.startsWith(params.prefix) || !name.endsWith(".js")) continue;
+    if (!name.startsWith(params.prefix) || !name.endsWith(".js")) {
+      continue;
+    }
     const filePath = path.join(params.distDir, name);
     if ((await fs.readFile(filePath, "utf8")).includes(params.exportMarker)) {
       return pathToFileURL(filePath).href;
@@ -335,15 +343,21 @@ process.on("message", async (message) => {
       );
     });
     child.on("message", (message: unknown) => {
-      if (!message || typeof message !== "object") return;
+      if (!message || typeof message !== "object") {
+        return;
+      }
       const value = message as { type?: string; id?: number; error?: string };
       if (value.type === "ready") {
         resolve();
         return;
       }
-      if (value.id === undefined) return;
+      if (value.id === undefined) {
+        return;
+      }
       const request = pending.get(value.id);
-      if (!request) return;
+      if (!request) {
+        return;
+      }
       pending.delete(value.id);
       if (value.type === "result") {
         request.resolve();
@@ -368,7 +382,9 @@ process.on("message", async (message) => {
       new Promise<void>((resolve, reject) => {
         pending.set(id, { resolve, reject });
         child.send({ id, action }, (error) => {
-          if (!error) return;
+          if (!error) {
+            return;
+          }
           pending.delete(id);
           reject(error);
         });
@@ -783,15 +799,16 @@ test("recovers a replaced model catalog and drains the following Telegram callba
               { interval: 50, timeout: 30_000 },
             )
             .toHaveLength(2);
-          const pickerEdits = telegramCalls.filter(
+          const firstPickerEdit = telegramCalls.find(
             (call) => call.method === "editMessageText" && inlineKeyboard(call).length > 0,
           );
-          expect(hasCallback(pickerEdits[0]!, `mdl_sel_${REPLACEMENT_MODEL_REF}`)).toBe(true);
+          expect(firstPickerEdit).toBeDefined();
+          expect(hasCallback(firstPickerEdit!, `mdl_sel_${REPLACEMENT_MODEL_REF}`)).toBe(true);
           expect(
             telegramCalls
               .filter((call) => call.method === "answerCallbackQuery")
               .map((call) => call.body.callback_query_id)
-              .toSorted(),
+              .toSorted((a, b) => String(a).localeCompare(String(b))),
           ).toEqual(["replacement-callback-10", "replacement-callback-11"]);
           expect(getUpdatesOffsets).toContain(12);
 
