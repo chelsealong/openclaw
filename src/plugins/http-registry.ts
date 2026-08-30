@@ -12,7 +12,7 @@ type PluginHttpRouteHandler = (
   res: ServerResponse,
 ) => Promise<boolean | void> | boolean | void;
 
-type PluginHttpRouteRegistrationLease = {
+export type PluginHttpRouteRegistrationLease = {
   isActive: () => boolean;
   retain: (unregister: () => void) => () => void;
 };
@@ -22,6 +22,46 @@ const pluginHttpRouteRegistryScope = new AsyncLocalStorage<{
   leases: readonly PluginHttpRouteRegistrationLease[];
 }>();
 const noopUnregister = () => {};
+
+/**
+ * A revocable route-registration lease for one owner's lifetime. Revoking it
+ * force-unregisters every route the owner currently retains and blocks any
+ * later registration attempt still running under the same (now-stale)
+ * continuation, so a forcibly abandoned owner cannot hold a route its
+ * replacement needs.
+ */
+export function createPluginHttpRouteRegistrationLease(): PluginHttpRouteRegistrationLease & {
+  revoke: () => void;
+} {
+  let active = true;
+  const cleanups = new Set<() => void>();
+  const retain: PluginHttpRouteRegistrationLease["retain"] = (cleanup) => {
+    if (!active) {
+      cleanup();
+      return noopUnregister;
+    }
+    const release = () => {
+      if (cleanups.delete(release)) {
+        cleanup();
+      }
+    };
+    cleanups.add(release);
+    return release;
+  };
+  return {
+    isActive: () => active,
+    retain,
+    revoke: () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+    },
+  };
+}
 
 export function withPluginHttpRouteRegistry<T>(
   registry: PluginRegistry,

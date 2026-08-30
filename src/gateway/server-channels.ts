@@ -33,7 +33,10 @@ import {
   runtimeForLogger,
   type SubsystemLogger,
 } from "../logging/subsystem.js";
-import { withPluginHttpRouteRegistry } from "../plugins/http-registry.js";
+import {
+  createPluginHttpRouteRegistrationLease,
+  withPluginHttpRouteRegistry,
+} from "../plugins/http-registry.js";
 import { withPluginCommandAccountStartScope } from "../plugins/plugin-command-account-start-scope.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import type { PluginRuntimeChannel } from "../plugins/runtime/types-channel.js";
@@ -77,11 +80,17 @@ function waitForChannelStartupHandoff(): Promise<void> {
   });
 }
 
+type ChannelAccountRouteLease = ReturnType<typeof createPluginHttpRouteRegistrationLease>;
+
 type ChannelRuntimeStore = {
   aborts: Map<string, AbortController>;
   // The account task's controller is the ownership token: late predecessor cleanup
   // must not clear a catalog retained by its replacement.
   pluginCommandCatalogOwners: Map<string, AbortController>;
+  // Owns the task's plugin HTTP route registrations. Recovery revokes the
+  // predecessor's lease before a replacement starts, forcing its stale routes
+  // to unregister instead of rejecting the replacement as a route conflict.
+  routeLeases: Map<string, ChannelAccountRouteLease>;
   starting: Map<string, Promise<void>>;
   stops: Map<string, ChannelAccountStopState>;
   tasks: Map<string, Promise<unknown>>;
@@ -143,6 +152,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
   return {
     aborts: new Map(),
     pluginCommandCatalogOwners: new Map(),
+    routeLeases: new Map(),
     starting: new Map(),
     stops: new Map(),
     tasks: new Map(),
@@ -621,6 +631,11 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               restarts.delete(rKey);
               store.aborts.delete(id);
               store.tasks.delete(id);
+              // Force the abandoned task's routes to unregister now, before the
+              // replacement below registers the same canonical path; otherwise
+              // it rejects as a route conflict instead of taking over.
+              store.routeLeases.get(id)?.revoke();
+              store.routeLeases.delete(id);
               clearedTimedOutRecoveryTask = true;
               setRuntime(channelId, id, {
                 accountId: id,
@@ -656,6 +671,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         // cannot race into duplicate provider boots for the same account.
         const abort = new AbortController();
         store.aborts.set(id, abort);
+        const routeLease = createPluginHttpRouteRegistrationLease();
+        store.routeLeases.set(id, routeLease);
         clearPluginCommandCatalogOwner(store, id);
         let handedOffTask = false;
         let startAccountLifetimeActive = false;
@@ -923,7 +940,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               };
               const routeRegistry = getPluginHttpRouteRegistry?.();
               startAccountTask = routeRegistry
-                ? withPluginHttpRouteRegistry(routeRegistry, runStartAccount)
+                ? withPluginHttpRouteRegistry(routeRegistry, runStartAccount, routeLease)
                 : runStartAccount();
             });
             if (!startAccountTask) {
@@ -1099,6 +1116,12 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (store.aborts.get(id) === abort) {
                 store.aborts.delete(id);
               }
+              if (store.routeLeases.get(id) === routeLease) {
+                store.routeLeases.delete(id);
+              }
+              // This task's own routes are already unregistered by its normal
+              // teardown; revoke here only to release the lease itself.
+              routeLease.revoke();
               // Terminal paths (give-up, terminal disconnect, manual stop) end
               // here without a restart; leave no unaborted lifetime behind.
               abort.abort();
@@ -1127,6 +1150,10 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           }
           if (!handedOffTask && store.aborts.get(id) === abort) {
             store.aborts.delete(id);
+          }
+          if (!handedOffTask && store.routeLeases.get(id) === routeLease) {
+            store.routeLeases.delete(id);
+            routeLease.revoke();
           }
         }
       }),
