@@ -162,8 +162,10 @@ export async function buildPreparedModelsProviderData(
   agentId?: string,
   options: { view?: "default" | "all"; workspaceDir?: string } = {},
 ): Promise<PreparedModelsProviderData> {
-  return buildPreparedModelsProviderDataForConfig(cfg, agentId, options).catch(async (error) => {
-    if (!(error instanceof PreparedModelCatalogConfigReplacedError)) throw error;
+  return buildPreparedDataForConfig(cfg, agentId, options).catch(async (error: unknown) => {
+    if (!(error instanceof PreparedModelCatalogConfigReplacedError)) {
+      throw error;
+    }
     // Catalog, defaults, visibility, auth, aliases, and runtime choices share one config generation.
     const { config } = await preparedModelCatalog.loadPublishedPreparedModelCatalogOwnerSnapshot({
       config: cfg,
@@ -171,11 +173,11 @@ export async function buildPreparedModelsProviderData(
       agentId,
       workspaceDir: options.workspaceDir,
     });
-    return buildPreparedModelsProviderDataForConfig(config, agentId, options);
+    return buildPreparedDataForConfig(config, agentId, options);
   });
 }
 
-async function buildPreparedModelsProviderDataForConfig(
+async function buildPreparedDataForConfig(
   cfg: OpenClawConfig,
   agentId: string | undefined,
   options: { view?: "default" | "all"; workspaceDir?: string },
@@ -186,7 +188,6 @@ async function buildPreparedModelsProviderDataForConfig(
     agentId,
     ...runtimeNormalization,
   });
-  const catalogWorkspaceDir = options.workspaceDir;
   const workspaceDir =
     options.workspaceDir ??
     (agentId ? resolveAgentWorkspaceDir(cfg, agentId) : undefined) ??
@@ -204,7 +205,7 @@ async function buildPreparedModelsProviderDataForConfig(
         config: cfg,
         readOnly,
         ...(agentId ? { agentId, agentDir: resolveAgentDir(cfg, agentId) } : {}),
-        ...(catalogWorkspaceDir ? { workspaceDir: catalogWorkspaceDir } : {}),
+        ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
       }),
   });
   const catalog = snapshot.entries;
