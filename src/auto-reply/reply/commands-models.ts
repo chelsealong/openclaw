@@ -36,10 +36,7 @@ import { createModelVisibilityPolicy } from "../../agents/model-visibility-polic
 import { openAIModelCatalogRoutePolicy } from "../../agents/openai-model-routes.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
 import { PreparedModelCatalogConfigReplacedError } from "../../agents/prepared-model-catalog.errors.js";
-import {
-  loadPreparedModelCatalogSnapshot,
-  loadPublishedPreparedModelCatalogOwnerSnapshot,
-} from "../../agents/prepared-model-catalog.js";
+import * as preparedModelCatalog from "../../agents/prepared-model-catalog.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -160,34 +157,22 @@ function addRuntimeChoice(
   return choices;
 }
 
-/**
- * A config hot-reload can replace the prepared owner mid-read. Retrying the same exact read hits
- * the identical stale-owner mismatch forever (openclaw#133166), so this rebuilds the whole browse
- * result from the replacement owner's own config once: mixing the new catalog with the stale cfg's
- * defaults/visibility/aliases could offer a model the new config already removed.
- */
 export async function buildPreparedModelsProviderData(
   cfg: OpenClawConfig,
   agentId?: string,
   options: { view?: "default" | "all"; workspaceDir?: string } = {},
 ): Promise<PreparedModelsProviderData> {
-  try {
-    return await buildPreparedModelsProviderDataForConfig(cfg, agentId, options);
-  } catch (error) {
-    if (!(error instanceof PreparedModelCatalogConfigReplacedError)) {
-      throw error;
-    }
-    // Only the replacement config is needed here; the rebuilt browse call below performs its
-    // own bounded catalog read, so this must not materialize a cold full catalog outside that
-    // timeout (openclaw#133221 review).
-    const owner = await loadPublishedPreparedModelCatalogOwnerSnapshot({
+  return buildPreparedModelsProviderDataForConfig(cfg, agentId, options).catch(async (error) => {
+    if (!(error instanceof PreparedModelCatalogConfigReplacedError)) throw error;
+    // Catalog, defaults, visibility, auth, aliases, and runtime choices share one config generation.
+    const { config } = await preparedModelCatalog.loadPublishedPreparedModelCatalogOwnerSnapshot({
       config: cfg,
       readOnly: true,
-      ...(agentId ? { agentId, agentDir: resolveAgentDir(cfg, agentId) } : {}),
-      ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
+      agentId,
+      workspaceDir: options.workspaceDir,
     });
-    return await buildPreparedModelsProviderDataForConfig(owner.config, agentId, options);
-  }
+    return buildPreparedModelsProviderDataForConfig(config, agentId, options);
+  });
 }
 
 async function buildPreparedModelsProviderDataForConfig(
@@ -215,7 +200,7 @@ async function buildPreparedModelsProviderDataForConfig(
     agentId,
     view: options.view ?? "default",
     loadCatalog: ({ readOnly }) =>
-      loadPreparedModelCatalogSnapshot({
+      preparedModelCatalog.loadPreparedModelCatalogSnapshot({
         config: cfg,
         readOnly,
         ...(agentId ? { agentId, agentDir: resolveAgentDir(cfg, agentId) } : {}),

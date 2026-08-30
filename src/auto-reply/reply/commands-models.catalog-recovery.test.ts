@@ -1,7 +1,3 @@
-// Boundary proof for the /models browse catalog read recovering from a config hot-reload
-// replacing the prepared owner mid-read, instead of surfacing a retryable failure that repeats
-// against the same stale snapshot (openclaw#133166). The recovery must rebuild the whole browse
-// result from the replacement owner's own config, not mix it with the stale caller-supplied cfg.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PreparedModelCatalogConfigReplacedError } from "../../agents/prepared-model-catalog.errors.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -61,21 +57,25 @@ describe("/models browse catalog recovery", () => {
     expect(data.byProvider.get("anthropic")).toBeUndefined();
     expect(data.byProvider.get("openai")).toEqual(new Set(["gpt-5.6-luna"]));
     expect(catalogMocks.loadPublishedOwner).toHaveBeenCalledTimes(1);
+    expect(catalogMocks.loadPublishedOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ readOnly: true }),
+    );
     expect(catalogMocks.loadSnapshot).toHaveBeenCalledTimes(2);
     expect(catalogMocks.loadSnapshot.mock.calls[1]?.[0]).toMatchObject({ config: replacementCfg });
+    expect(catalogMocks.loadSnapshot.mock.calls.map(([params]) => params.readOnly)).toEqual([
+      true,
+      true,
+    ]);
   });
 
-  it("reads the replacement owner read-only so recovery never starts a cold full catalog", async () => {
-    catalogMocks.loadSnapshot
-      .mockRejectedValueOnce(new PreparedModelCatalogConfigReplacedError("/tmp/agent-dir"))
-      .mockResolvedValueOnce({ entries: [], routeVariants: [] });
+  it("lets a second owner replacement escape", async () => {
+    const first = new PreparedModelCatalogConfigReplacedError("/tmp/agent-a");
+    const second = new PreparedModelCatalogConfigReplacedError("/tmp/agent-b");
+    catalogMocks.loadSnapshot.mockRejectedValueOnce(first).mockRejectedValueOnce(second);
     catalogMocks.loadPublishedOwner.mockResolvedValueOnce({ config: replacementCfg });
 
-    await buildPreparedModelsProviderData(staleCfg);
-
-    // readOnly: true keeps this owner read on the bounded browse path — it must never await
-    // loadFullModelCatalog() outside the browse timeout just to fetch the replacement config.
-    expect(catalogMocks.loadPublishedOwner.mock.calls[0]?.[0]).toMatchObject({ readOnly: true });
+    await expect(buildPreparedModelsProviderData(staleCfg)).rejects.toBe(second);
+    expect(catalogMocks.loadPublishedOwner).toHaveBeenCalledTimes(1);
   });
 
   it("does not mask unrelated failures", async () => {
