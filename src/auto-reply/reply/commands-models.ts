@@ -18,7 +18,7 @@ import {
   resolveLogicalVisibleModelCatalog,
   type ModelCatalogAuthChecker,
 } from "../../agents/model-catalog-visibility.js";
-import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
+import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.js";
 import { createProviderAuthChecker } from "../../agents/model-provider-auth.js";
 import { isRetiredModelPickerProvider } from "../../agents/model-runtime-aliases.js";
 import {
@@ -35,7 +35,12 @@ import {
 import { createModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
 import { openAIModelCatalogRoutePolicy } from "../../agents/openai-model-routes.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
-import { loadPreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
+import { PreparedModelCatalogConfigReplacedError } from "../../agents/prepared-model-catalog.errors.js";
+import {
+  loadPreparedModelCatalogSnapshot,
+  loadPublishedPreparedModelCatalogOwnerSnapshot,
+  type LoadPreparedModelCatalogParams,
+} from "../../agents/prepared-model-catalog.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -156,6 +161,24 @@ function addRuntimeChoice(
   return choices;
 }
 
+/**
+ * A config hot-reload can replace the prepared owner mid-read. Retrying the same exact read hits
+ * the identical stale-owner mismatch forever (openclaw#133166), so recover via the published
+ * owner: a browse view wants the current provider set, not a byte-identical config match.
+ */
+export async function loadModelsBrowseCatalogSnapshot(
+  params: LoadPreparedModelCatalogParams,
+): Promise<ModelCatalogSnapshot> {
+  try {
+    return await loadPreparedModelCatalogSnapshot(params);
+  } catch (error) {
+    if (!(error instanceof PreparedModelCatalogConfigReplacedError)) {
+      throw error;
+    }
+    return (await loadPublishedPreparedModelCatalogOwnerSnapshot(params)).modelCatalog;
+  }
+}
+
 export async function buildPreparedModelsProviderData(
   cfg: OpenClawConfig,
   agentId?: string,
@@ -181,7 +204,7 @@ export async function buildPreparedModelsProviderData(
     agentId,
     view: options.view ?? "default",
     loadCatalog: ({ readOnly }) =>
-      loadPreparedModelCatalogSnapshot({
+      loadModelsBrowseCatalogSnapshot({
         config: cfg,
         readOnly,
         ...(agentId ? { agentId, agentDir: resolveAgentDir(cfg, agentId) } : {}),
