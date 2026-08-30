@@ -166,7 +166,7 @@ function addRuntimeChoice(
  * the identical stale-owner mismatch forever (openclaw#133166), so recover via the published
  * owner: a browse view wants the current provider set, not a byte-identical config match.
  */
-export async function loadModelsBrowseCatalogSnapshot(
+async function loadModelsBrowseCatalogSnapshot(
   params: LoadPreparedModelCatalogParams,
 ): Promise<ModelCatalogSnapshot> {
   try {
