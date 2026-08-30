@@ -1,4 +1,5 @@
 // Backup planning helpers for archive naming, payload paths, and deduplicated asset selection.
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { listAgentIds, resolveAgentDir } from "../agents/agent-scope-config.js";
@@ -9,6 +10,7 @@ import {
   resolveStateDir,
 } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { hasErrnoCode } from "../infra/errno.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
   resolveActivatedPluginBackupInventory,
@@ -55,7 +57,7 @@ export function resolveRequiredBackupPath(
   return resolveUserPath(trimmed);
 }
 
-type BackupAssetKind = "state" | "config" | "credentials" | "workspace" | "agent";
+type BackupAssetKind = "state" | "config" | "credentials" | "workspace" | "agent" | "skill";
 type BackupSkipReason = "covered" | "missing" | "regenerable" | "unresolved";
 
 export type BackupAsset = {
@@ -102,8 +104,35 @@ function backupAssetPriority(kind: BackupAssetKind): number {
       return 3;
     case "agent":
       return 4;
+    case "skill":
+      return 5;
   }
   throw new Error("Unsupported backup asset kind");
+}
+
+/**
+ * Resolve validated external targets of managed skill-directory symlinks so a
+ * documented `~/.openclaw/skills/<name> -> ~/.agents/skills/<name>` layout can
+ * be declared as an explicit backup asset instead of tripping the archive-time
+ * symlink containment guard on an undeclared target.
+ */
+async function resolveManagedSkillSymlinkTargets(canonicalStateDir: string): Promise<string[]> {
+  const skillsDir = path.join(canonicalStateDir, "skills");
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(skillsDir, { withFileTypes: true });
+  } catch (error) {
+    if (hasErrnoCode(error, "ENOENT") || hasErrnoCode(error, "ENOTDIR")) {
+      return [];
+    }
+    throw error;
+  }
+  const targets = await Promise.all(
+    entries
+      .filter((entry) => entry.isSymbolicLink())
+      .map((entry) => fs.realpath(path.join(skillsDir, entry.name)).catch(() => undefined)),
+  );
+  return targets.filter((target): target is string => Boolean(target));
 }
 
 /** Format a filesystem-safe local timestamp with explicit UTC offset for backup names. */
@@ -236,6 +265,8 @@ async function resolveBackupPlanFromPaths(params: {
     };
   }
 
+  const managedSkillTargets = await resolveManagedSkillSymlinkTargets(canonicalStateDir);
+
   const rawCandidates: Array<Pick<BackupAssetCandidate, "kind" | "sourcePath">> = [
     { kind: "state", sourcePath: path.resolve(stateDir) },
     ...(configInsideState
@@ -249,6 +280,7 @@ async function resolveBackupPlanFromPaths(params: {
       sourcePath: path.resolve(workspaceDir),
     })),
     ...agentRoots.map((root) => ({ kind: "agent" as const, sourcePath: root.sourcePath })),
+    ...managedSkillTargets.map((sourcePath) => ({ kind: "skill" as const, sourcePath })),
   ];
 
   const candidates: BackupAssetCandidate[] = await Promise.all(

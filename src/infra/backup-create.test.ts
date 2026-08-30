@@ -2618,6 +2618,47 @@ describe("createBackupArchive", () => {
     );
   });
 
+  it("declares external managed skill symlink targets as backup assets", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    await withOpenClawTestState(
+      {
+        layout: "state-only",
+        prefix: "openclaw-backup-managed-skill-link-",
+        scenario: "minimal",
+      },
+      async (state) => {
+        const outputDir = state.path("backups");
+        const managedSkillsDir = state.statePath("skills");
+        const externalSkillDir = state.path("agents-skills", "demo");
+        await fs.mkdir(outputDir, { recursive: true });
+        await fs.mkdir(managedSkillsDir, { recursive: true });
+        await fs.mkdir(externalSkillDir, { recursive: true });
+        await fs.writeFile(path.join(externalSkillDir, "SKILL.md"), "# Demo\n", "utf8");
+        await fs.symlink(
+          path.relative(managedSkillsDir, externalSkillDir),
+          path.join(managedSkillsDir, "demo"),
+        );
+
+        const result = await createBackupArchive({
+          output: outputDir,
+          includeWorkspace: false,
+          nowMs: Date.UTC(2026, 7, 30, 9, 0, 0),
+        });
+
+        const entries = await listArchiveEntries(result.archivePath);
+        expect(entries.some((entry) => entry.endsWith("/state/skills/demo"))).toBe(true);
+        expect(entries.some((entry) => entry.endsWith("/agents-skills/demo/SKILL.md"))).toBe(true);
+        const runtime: RuntimeEnv = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+        await expect(
+          backupVerifyCommand(runtime, { archive: result.archivePath }),
+        ).resolves.toMatchObject({ ok: true });
+      },
+    );
+  });
+
   it("preserves noncanonical symlinked SQLite paths without dereferencing them", async () => {
     if (process.platform === "win32") {
       return;
