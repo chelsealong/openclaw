@@ -5703,6 +5703,27 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     expect(mockState.lastDispatchCtx).toBeUndefined();
   });
 
+  it("lets an internally delegated runtime-tools turn mark itself as non-user consult provenance", async () => {
+    await createReadyChatTranscript("openclaw-chat-send-talk-agent-consult-provenance-");
+    const { send } = createChatRequestFixture();
+
+    await send({
+      idempotencyKey: "idem-talk-agent-consult-provenance",
+      message: "What is in this repo?",
+      client: createScopedCliClient(["operator.talk"]),
+      requestParams: {
+        systemInputProvenance: { kind: "internal_system", sourceTool: "talk_agent_consult" },
+      },
+      runtimeToolsAllow: ["read"],
+      expectBroadcast: false,
+    });
+
+    expect(mockState.lastDispatchCtx?.InputProvenance).toEqual({
+      kind: "internal_system",
+      sourceTool: "talk_agent_consult",
+    });
+  });
+
   it("rejects forged ACP metadata when the caller lacks admin scope", async () => {
     await createReadyChatTranscript("openclaw-chat-send-system-provenance-spoof-reject-");
     const { respond, send } = createChatRequestFixture();

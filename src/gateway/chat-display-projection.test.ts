@@ -964,3 +964,26 @@ describe("TTS supplement matching", () => {
     expect(messages).toEqual(original);
   });
 });
+
+describe("talk agent-consult synthetic turn", () => {
+  it("hides the synthetic consult turn from projected display history", () => {
+    const messages = [
+      {
+        role: "user",
+        content: "What is in this repo?\n\nSpoken style:\nconcise spoken summary",
+        provenance: { kind: "internal_system", sourceTool: "talk_agent_consult" },
+      },
+      { role: "assistant", content: [{ type: "text", text: "It has a src directory." }] },
+    ];
+
+    expect(projectChatDisplayMessages(messages)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "It has a src directory." }] },
+    ]);
+  });
+
+  it("keeps a real user turn without that provenance visible", () => {
+    const messages = [{ role: "user", content: "What is in this repo?" }];
+
+    expect(projectChatDisplayMessages(messages)).toEqual(messages);
+  });
+});

@@ -8,11 +8,12 @@ import {
   type ErrorShape,
 } from "../../packages/gateway-protocol/src/index.js";
 import { normalizeTalkSection } from "../config/talk.js";
+import { TALK_AGENT_CONSULT_SOURCE_TOOL } from "../sessions/input-provenance.js";
 import { buildRealtimeVoiceAgentConsultChatMessage } from "../talk/agent-consult-tool.js";
 import { abortChatRunById } from "./chat-abort.js";
 import {
-  handleChatSend,
   handleChatSendWithRuntimeTools,
+  handleTrustedInternalChatSend,
 } from "./server-methods/chat-send-handler.js";
 import type {
   GatewayClient,
@@ -101,6 +102,12 @@ export async function startTalkRealtimeAgentConsult(params: {
         sessionKey: params.sessionKey,
         message,
         idempotencyKey,
+        // Marks this synthetic consult turn as generated orchestration input so it is
+        // never attributed to the user and stays out of rendered/reloaded/exported history.
+        systemInputProvenance: {
+          kind: "internal_system",
+          sourceTool: TALK_AGENT_CONSULT_SOURCE_TOOL,
+        },
         ...(normalizedTalk?.consultThinkingLevel
           ? { thinking: normalizedTalk.consultThinkingLevel }
           : {}),
@@ -157,7 +164,7 @@ export async function startTalkRealtimeAgentConsult(params: {
     const chatSendResult =
       authority.toolsAllow !== undefined
         ? handleChatSendWithRuntimeTools(chatSendOptions, authority.toolsAllow)
-        : handleChatSend(chatSendOptions);
+        : handleTrustedInternalChatSend(chatSendOptions);
     void Promise.resolve(chatSendResult).then(
       () => {
         if (!acknowledged) {

@@ -509,7 +509,10 @@ export async function handleChatSendWithRuntimeTools(
   options: GatewayRequestHandlerOptions,
   toolsAllow: string[],
 ): Promise<void> {
-  await handleChatSendWithOptions(options, undefined, undefined, { toolsAllow });
+  await handleChatSendWithOptions(options, undefined, undefined, {
+    trustedSystemInput: true,
+    toolsAllow,
+  });
 }
 
 /** Dispatches an operator-requested proposal revision with its reviewed revision bound to the run. */

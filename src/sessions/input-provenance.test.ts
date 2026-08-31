@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   annotateInterSessionPromptText,
   isAgentMediatedCompletionSourceTool,
+  isTalkAgentConsultInputProvenance,
   shouldPreserveUserFacingSessionStateForInputProvenance,
   stripInterSessionPromptPrefixForDisplay,
 } from "./input-provenance.js";
@@ -95,6 +96,33 @@ describe("isAgentMediatedCompletionSourceTool", () => {
       expect(isAgentMediatedCompletionSourceTool(sourceTool)).toBe(false);
     },
   );
+});
+
+describe("isTalkAgentConsultInputProvenance", () => {
+  it("identifies a talk agent-consult synthetic turn", () => {
+    expect(
+      isTalkAgentConsultInputProvenance({
+        kind: "internal_system",
+        sourceTool: "talk_agent_consult",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not classify other internal-system or user turns as a talk agent-consult turn", () => {
+    expect(
+      isTalkAgentConsultInputProvenance({
+        kind: "internal_system",
+        sourceTool: "main_session_restart_recovery",
+      }),
+    ).toBe(false);
+    expect(
+      isTalkAgentConsultInputProvenance({
+        kind: "external_user",
+        sourceTool: "talk_agent_consult",
+      }),
+    ).toBe(false);
+    expect(isTalkAgentConsultInputProvenance(undefined)).toBe(false);
+  });
 });
 
 describe("shouldPreserveUserFacingSessionStateForInputProvenance", () => {
