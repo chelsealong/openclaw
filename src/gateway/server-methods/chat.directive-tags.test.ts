@@ -5722,6 +5722,15 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
       kind: "internal_system",
       sourceTool: "talk_agent_consult",
     });
+    const persistedUser = readTranscriptJsonLines(mockState.transcriptPath)
+      .map((entry) => entry.message)
+      .find(
+        (message): message is Record<string, unknown> =>
+          typeof message === "object" &&
+          message !== null &&
+          (message as { role?: unknown }).role === "user",
+      );
+    expect(persistedUser?.display).toBe(false);
   });
 
   it("rejects forged ACP metadata when the caller lacks admin scope", async () => {

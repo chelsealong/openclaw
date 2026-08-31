@@ -1,5 +1,6 @@
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
+import { isTalkAgentConsultInputProvenance } from "../../sessions/input-provenance.js";
 import {
   buildRunUserTurnIdempotencyKey,
   createUserTurnTranscriptRecorder,
@@ -43,8 +44,16 @@ export function createGatewayChatUserTurnController(params: {
     request.goalOperation?.action === "resume"
       ? undefined
       : gatewayClientSenderFields(params.client).sender;
+  // Consult turns still need to reach the delegated agent as an ordinary user
+  // turn, but they are generated orchestration input, not something the user
+  // typed: keep them out of rendered/reloaded history the same way goal-resume
+  // turns already are (isTalkAgentConsultInputProvenance callers, and the raw
+  // export redaction in commands-export-session.ts, key off this same flag).
+  const isHiddenConsultTurn = isTalkAgentConsultInputProvenance(request.systemInputProvenance);
   const baseInput: UserTurnInput = {
-    ...(request.goalOperation?.action === "resume" ? { display: false } : {}),
+    ...(request.goalOperation?.action === "resume" || isHiddenConsultTurn
+      ? { display: false }
+      : {}),
     text: request.rawMessage,
     timestamp: session.now,
     idempotencyKey: buildRunUserTurnIdempotencyKey(session.clientRunId),

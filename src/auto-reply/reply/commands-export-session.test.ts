@@ -490,6 +490,37 @@ describe("buildExportSessionReply", () => {
     );
   });
 
+  it("redacts a hidden-display consult turn from raw export entries", async () => {
+    hoisted.sessionTranscriptEvents = [
+      {
+        type: "message",
+        id: "consult-1",
+        timestamp: "2026-06-15T00:00:01.000Z",
+        message: {
+          role: "user",
+          content: "synthetic consult question",
+          display: false,
+          provenance: { kind: "internal_system", sourceTool: "talk_agent_consult" },
+        },
+      },
+      {
+        type: "message",
+        id: "consult-reply",
+        parentId: "consult-1",
+        timestamp: "2026-06-15T00:00:02.000Z",
+        message: { role: "assistant", content: "answer" },
+      },
+    ];
+
+    await buildExportSessionReply(makeParams());
+
+    const data = sessionDataFromHtml(writtenHtml());
+    const entries = data.entries as Array<{ id: string; message: Record<string, unknown> }>;
+    expect(entries[0]?.message.content).toBe("");
+    expect(entries[0]?.message.display).toBe(false);
+    expect(entries[1]?.message.content).toBe("answer");
+  });
+
   it("passes the generated HTML and explicit path to the export boundary", async () => {
     const params = makeParams();
     params.command.commandBodyNormalized = "/export-session exports/session.html";
