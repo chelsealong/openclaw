@@ -9,7 +9,6 @@ import {
   buildAudioTranscriptionFormData,
   postTranscriptionRequest,
   readProviderJsonResponse,
-  requireTranscriptionText,
   resolveProviderHttpRequestConfig,
 } from "openclaw/plugin-sdk/provider-http";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -68,8 +67,11 @@ async function transcribeXaiAudio(
   try {
     await assertOkOrThrowHttpError(response, "xAI audio transcription failed");
     const payload = await readProviderJsonResponse<XaiSttResponse>(response, "xai.stt");
+    // xAI can return 200 OK with an empty transcript (e.g. silence/room noise).
+    // Return it as an empty result so the shared runner treats it as a
+    // non-fatal skip instead of throwing and failing the whole turn.
     return {
-      text: requireTranscriptionText(payload.text, "xAI transcription response missing text"),
+      text: payload.text?.trim() ?? "",
     };
   } finally {
     await release();

@@ -84,6 +84,25 @@ describe("xai stt", () => {
     expect(provider.autoPriority).toEqual({ audio: 25 });
   });
 
+  it("returns an empty result instead of throwing when xAI responds with no transcript", async () => {
+    postTranscriptionRequestMock.mockResolvedValueOnce({
+      response: new Response(JSON.stringify({ text: "" }), { status: 200 }),
+      release: vi.fn(),
+    });
+    const provider = buildXaiMediaUnderstandingProvider();
+    const result = await provider.transcribeAudio?.({
+      buffer: Buffer.from("audio-bytes"),
+      fileName: "sample.wav",
+      mime: "audio/wav",
+      apiKey: "xai-key",
+      baseUrl: "https://api.x.ai/v1/",
+      model: "grok-4.3",
+      timeoutMs: 10_000,
+    });
+
+    expect(result).toEqual({ text: "" });
+  });
+
   it("trusts the core-resolved apiKey on transcribeAudio (no plugin-side OAuth fallback)", async () => {
     const provider = buildXaiMediaUnderstandingProvider();
     if (!provider.transcribeAudio) {
