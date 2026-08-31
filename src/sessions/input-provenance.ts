@@ -18,7 +18,6 @@ export type InputProvenance = {
 };
 
 export const MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL = "main_session_restart_recovery" as const;
-export const TALK_AGENT_CONSULT_SOURCE_TOOL = "talk_agent_consult" as const;
 
 export const INTER_SESSION_PROMPT_PREFIX_BASE = "[Inter-session message]";
 const AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS = [
@@ -82,17 +81,6 @@ export function isMainSessionRestartRecoveryInputProvenance(value: unknown): boo
     provenance?.kind === "internal_system" &&
     normalizeOptionalString(provenance.sourceTool)?.toLowerCase() ===
       MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL
-  );
-}
-
-// Talk delegates a realtime voice consult through an ordinary chat.send turn so the
-// delegated agent gets normal admission/tooling; this provenance marks that turn as
-// generated orchestration input so it is never attributed to, or displayed as, the user.
-export function isTalkAgentConsultInputProvenance(value: unknown): boolean {
-  const provenance = normalizeInputProvenance(value);
-  return (
-    provenance?.kind === "internal_system" &&
-    normalizeOptionalString(provenance.sourceTool)?.toLowerCase() === TALK_AGENT_CONSULT_SOURCE_TOOL
   );
 }
 

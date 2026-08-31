@@ -51,7 +51,6 @@ export {
   buildLateMediaAttachedProjection,
   buildPersistedUserTurnMediaInputsFromFields,
   buildPersistedUserTurnMessage,
-  isUserMessage,
   mergePreparedUserTurnMessageForRuntime,
   resolvePersistedUserTurnText,
 } from "./user-turn-transcript.message.js";

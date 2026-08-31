@@ -17,7 +17,6 @@ import { loadTranscriptEvents } from "../../config/sessions/session-accessor.js"
 import { scanSessionTranscriptTree } from "../../config/sessions/transcript-tree.js";
 import type { SessionEntry as StoredSessionEntry } from "../../config/sessions/types.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
-import { isUserMessage } from "../../sessions/user-turn-transcript.js";
 import type { ReplyPayload } from "../types.js";
 import {
   isReplyPayload,
@@ -67,33 +66,6 @@ function hasPersistedAcpSession(params: {
   } catch {
     return false;
   }
-}
-
-// Persisted turns can carry display:false (goal-resume, Talk agent-consult) to
-// stay out of rendered/reloaded history. Export reads raw transcript rows
-// directly and never runs that display projection, so redact the hidden
-// content here instead of dropping the row: dropping would orphan any child
-// entry's parentId in the exported tree.
-function redactDisplayHiddenEntries(entries: AgentSessionEntry[]): AgentSessionEntry[] {
-  let changed = false;
-  const redacted = entries.map((entry) => {
-    if (
-      entry.type !== "message" ||
-      !isUserMessage(entry.message) ||
-      entry.message.display !== false
-    ) {
-      return entry;
-    }
-    changed = true;
-    return {
-      ...entry,
-      message: {
-        ...entry.message,
-        content: Array.isArray(entry.message.content) ? [] : "",
-      },
-    };
-  });
-  return changed ? redacted : entries;
 }
 
 function isBackendDelegatedSession(
@@ -336,7 +308,7 @@ function readSessionDataFromEntries(
   );
   const tree = scanSessionTranscriptTree(rawEntries);
   const hasLeafControl = tree.hasLeafControl;
-  const leafControlled = hasLeafControl
+  const entries = hasLeafControl
     ? rawEntries.map((entry) => {
         const node = tree.byId.get(entry.id);
         return node && entry.parentId !== node.parentId
@@ -344,7 +316,6 @@ function readSessionDataFromEntries(
           : entry;
       })
     : rawEntries;
-  const entries = redactDisplayHiddenEntries(leafControlled);
   return {
     header,
     entries,

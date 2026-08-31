@@ -8,7 +8,6 @@ import { isHeartbeatOkResponse, isHeartbeatUserMessage } from "../auto-reply/hea
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import {
   isCompletionReportInputProvenance,
-  isTalkAgentConsultInputProvenance,
   INTER_SESSION_PROMPT_PREFIX_BASE,
   normalizeInputProvenance,
   stripInterSessionPromptPrefixForDisplay,
@@ -249,9 +248,6 @@ function shouldHideProjectedHistoryMessage(
     return false;
   }
   if (roleContent.role === "user" && isCompletionReportInputProvenance(message.provenance)) {
-    return true;
-  }
-  if (roleContent.role === "user" && isTalkAgentConsultInputProvenance(message.provenance)) {
     return true;
   }
   if (roleContent.role === "user" && isSubagentAnnounceInterSessionUserMessage(message)) {

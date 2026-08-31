@@ -63,7 +63,7 @@ import { consumeCronCreatorAuthorityGrant } from "../cron-creator-authority-gran
 import { createChatRunState } from "../server-chat-state.js";
 import { STALE_WORKER_BUILD_REASON } from "../worker-environments/admission.js";
 import { agentWaitHandler } from "./agent-wait.js";
-import { handleChatSend, handleChatSendWithRuntimeTools } from "./chat-send-handler.js";
+import { handleChatSend, handleTrustedInternalChatSend } from "./chat-send-handler.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
 type ProjectedDispatchParams = Parameters<
@@ -1318,7 +1318,9 @@ async function runNonStreamingChatSend(params: {
     context: params.context,
   };
   if (params.runtimeToolsAllow) {
-    await handleChatSendWithRuntimeTools(handlerOptions, params.runtimeToolsAllow);
+    await handleTrustedInternalChatSend(handlerOptions, undefined, {
+      toolsAllow: params.runtimeToolsAllow,
+    });
   } else {
     await handler(handlerOptions);
   }
@@ -3203,7 +3205,7 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
 
     expect(mockState.loadSessionEntryCalls).toContainEqual({
       rawKey: "agent:work:main",
-      opts: { agentId: "work", includeStoreChildEntries: true },
+      opts: { agentId: "work", clone: false, includeStoreChildEntries: true },
     });
   });
 
@@ -5701,36 +5703,6 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     expect(ok).toBe(false);
     expect(error?.message).toBe("system provenance fields require admin scope");
     expect(mockState.lastDispatchCtx).toBeUndefined();
-  });
-
-  it("lets an internally delegated runtime-tools turn mark itself as non-user consult provenance", async () => {
-    await createReadyChatTranscript("openclaw-chat-send-talk-agent-consult-provenance-");
-    const { send } = createChatRequestFixture();
-
-    await send({
-      idempotencyKey: "idem-talk-agent-consult-provenance",
-      message: "What is in this repo?",
-      client: createScopedCliClient(["operator.talk"]),
-      requestParams: {
-        systemInputProvenance: { kind: "internal_system", sourceTool: "talk_agent_consult" },
-      },
-      runtimeToolsAllow: ["read"],
-      expectBroadcast: false,
-    });
-
-    expect(mockState.lastDispatchCtx?.InputProvenance).toEqual({
-      kind: "internal_system",
-      sourceTool: "talk_agent_consult",
-    });
-    const persistedUser = readTranscriptJsonLines(mockState.transcriptPath)
-      .map((entry) => entry.message)
-      .find(
-        (message): message is Record<string, unknown> =>
-          typeof message === "object" &&
-          message !== null &&
-          (message as { role?: unknown }).role === "user",
-      );
-    expect(persistedUser?.display).toBe(false);
   });
 
   it("rejects forged ACP metadata when the caller lacks admin scope", async () => {
