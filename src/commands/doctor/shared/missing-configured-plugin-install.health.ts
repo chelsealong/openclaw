@@ -57,6 +57,11 @@ type ConfiguredPluginInstallHealthIssue =
       kind: "deferred-package-manager-repair";
       pluginId: string;
       installPath?: string;
+    }
+  | {
+      kind: "stale-shadowed-path-install-record";
+      pluginId: string;
+      installPath?: string;
     };
 
 function missingRecordedPluginIssueKind(params: {
@@ -102,6 +107,7 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
     installedPluginIdsWithStaleVersionBoundRuntimePackages: staleVersionBoundRuntimePluginIds,
     installedPluginIdsWithRepairablePackages: repairableInstalledPluginIds,
     officialReplacementPluginIds,
+    pathShadowedStaleInstallPluginIds,
   } = await resolveConfiguredPluginInstallContext({
     cfg: params.cfg,
     env,
@@ -139,11 +145,25 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
     }
   }
 
+  for (const pluginId of pathShadowedStaleInstallPluginIds) {
+    if (deferredPluginIds.has(pluginId)) {
+      continue;
+    }
+    const installPath = resolveRecordInstallPath(records[pluginId], env);
+    issues.push({
+      kind: "stale-shadowed-path-install-record",
+      pluginId,
+      ...(installPath ? { installPath } : {}),
+    });
+    reportedPluginIds.add(pluginId);
+  }
+
   const missingRecordedPluginIds = Object.keys(records).filter(
     (pluginId) =>
       !deferredPluginIds.has(pluginId) &&
       !officialReplacementPluginIds.has(pluginId) &&
       !bundledPluginsById.has(pluginId) &&
+      !pathShadowedStaleInstallPluginIds.has(pluginId) &&
       ((pluginIds.has(pluginId) &&
         (!knownIds.has(pluginId) || isInstalledRecordMissingOnDisk(records[pluginId], env))) ||
         staleDescriptorPluginIds.has(pluginId) ||
@@ -315,6 +335,14 @@ const CONFIGURED_PLUGIN_INSTALL_ISSUE_DETAILS = {
     fixHint: "Rerun `openclaw doctor --fix` after the package update completes.",
     action: "would-defer-configured-plugin-install-repair",
     dryRunSafe: true,
+  },
+  "stale-shadowed-path-install-record": {
+    message: (pluginId: string) =>
+      `Configured plugin ${pluginId} has a stale install record for a path that no longer exists.`,
+    fixHint:
+      "Run `openclaw doctor --fix` to remove the stale install record; the plugin already loads from its configured path.",
+    action: "would-remove-stale-shadowed-path-install-record",
+    dryRunSafe: false,
   },
 } as const satisfies Record<
   ConfiguredPluginInstallHealthIssue["kind"],

@@ -154,6 +154,7 @@ async function repairMissingPluginInstallsWithLease(
     installedPluginIdsWithStaleVersionBoundRuntimePackages,
     installedPluginIdsWithRepairablePackages,
     officialReplacementPluginIds,
+    pathShadowedStaleInstallPluginIds,
   } = await resolveConfiguredPluginInstallContext({
     cfg: params.cfg,
     env,
@@ -228,6 +229,19 @@ async function repairMissingPluginInstallsWithLease(
       changes.push(detail);
       deferredRepairDetails.push(detail);
     }
+  }
+
+  for (const pluginId of pathShadowedStaleInstallPluginIds) {
+    if (deferredPluginIds.has(pluginId) || !Object.hasOwn(nextRecords, pluginId)) {
+      continue;
+    }
+    if (nextRecords === records) {
+      nextRecords = { ...records };
+    }
+    delete nextRecords[pluginId];
+    changes.push(
+      `Removed stale install record for configured plugin "${pluginId}"; it already loads from its configured path.`,
+    );
   }
 
   const missingRecordedPlugins = Object.entries(records).filter(

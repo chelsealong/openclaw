@@ -36,6 +36,7 @@ import {
   collectConfiguredPluginIds,
   collectEffectiveConfiguredChannelOwnerPluginIds,
 } from "./missing-configured-plugin-install.ids.js";
+import { isStalePathInstallRecordShadowedByConfiguredPlugin } from "./missing-configured-plugin-install.records.js";
 
 export type DownloadableInstallCandidate = {
   pluginId: string;
@@ -122,6 +123,19 @@ export async function resolveConfiguredPluginInstallContext(params: {
       blockedPluginIds: params.blockedPluginIds,
     }).keys(),
   );
+  const pathShadowedStaleInstallPluginIds = new Set(
+    Object.entries(records)
+      .filter(([pluginId, record]) =>
+        isStalePathInstallRecordShadowedByConfiguredPlugin({
+          record,
+          discoveredPlugin:
+            snapshot.byPluginId?.get(pluginId) ??
+            snapshot.plugins.find((plugin) => plugin.id === pluginId),
+          env: params.env,
+        }),
+      )
+      .map(([pluginId]) => pluginId),
+  );
   return {
     knownIds,
     configuredChannelOwnerPluginIds,
@@ -133,6 +147,7 @@ export async function resolveConfiguredPluginInstallContext(params: {
     installedPluginIdsWithStaleVersionBoundRuntimePackages,
     installedPluginIdsWithRepairablePackages,
     officialReplacementPluginIds,
+    pathShadowedStaleInstallPluginIds,
   };
 }
 

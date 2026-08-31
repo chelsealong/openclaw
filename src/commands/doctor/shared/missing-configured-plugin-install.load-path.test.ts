@@ -116,6 +116,57 @@ describe("configured plugin install health for explicit load paths", () => {
     });
   });
 
+  it("prunes a stale path install record shadowed by a healthy configured load path", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-load-path-stale-record-"));
+    tempDirs.push(rootDir);
+    const pluginDir = path.join(rootDir, "kilocode-provider");
+    writeProviderPlugin(pluginDir);
+    const staleInstallPath = path.join(rootDir, "kilocode-provider-old-location");
+
+    const cfg = {
+      plugins: {
+        load: { paths: [pluginDir] },
+      },
+    };
+    const env = {
+      KILOCODE_API_KEY: "test-key",
+      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(rootDir, "bundled"),
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+      OPENCLAW_STATE_DIR: path.join(rootDir, "state"),
+      VITEST: "true",
+    };
+    const staleRecord = {
+      source: "path" as const,
+      installPath: staleInstallPath,
+      sourcePath: staleInstallPath,
+    };
+
+    const issues = await detectConfiguredPluginInstallHealthIssues({
+      cfg,
+      env,
+      baselineRecords: { kilocode: staleRecord },
+    });
+    expect(issues).toStrictEqual([
+      expect.objectContaining({
+        kind: "stale-shadowed-path-install-record",
+        pluginId: "kilocode",
+      }),
+    ]);
+
+    const repair = await repairMissingConfiguredPluginInstalls({
+      cfg,
+      env,
+      baselineRecords: { kilocode: staleRecord },
+    });
+    expect(repair).toMatchObject({
+      changes: [
+        'Removed stale install record for configured plugin "kilocode"; it already loads from its configured path.',
+      ],
+      records: {},
+      warnings: [],
+    });
+  });
+
   it("discovers packaged OpenCode Go before configured-plugin repair", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-bundled-opencode-go-"));
     tempDirs.push(rootDir);

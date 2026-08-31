@@ -9,6 +9,7 @@ import {
   resolvePluginInstallDir,
   resolvePluginNpmPackageDir,
 } from "../../../plugins/install-paths.js";
+import type { PluginManifestRecord } from "../../../plugins/manifest-registry.types.js";
 import { resolveUserPath } from "../../../utils.js";
 import type {
   BundledPluginPackageDescriptor,
@@ -35,6 +36,36 @@ export function isInstalledRecordMissingOnDisk(
   }
   const resolved = resolveUserPath(installPath, env);
   return !existsSync(path.join(resolved, "package.json"));
+}
+
+/**
+ * A `source: "path"` install record whose own path is gone, but whose plugin id
+ * already resolves cleanly from a distinct `plugins.load.paths` entry, is stale
+ * bookkeeping rather than a broken install: nothing can "reinstall" it, and the
+ * plugin runs fine from the surviving configured path.
+ */
+export function isStalePathInstallRecordShadowedByConfiguredPlugin(params: {
+  record: PluginInstallRecord;
+  discoveredPlugin: Pick<PluginManifestRecord, "origin" | "rootDir"> | undefined;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  if (
+    params.record.source !== "path" ||
+    !isInstalledRecordMissingOnDisk(params.record, params.env)
+  ) {
+    return false;
+  }
+  if (params.discoveredPlugin?.origin !== "config") {
+    return false;
+  }
+  const resolvedRoot = path.resolve(resolveUserPath(params.discoveredPlugin.rootDir, params.env));
+  return [params.record.installPath, params.record.sourcePath].every((candidate) => {
+    const trimmed = candidate?.trim();
+    if (!trimmed) {
+      return true;
+    }
+    return path.resolve(resolveUserPath(trimmed, params.env)) !== resolvedRoot;
+  });
 }
 
 export function installPathsEqual(left: string, right: string): boolean {
