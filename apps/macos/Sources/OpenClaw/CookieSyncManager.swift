@@ -24,14 +24,16 @@ final class CookieSyncManager: NSObject {
         let endpoint: Endpoint
     }
 
-    // `CookieSyncManager` is @MainActor and not Sendable, so its off-main DispatchSource
-    // handlers below (explicitly @Sendable to avoid inheriting @MainActor isolation and
-    // trapping on entry when Dispatch invokes them on `queue`) cannot capture `self`
-    // directly. They read `manager` only from inside a `Task { @MainActor in }` hop, so a
-    // plain unsynchronized weak reference is safe here.
+    /// `CookieSyncManager` is @MainActor and not Sendable, so its off-main DispatchSource
+    /// handlers below (explicitly @Sendable to avoid inheriting @MainActor isolation and
+    /// trapping on entry when Dispatch invokes them on `queue`) cannot capture `self`
+    /// directly. They read `manager` only from inside a `Task { @MainActor in }` hop, so a
+    /// plain unsynchronized weak reference is safe here.
     private final class OwnerRef: @unchecked Sendable {
         weak var manager: CookieSyncManager?
-        init(_ manager: CookieSyncManager) { self.manager = manager }
+        init(_ manager: CookieSyncManager) {
+            self.manager = manager
+        }
     }
 
     static let shared = CookieSyncManager()
