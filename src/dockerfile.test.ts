@@ -115,7 +115,7 @@ describe("Dockerfile", () => {
     expect(collapsed).toContain("update-ca-certificates");
   });
 
-  it("installs python3 and tini in the slim runtime stage", async () => {
+  it("installs Python, tini, and the llama-server OpenMP runtime in the slim stage", async () => {
     const dockerfile = collapseDockerContinuations(await readFile(dockerfilePath, "utf8"));
     const runtimeIndex = dockerfile.indexOf(
       "FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE} AS base-runtime",
