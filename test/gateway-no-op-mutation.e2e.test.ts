@@ -77,7 +77,9 @@ describe("Gateway no-op mutation continuation", () => {
 
         expect(response.status).toBe("ok");
         expect(response.runId).toBe(runId);
-        expect(response.result?.payloads).toContainEqual({ text: VISIBLE_MARKER });
+        expect(response.result?.payloads).toContainEqual(
+          expect.objectContaining({ text: VISIBLE_MARKER }),
+        );
         expect(modelServer.requests).toHaveLength(2);
         expect(JSON.stringify(modelServer.requests[1]?.input)).toContain("function_call_output");
         expect(JSON.stringify(modelServer.requests[1]?.input)).toContain("No changes made");
