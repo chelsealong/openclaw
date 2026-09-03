@@ -581,16 +581,32 @@ const bootstrapSizeCheck: HealthCheck = {
     }
     const { buildBootstrapInjectionStats, analyzeBootstrapBudget } =
       await import("../agents/bootstrap-budget.js");
-    const { resolveBootstrapContextForRun } = await import("../agents/bootstrap-files.js");
+    const { buildBootstrapContextForFiles, resolveBootstrapFilesForRun } =
+      await import("../agents/bootstrap-files.js");
     const { resolveBootstrapMaxChars, resolveBootstrapTotalMaxChars } =
       await import("../agents/embedded-agent-helpers.js");
+    const { resolveConfiguredExtraBootstrapFiles } =
+      await import("../hooks/bundled/bootstrap-extra-files/resolve.js");
     const defaultAgentId = tryResolveSoleAgentId(ctx.cfg);
     const workspaceDir = ctx.cwd;
-    const { bootstrapFiles, contextFiles } = await resolveBootstrapContextForRun({
+    const resolvedFiles = await resolveBootstrapFilesForRun({
       workspaceDir,
       config: ctx.cfg,
       agentId: defaultAgentId,
       readOnlyState: true,
+    });
+    // The standalone doctor process never registers bundled hook handlers
+    // (only Gateway startup does), so fold in the bootstrap-extra-files
+    // hook's configured files directly, matching noteBootstrapFileSize.
+    const { files: extraFiles } = await resolveConfiguredExtraBootstrapFiles({
+      workspaceDir,
+      config: ctx.cfg,
+    });
+    const bootstrapFiles =
+      extraFiles.length > 0 ? [...resolvedFiles, ...extraFiles] : resolvedFiles;
+    const contextFiles = buildBootstrapContextForFiles(bootstrapFiles, {
+      config: ctx.cfg,
+      agentId: defaultAgentId,
     });
     const analysis = analyzeBootstrapBudget({
       files: buildBootstrapInjectionStats({
