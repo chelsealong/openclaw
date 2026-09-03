@@ -9,6 +9,7 @@ import {
   sessionProgressCardsForGateway,
   type SessionProgressCardStore,
 } from "../../session-progress-cards.ts";
+import { isSessionRunActive } from "../../session-run-state.ts";
 import type { BoardWidget } from "../types.ts";
 import type { PluginBoardWidgetRenderer } from "./index.ts";
 
@@ -87,6 +88,7 @@ class OpenClawSessionProgressWidget extends OpenClawLightDomElement {
       row?.status,
       row?.startedAt,
       row?.endedAt,
+      isSessionRunActive(row ?? {}),
     );
   }
 

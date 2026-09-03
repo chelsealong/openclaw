@@ -394,7 +394,34 @@ describe("renderSessionProgressCard", () => {
 
     expect(container.querySelector("time")?.textContent).toBe("Updated 3m ago");
     expect(container.querySelector("[data-outcome=failed]")).toBeNull();
-    expect(container.querySelector(".session-run-spinner")).not.toBeNull();
+    expect(container.querySelector(".session-run-spinner")).toBeNull();
+    expect(
+      container
+        .querySelector(".session-progress-card__summary-indicator")
+        ?.getAttribute("data-status"),
+    ).toBe("paused");
+  });
+
+  it("pauses an in-progress step when the card predates a later active run", () => {
+    const container = document.createElement("div");
+    render(
+      renderSessionProgressCard(
+        { ...progressCard, updatedAt: RUN_STARTED_MS - 1 },
+        "composer",
+        undefined,
+        "running",
+        RUN_STARTED_MS,
+        undefined,
+      ),
+      container,
+    );
+
+    expect(container.querySelector(".session-run-spinner")).toBeNull();
+    expect(
+      container
+        .querySelector(".session-progress-card__summary-indicator")
+        ?.getAttribute("data-status"),
+    ).toBe("paused");
   });
 
   it("falls back safely for timestamps outside the Date range", () => {

@@ -321,6 +321,11 @@ export function renderSessionProgressCard(
     sessionStatus && TERMINAL_OUTCOME_LABEL_KEYS[sessionStatus] && !terminalTimestamp
       ? undefined
       : sessionStatus;
+  // A card last touched before the current run started describes a prior
+  // run's work; the live run cannot own it, terminal or not.
+  const cardPredatesActiveRun =
+    validStartedAt !== undefined && validUpdatedAt !== undefined && validUpdatedAt < validStartedAt;
+  const effectiveHasActiveRun = hasActiveRun && !cardPredatesActiveRun;
   const activityTimestamp = terminalTimestamp ?? validUpdatedAt ?? Date.now();
   const activityKey = terminalTimestamp
     ? ACTIVITY_LABEL_KEYS[sessionStatus!]
@@ -372,7 +377,7 @@ export function renderSessionProgressCard(
         })
       : nothing;
     const presentedCurrentStatus =
-      currentStep?.status === "in_progress" && !hasActiveRun && !terminalOutcomeKey
+      currentStep?.status === "in_progress" && !effectiveHasActiveRun && !terminalOutcomeKey
         ? "paused"
         : currentStep?.status;
     const summaryIndicator =
@@ -440,7 +445,7 @@ export function renderSessionProgressCard(
       </summary>
       <div class="session-progress-card__body" role="region" aria-label=${composerCountLabel}>
         ${renderProgressCardMarkdown(card.markdown)}
-        ${renderSteps(card, hasActiveRun, effectiveSessionStatus)}
+        ${renderSteps(card, effectiveHasActiveRun, effectiveSessionStatus)}
       </div>
     </details>`;
   }
@@ -457,6 +462,6 @@ export function renderSessionProgressCard(
         >${dismiss}
       </span>
     </div>
-    ${renderBody(card, hasActiveRun, effectiveSessionStatus)}
+    ${renderBody(card, effectiveHasActiveRun, effectiveSessionStatus)}
   </section>`;
 }
