@@ -9,12 +9,16 @@ import {
   buildBootstrapInjectionStats,
   analyzeBootstrapBudget,
 } from "../agents/bootstrap-budget.js";
-import { resolveBootstrapContextForRun } from "../agents/bootstrap-files.js";
+import {
+  buildBootstrapContextForFiles,
+  resolveBootstrapFilesForRun,
+} from "../agents/bootstrap-files.js";
 import {
   resolveBootstrapMaxChars,
   resolveBootstrapTotalMaxChars,
 } from "../agents/embedded-agent-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveConfiguredExtraBootstrapFiles } from "../hooks/bundled/bootstrap-extra-files/resolve.js";
 
 // Every warning uses the same locale; silent checks never need a formatter.
 let integerFormatter: Intl.NumberFormat | undefined;
@@ -56,11 +60,23 @@ export async function noteBootstrapFileSize(cfg: OpenClawConfig) {
   for (const { agentId, workspaceDir } of workspaces) {
     const bootstrapMaxChars = resolveBootstrapMaxChars(cfg, agentId);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(cfg, agentId);
-    const { bootstrapFiles, contextFiles } = await resolveBootstrapContextForRun({
+    const resolvedFiles = await resolveBootstrapFilesForRun({
       workspaceDir,
       config: cfg,
       agentId,
     });
+    // The standalone doctor process never registers bundled hook handlers
+    // (only Gateway startup does), so the internal bootstrap-hook dispatch
+    // resolveBootstrapFilesForRun performs is a no-op here. Fold in the
+    // bootstrap-extra-files hook's configured files directly so the budget
+    // report matches what a real session actually injects.
+    const { files: extraFiles } = await resolveConfiguredExtraBootstrapFiles({
+      workspaceDir,
+      config: cfg,
+    });
+    const bootstrapFiles =
+      extraFiles.length > 0 ? [...resolvedFiles, ...extraFiles] : resolvedFiles;
+    const contextFiles = buildBootstrapContextForFiles(bootstrapFiles, { config: cfg, agentId });
     const stats = buildBootstrapInjectionStats({
       bootstrapFiles,
       injectedFiles: contextFiles,
