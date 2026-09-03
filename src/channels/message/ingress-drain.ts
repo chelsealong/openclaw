@@ -369,14 +369,20 @@ export function createChannelIngressDrain<
       onProcessingStarted: (timeoutMs) => {
         // Bounded pre-adoption maintenance (memory flush/compaction) owns its
         // own timeout; extend the watchdog to match instead of dead-lettering
-        // a legitimately slow, still-running turn on the shorter default.
+        // a legitimately slow, still-running turn on the shorter default. Floor
+        // at the channel's own stall default so a shorter maintenance timeout
+        // (e.g. an unconfigured compaction default) can never shrink the
+        // watchdog below what it would have been without this hook.
         if (state.phase !== "dispatching" && state.phase !== "deferred") {
           return;
         }
         if (state.guillotined || state.superseded || state.abortController.signal.aborted) {
           return;
         }
-        armStallWatchdog(state, timeoutMs ?? adoptionStallTimeoutMs);
+        armStallWatchdog(
+          state,
+          Math.max(adoptionStallTimeoutMs, timeoutMs ?? adoptionStallTimeoutMs),
+        );
       },
       onAdoptionFinalizing: () => {
         if (state.phase !== "dispatching" && state.phase !== "deferred") {

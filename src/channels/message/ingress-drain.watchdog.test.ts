@@ -315,4 +315,44 @@ describe("channel ingress drain watchdog", () => {
       drain.dispose();
     });
   });
+
+  it("never shrinks the watchdog below the channel default for a shorter maintenance timeout", async () => {
+    await withTempState(async (stateDir) => {
+      let clock = 60_000;
+      const queue = createTestIngressQueue(stateDir, { now: () => clock });
+      await queue.enqueue("evt-short-compaction", { text: "x" }, { laneKey: "l1" });
+
+      let releaseWork!: () => void;
+      const workGate = new Promise<void>((resolve) => {
+        releaseWork = resolve;
+      });
+
+      const drain = createChannelIngressDrain<Payload>({
+        queue,
+        now: () => clock,
+        // Channel's own stall default is longer than the unconfigured
+        // maintenance timeout below (e.g. compaction.timeoutSeconds unset).
+        adoptionStallTimeoutMs: 5_000,
+        dispatchClaimedEvent: async (_event, lifecycle) => {
+          // A maintenance timeout shorter than the channel default must not
+          // shrink the watchdog -- it can only extend it.
+          lifecycle.onProcessingStarted?.(1_000);
+          await workGate;
+          await lifecycle.onAdopted();
+        },
+      });
+
+      await drain.drainOnce();
+      // Past the shorter 1s maintenance timeout; still inside the 5s channel default.
+      clock += 3_000;
+      await vi.advanceTimersByTimeAsync(3_000);
+      releaseWork();
+      await drain.waitForIdle();
+
+      expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
+      expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      expect(await queue.listClaims()).toEqual([]);
+      drain.dispose();
+    });
+  });
 });
