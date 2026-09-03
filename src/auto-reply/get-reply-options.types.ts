@@ -96,6 +96,13 @@ export type TurnAdoptionLifecycle = {
   onDeferredHeartbeat?: () => void;
   /** Deferred turn finished without owning the reply lane. */
   onAbandoned?: () => void;
+  /**
+   * Bounded pre-adoption maintenance (memory flush/compaction) is starting.
+   * Ingress re-arms its stall watchdog to the maintenance owner's own timeout
+   * so a configured-longer compaction is not dead-lettered on the shorter
+   * ingress default while still legitimately running.
+   */
+  onProcessingStarted?: (timeoutMs?: number) => void;
   /** Always fires when the followup ownership cycle ends (admitted or not). Gateway cleanup. */
   onSettled?: () => void;
   /** Retires cancellation ownership while retaining live identity. */

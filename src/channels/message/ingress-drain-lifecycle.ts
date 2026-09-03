@@ -21,6 +21,15 @@ export type ChannelIngressDispatchLifecycle = {
    * Claim stays held until onAdopted / onAbandoned / fail.
    */
   onAdoptionFinalizing: () => void;
+  /**
+   * Bounded pre-adoption maintenance (e.g. memory flush/compaction) is
+   * starting. Re-arms the stall watchdog to the maintenance owner's own
+   * timeout instead of the shorter default, so a configured-longer
+   * compaction is not dead-lettered by the ingress default while it is still
+   * legitimately running. Unlike onAdoptionFinalizing this keeps a bounded
+   * successor watchdog armed rather than disabling stall detection.
+   */
+  onProcessingStarted?: (timeoutMs?: number) => void;
   /** Deferred work terminally failed after dispatch returned. */
   onFailed?: (error: unknown) => void | Promise<void>;
   /** Explicit cancellation before adoption; releases without consuming retry budget. */
@@ -40,6 +49,7 @@ export function bindIngressLifecycleToReplyOptions(lifecycle: ChannelIngressDisp
     onDeferred: () => void;
     onDeferredHeartbeat?: () => void;
     onAbandoned: () => void | Promise<void>;
+    onProcessingStarted?: (timeoutMs?: number) => void;
     abortSignal: AbortSignal;
   };
 } {
@@ -50,6 +60,7 @@ export function bindIngressLifecycleToReplyOptions(lifecycle: ChannelIngressDisp
       onDeferred: lifecycle.onDeferred,
       onDeferredHeartbeat: lifecycle.onDeferredHeartbeat,
       onAbandoned: lifecycle.onAbandoned,
+      onProcessingStarted: lifecycle.onProcessingStarted,
       abortSignal: lifecycle.abortSignal,
     },
   };

@@ -267,7 +267,10 @@ export function createChannelIngressDrain<
     await releaseClaim(claim, { lastError: disposition.message });
   };
 
-  const armStallWatchdog = (state: ActiveHandlerState<TPayload, TMetadata>) => {
+  const armStallWatchdog = (
+    state: ActiveHandlerState<TPayload, TMetadata>,
+    timeoutMs: number = adoptionStallTimeoutMs,
+  ) => {
     clearStallTimer(state);
     state.stallTimer = setTimeout(() => {
       // Pre-adoption only (dispatching OR deferred). Timer is not cleared by deferral.
@@ -298,7 +301,7 @@ export function createChannelIngressDrain<
             `ingress drain: failed to settle stalled event ${displayId}; holding claim: ${formatError(err)}`,
           );
         });
-    }, adoptionStallTimeoutMs);
+    }, timeoutMs);
     state.stallTimer.unref?.();
   };
 
@@ -362,6 +365,18 @@ export function createChannelIngressDrain<
         if (state.phase === "deferred" && !state.abortController.signal.aborted) {
           armStallWatchdog(state);
         }
+      },
+      onProcessingStarted: (timeoutMs) => {
+        // Bounded pre-adoption maintenance (memory flush/compaction) owns its
+        // own timeout; extend the watchdog to match instead of dead-lettering
+        // a legitimately slow, still-running turn on the shorter default.
+        if (state.phase !== "dispatching" && state.phase !== "deferred") {
+          return;
+        }
+        if (state.guillotined || state.superseded || state.abortController.signal.aborted) {
+          return;
+        }
+        armStallWatchdog(state, timeoutMs ?? adoptionStallTimeoutMs);
       },
       onAdoptionFinalizing: () => {
         if (state.phase !== "dispatching" && state.phase !== "deferred") {

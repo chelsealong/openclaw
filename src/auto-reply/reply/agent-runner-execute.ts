@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { resolveCompactionTimeoutMs } from "../../agents/embedded-agent-runner/compaction-safety-timeout.js";
 import { prepareGitCoauthorAttribution } from "../../agents/git-coauthor-attribution.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -186,6 +187,12 @@ export async function executePreparedReplyAgentRun(
   };
 
   await typingSignals.signalRunStart();
+
+  // Memory flush + preflight compaction below can legitimately run up to the
+  // configured compaction timeout, which may exceed the ingress claim's
+  // shorter default stall watchdog. Hand stall detection to that bound so a
+  // still-running turn is not dead-lettered and retried mid-compaction.
+  turnAdoptionLifecycle?.onProcessingStarted?.(resolveCompactionTimeoutMs(cfg));
 
   // Preserve the one-flush-per-compaction-cycle gate: an earlier same-cycle
   // flush is the checkpoint for this upcoming compaction, not a reason to rerun maintenance.

@@ -34,6 +34,7 @@ export type ChannelIngressMonitorLifecycle = {
   onDeferred: () => void;
   onDeferredHeartbeat?: () => void;
   onAdoptionFinalizing: () => void;
+  onProcessingStarted?: (timeoutMs?: number) => void;
   onFailed?: (error: unknown) => void | Promise<void>;
   onCancelled?: () => void | Promise<void>;
   onAbandoned: () => void | Promise<void>;

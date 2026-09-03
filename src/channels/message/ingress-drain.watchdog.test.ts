@@ -277,4 +277,42 @@ describe("channel ingress drain watchdog", () => {
       drain.dispose();
     });
   });
+
+  it("hands stall detection to a longer bounded timeout instead of dead-lettering mid-maintenance", async () => {
+    await withTempState(async (stateDir) => {
+      let clock = 50_000;
+      const queue = createTestIngressQueue(stateDir, { now: () => clock });
+      await queue.enqueue("evt-compaction", { text: "x" }, { laneKey: "l1" });
+
+      let releaseWork!: () => void;
+      const workGate = new Promise<void>((resolve) => {
+        releaseWork = resolve;
+      });
+
+      const drain = createChannelIngressDrain<Payload>({
+        queue,
+        now: () => clock,
+        adoptionStallTimeoutMs: 1_000,
+        dispatchClaimedEvent: async (_event, lifecycle) => {
+          // Bounded maintenance (memory flush/compaction) owns a longer timeout
+          // than the ingress default; hand it off before the slow work starts.
+          lifecycle.onProcessingStarted?.(5_000);
+          await workGate;
+          await lifecycle.onAdopted();
+        },
+      });
+
+      await drain.drainOnce();
+      // Past the original 1s default; still inside the 5s successor bound.
+      clock += 3_000;
+      await vi.advanceTimersByTimeAsync(3_000);
+      releaseWork();
+      await drain.waitForIdle();
+
+      expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
+      expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      expect(await queue.listClaims()).toEqual([]);
+      drain.dispose();
+    });
+  });
 });
