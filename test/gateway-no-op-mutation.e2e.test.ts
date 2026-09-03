@@ -49,7 +49,9 @@ describe("Gateway no-op mutation continuation", () => {
         },
       });
       instances.push(instance);
-      await fs.writeFile(path.join(instance.state.workspaceDir, "note.txt"), "done\n", "utf8");
+      const notePath = path.join(instance.homeDir, ".openclaw", "workspace", "note.txt");
+      await fs.mkdir(path.dirname(notePath), { recursive: true });
+      await fs.writeFile(notePath, "done\n", "utf8");
       await instance.startGateway();
 
       const client = await connectGatewayClient({
@@ -83,9 +85,7 @@ describe("Gateway no-op mutation continuation", () => {
         expect(modelServer.requests).toHaveLength(2);
         expect(JSON.stringify(modelServer.requests[1]?.input)).toContain("function_call_output");
         expect(JSON.stringify(modelServer.requests[1]?.input)).toContain("No changes made");
-        await expect(
-          fs.readFile(path.join(instance.state.workspaceDir, "note.txt"), "utf8"),
-        ).resolves.toBe("done\n");
+        await expect(fs.readFile(notePath, "utf8")).resolves.toBe("done\n");
       } finally {
         await disconnectGatewayClient(client);
       }
