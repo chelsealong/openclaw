@@ -69,6 +69,9 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   const beforeAgentRunBlocked = replies.some(
     (reply) => getReplyPayloadMetadata(reply)?.beforeAgentRunBlocked === true,
   );
+  const directiveRejectionReason = replies
+    .map((reply) => getReplyPayloadMetadata(reply)?.directiveRejectionReason)
+    .find((reason) => reason !== undefined);
 
   let queuedFinal = false;
   let routedFinalCount = 0;
@@ -414,18 +417,22 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   const dispatchOutcome =
     agentRunTerminalOutcome === "failed"
       ? "error"
-      : queueCapRejected || messageInjectionAborted
-        ? "skipped"
-        : "completed";
+      : directiveRejectionReason
+        ? "error"
+        : queueCapRejected || messageInjectionAborted
+          ? "skipped"
+          : "completed";
   const dispatchReason = queueCapRejected
     ? "queue-cap"
     : messageInjectionAborted
       ? "reply_operation_aborted"
-      : replyAdmission?.status === "accepted" && replyAdmission.mode === "steer"
-        ? "active_run_injected"
-        : channelTransformSuppressed
-          ? "channel_transform"
-          : state.bindingState.pluginFallbackReason;
+      : directiveRejectionReason
+        ? directiveRejectionReason
+        : replyAdmission?.status === "accepted" && replyAdmission.mode === "steer"
+          ? "active_run_injected"
+          : channelTransformSuppressed
+            ? "channel_transform"
+            : state.bindingState.pluginFallbackReason;
   state.recordAgentDispatchCompleted(
     dispatchOutcome,
     dispatchReason ? { reason: dispatchReason } : undefined,

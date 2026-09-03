@@ -11,6 +11,7 @@ import {
   MODEL_SELECTION_LOCKED_MESSAGE,
 } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { setReplyPayloadMetadata, type DirectiveRejectionReason } from "../reply-payload.js";
 import type { MsgContext } from "../templating.js";
 import type { ElevatedLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
@@ -68,6 +69,14 @@ function hasOnlyModelDirective(directives: InlineDirectives): boolean {
     !directives.hasQueueDirective &&
     !directives.hasStatusDirective
   );
+}
+
+/** Tags a pre-run model-directive rejection reply with a safe, content-free reason code. */
+function buildModelDirectiveRejectionReply(
+  text: string,
+  reason: DirectiveRejectionReason,
+): ReplyPayload {
+  return setReplyPayloadMetadata({ text, isError: true }, { directiveRejectionReason: reason });
 }
 
 function formatModelOverrideResetEvent(params: {
@@ -412,7 +421,10 @@ export async function applyInlineDirectiveOverrides(params: {
         typing.cleanup();
         return {
           kind: "reply",
-          reply: { text: modelResolution.errorText, isError: true },
+          reply: buildModelDirectiveRejectionReply(
+            modelResolution.errorText,
+            "model_policy_rejected",
+          ),
         };
       }
       const modelSelection = modelResolution.modelSelection;
@@ -427,7 +439,7 @@ export async function applyInlineDirectiveOverrides(params: {
           typing.cleanup();
           return {
             kind: "reply",
-            reply: { text: runtime.errorText, isError: true },
+            reply: buildModelDirectiveRejectionReply(runtime.errorText, "model_runtime_rejected"),
           };
         }
         const applied = await (
@@ -458,11 +470,17 @@ export async function applyInlineDirectiveOverrides(params: {
         });
         if (applied.status === "rejected") {
           typing.cleanup();
-          return { kind: "reply", reply: { text: applied.message, isError: true } };
+          return {
+            kind: "reply",
+            reply: buildModelDirectiveRejectionReply(applied.message, "model_selection_rejected"),
+          };
         }
         if (applied.status === "conflict") {
           typing.cleanup();
-          return { kind: "reply", reply: { text: applied.message, isError: true } };
+          return {
+            kind: "reply",
+            reply: buildModelDirectiveRejectionReply(applied.message, "model_selection_conflict"),
+          };
         }
         const label = `${modelSelection.provider}/${modelSelection.model}`;
         const labelWithAlias = modelSelection.alias ? `${modelSelection.alias} (${label})` : label;

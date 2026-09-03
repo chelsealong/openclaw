@@ -1,6 +1,7 @@
 // Tests applying parsed directives to get-reply execution options.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../../sessions/model-overrides.js";
+import { getReplyPayloadMetadata } from "../reply-payload.js";
 import { applyMixedDirectives } from "./directive-handling.mixed-inline.test-helpers.js";
 import { parseInlineSessionDirectives } from "./directive-handling.parse.js";
 import { resolveDirectiveRuntimeContext } from "./directive-runtime-context.js";
@@ -79,6 +80,21 @@ describe("applyInlineDirectiveOverrides", () => {
       reply: { text: expect.stringContaining("elevated is not available") },
     });
     expect(mocks.handleDirective).not.toHaveBeenCalled();
+  });
+
+  it("tags a pre-run model-directive rejection with a diagnosable reason code", async () => {
+    const { result } = await applyMixedDirectives({ body: "/model 12345" });
+
+    expect(result.kind).toBe("reply");
+    const reply = result.kind === "reply" ? result.reply : undefined;
+    expect(reply).toMatchObject({
+      text: expect.stringContaining("Numeric model selection is not supported"),
+      isError: true,
+    });
+    expect(getReplyPayloadMetadata(reply as object)?.directiveRejectionReason).toBe(
+      "model_policy_rejected",
+    );
+    expect(mocks.applyModelSelection).not.toHaveBeenCalled();
   });
 
   it("keeps the prepared global owner through directive application and context budgeting", async () => {

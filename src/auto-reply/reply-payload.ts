@@ -13,6 +13,13 @@ import type {
 } from "../interactive/payload.js";
 import type { AssistantDeliveryTtsFacts } from "../llm/types.js";
 
+/** Closed, content-free reason codes for a pre-run directive/model-policy rejection. */
+export type DirectiveRejectionReason =
+  | "model_policy_rejected"
+  | "model_runtime_rejected"
+  | "model_selection_rejected"
+  | "model_selection_conflict";
+
 export type ReplyMediaAttachment = {
   type?: "image" | "audio" | "video" | "file";
   path?: string;
@@ -356,6 +363,13 @@ export type ReplyPayloadMetadata = {
     idempotencyKey?: string;
   };
   beforeAgentRunBlocked?: boolean;
+  /**
+   * Safe, content-free reason code for a directive/model-policy rejection that
+   * short-circuits the turn before any agent run starts. Diagnostics need this
+   * to distinguish a real pre-run rejection from a generic completed turn
+   * without logging the rejected prompt text.
+   */
+  directiveRejectionReason?: DirectiveRejectionReason;
   /** The warning owner observed this tool failure; presentation text is not evidence. */
   toolErrorWarning?: { toolName: string };
   /** Warning synthesized from an observed tool error after the run produced assistant output. */
