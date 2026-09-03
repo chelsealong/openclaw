@@ -1,6 +1,10 @@
 // Full-entry coverage for handing replay-safe prompt timeouts to model fallback.
+import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { createWriteTool } from "../sessions/tools/index.js";
+import { buildEmbeddedRunnerAssistant } from "../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import { makeModelFallbackCfg } from "../test-helpers/model-fallback-config-fixture.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
@@ -168,5 +172,93 @@ describe("runEmbeddedAgent prompt timeout fallback handoff", () => {
         "The previous assistant turn completed its tool calls but did not produce a user-visible answer. Continue from the current transcript and produce the final user-visible answer now. Do not repeat completed tool calls or restart from scratch.",
     });
     expect(mockedGetApiKeyForModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues a visible answer after a real no-op write as the first tool call", async () => {
+    const filePath = path.join(state.workspaceDir, "note.txt");
+    await fs.writeFile(filePath, "done\n", "utf8");
+    const noOpResult = await createWriteTool(state.workspaceDir).execute(
+      "call-write",
+      { path: "note.txt", content: "done\n" },
+      undefined,
+    );
+
+    const toolUseAssistant = buildEmbeddedRunnerAssistant({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-write",
+          name: "write",
+          arguments: { path: "note.txt", content: "done\n" },
+        },
+      ],
+    });
+    const abortedAssistant = buildEmbeddedRunnerAssistant({
+      stopReason: "aborted",
+      content: [],
+    });
+    const finalAssistant = buildEmbeddedRunnerAssistant({
+      content: [{ type: "text", text: "The note is ready." }],
+    });
+    mockedClassifyFailoverReason.mockReturnValue("timeout");
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          assistantTexts: [],
+          terminal: { kind: "timeout", phase: "prompt", source: "idle" },
+          toolMetas: [
+            {
+              toolName: "write",
+              toolCallId: "call-write",
+              replaySafe: false,
+              ...(noOpResult.terminate === true ? { terminate: true } : {}),
+            },
+          ],
+          itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
+          messagesSnapshot: [
+            { role: "user", content: [{ type: "text", text: "Write note.txt" }] },
+            toolUseAssistant,
+            { role: "toolResult", toolCallId: "call-write", toolName: "write", isError: false },
+            abortedAssistant,
+          ] as never,
+          lastAssistant: abortedAssistant,
+          currentAttemptAssistant: abortedAssistant,
+          currentAttemptReplayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          assistantTexts: ["The note is ready."],
+          lastAssistant: finalAssistant,
+          currentAttemptAssistant: finalAssistant,
+          currentAttemptCompletedAssistant: finalAssistant,
+        }),
+      );
+    mockedBuildEmbeddedRunPayloads
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([{ text: "The note is ready." }]);
+
+    const result = await runEmbeddedAgent({
+      ...createOverflowRunParams(state),
+      provider: "openai",
+      model: "gpt-5.4",
+      runId: "run-no-op-first-tool",
+      config: makeModelFallbackCfg({
+        agents: {
+          defaults: {
+            model: {
+              primary: "openai/gpt-5.4",
+              fallbacks: ["anthropic/claude-opus-4-6"],
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.payloads).toEqual([{ text: "The note is ready." }]);
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(noOpResult.details).toEqual({ changed: false });
+    expect(noOpResult.terminate).toBeUndefined();
   });
 });
