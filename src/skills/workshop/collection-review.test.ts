@@ -392,6 +392,36 @@ describe("skill collection review", () => {
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
+  it("reports an actionable auth error for shared-workspace agents with an unresolved credential", async () => {
+    const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-shared-unresolved-");
+    await writeWorkspaceSkills(workspaceDir, [
+      { name: "alpha", description: "Alpha procedure" },
+      { name: "beta", description: "Beta procedure" },
+    ]);
+    // No entries in authStoresByAgentDir: both agents resolve to an empty profile store,
+    // so neither can resolve a credential for their shared provider.
+    const onError = vi.fn();
+
+    await runReview({
+      config: {
+        agents: {
+          list: [
+            { id: "alpha-agent", default: true, workspace: workspaceDir, skills: ["alpha"] },
+            { id: "beta-agent", workspace: workspaceDir, skills: ["beta"] },
+          ],
+        },
+        skills: { workshop: { autonomous: { mode: "auto" } } },
+      },
+      env: testState.env,
+      onError,
+    });
+
+    const message = String(onError.mock.calls[0]?.[0]);
+    expect(message).toContain("no resolved auth credential");
+    expect(message).not.toContain("different collection-review identities");
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+  });
+
   it("groups symlink aliases before comparing shared-workspace identities", async () => {
     const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-real-workspace-");
     const aliasParent = await tempDirs.make("openclaw-collection-review-alias-parent-");
