@@ -64,6 +64,12 @@ export function classifyCompactionReason(reason?: string): string {
   if (text.includes("deferred to background")) {
     return "deferred_background";
   }
+  // Codex's own per-turn startup-binding rotation already retires an oversized
+  // native thread; a host-isolated decline here is an intentional no-op, not a
+  // failed compaction attempt.
+  if (text.includes("host-isolated") && text.includes("native compaction")) {
+    return "host_isolated_native_compaction";
+  }
   if (text.includes("still exceeds target")) {
     return "live_context_still_exceeds_target";
   }
@@ -104,9 +110,14 @@ export function isBenignCompactionSkipResult(result: {
   if (result.compacted) {
     return false;
   }
+  if (!result.ok) {
+    return isBenignCompactionSkipReason(result.reason);
+  }
+  const classification = classifyCompactionReason(result.reason);
   return (
     isBenignCompactionSkipReason(result.reason) ||
-    (result.ok && classifyCompactionReason(result.reason) === "no_compactable_entries")
+    classification === "no_compactable_entries" ||
+    classification === "host_isolated_native_compaction"
   );
 }
 

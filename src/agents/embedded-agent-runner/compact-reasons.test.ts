@@ -99,6 +99,14 @@ describe("classifyCompactionReason", () => {
     );
   });
 
+  it("classifies a host-isolated Codex native compaction decline as a skip-like reason", () => {
+    expect(
+      classifyCompactionReason(
+        "native compaction is unavailable for a host-isolated Codex session",
+      ),
+    ).toBe("host_isolated_native_compaction");
+  });
+
   it("classifies safeguard messages as guard-blocked", () => {
     expect(
       classifyCompactionReason(
@@ -172,6 +180,15 @@ describe("isBenignCompactionSkipReason", () => {
       expect(isBenignCompactionSkipResult({ ok: true, compacted: false, reason })).toBe(false);
     },
   );
+
+  it("treats an intentional host-isolated Codex native compaction decline as benign, not a blocked turn", () => {
+    const reason = "native compaction is unavailable for a host-isolated Codex session";
+    expect(isBenignCompactionSkipResult({ ok: true, compacted: false, reason })).toBe(true);
+    // Codex's per-turn startup-binding rotation is the real recovery owner for an
+    // oversized native thread; a plain failure result with this text is not that
+    // structured decline and must still surface as a blocking failure.
+    expect(isBenignCompactionSkipResult({ ok: false, compacted: false, reason })).toBe(false);
+  });
 });
 
 describe("formatUnknownCompactionReasonDetail", () => {
