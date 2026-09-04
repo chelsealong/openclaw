@@ -328,7 +328,10 @@ export async function maybeSpawnVisibleSession(params: {
         ...(group ? { category: group } : {}),
         model: resolvedModel,
         task: params.task,
-        parentSessionKey: requesterKey,
+        // Durable lineage, not the policy-scoped requesterKey: an account-qualified
+        // direct-message policy key (e.g. Telegram) has no durable session entry, so
+        // sessions.create's parent lookup would reject it as an unknown parent session.
+        parentSessionKey: ownership.completionRequesterSessionKey,
         // Declared spawn lineage: without it the child persists as a depth-0 root
         // and could spawn past maxSpawnDepth.
         spawnDepth: callerDepth + 1,

@@ -707,6 +707,36 @@ describe("sessions_spawn tool", () => {
     });
   });
 
+  it("uses the durable run session key, not an account-qualified policy key, as visible-spawn parent lineage", async () => {
+    // Telegram direct-message replies scope `agentSessionKey` to a per-account policy
+    // key (e.g. "agent:main:telegram:default:direct:123") that has no durable session
+    // entry; the actual session is keyed by completionOwnerKey/runSessionKey.
+    const callGateway = vi.fn(async () => ({
+      key: "agent:main:dashboard:child",
+      runStarted: true,
+      runId: "run-visible",
+    }));
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:telegram:default:direct:123",
+      completionOwnerKey: "agent:main:telegram:direct:123",
+      config: { agents: { list: [{ id: "main" }] } },
+      callGateway: callGateway as never,
+      registerRun: vi.fn(),
+      countActiveRuns: () => 0,
+    });
+
+    const result = await tool.execute("visible-telegram", {
+      task: "inspect issue",
+      visible: true,
+    });
+
+    expect(result.details).toMatchObject({ status: "accepted", runId: "run-visible" });
+    expect(callGateway).toHaveBeenCalledWith(
+      "sessions.create",
+      expect.objectContaining({ parentSessionKey: "agent:main:telegram:direct:123" }),
+    );
+  });
+
   it.each([
     { label: "default", mode: undefined },
     { label: "read-only", mode: "read-only" },
