@@ -316,15 +316,12 @@ function probeScheduledTaskState(taskName: string): ScheduledTaskStateProbe {
     "try { $result.lastRunTime=$task.LastRunTime.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture) } catch {}",
     "$result | ConvertTo-Json -Compress; exit 0",
   ].join("; ");
+  // -File - (script piped over stdin) reads identically to -EncodedCommand but is not
+  // the base64-encoded-PowerShell pattern antivirus heuristics flag as malware evasion.
   const probe = spawnSync(
     getWindowsPowerShellExePath(),
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64"),
-    ],
-    { encoding: "utf8", timeout: 5_000, windowsHide: true },
+    ["-NoProfile", "-NonInteractive", "-File", "-"],
+    { encoding: "utf8", timeout: 5_000, windowsHide: true, input: script },
   );
   if (probe.error) {
     return { status: "unknown", detail: probe.error.message };
