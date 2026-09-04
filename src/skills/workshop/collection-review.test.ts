@@ -392,69 +392,40 @@ describe("skill collection review", () => {
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
-  it("reports an actionable auth error for shared-workspace agents with an unresolved credential", async () => {
-    const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-shared-unresolved-");
-    await writeWorkspaceSkills(workspaceDir, [
-      { name: "alpha", description: "Alpha procedure" },
-      { name: "beta", description: "Beta procedure" },
-    ]);
-    // No entries in authStoresByAgentDir: both agents resolve to an empty profile store,
-    // so neither can resolve a credential for their shared provider.
-    const onError = vi.fn();
-
-    await runReview({
-      config: {
-        agents: {
-          list: [
-            { id: "alpha-agent", default: true, workspace: workspaceDir, skills: ["alpha"] },
-            { id: "beta-agent", workspace: workspaceDir, skills: ["beta"] },
-          ],
+  it.each([
+    { resolvedAlpha: false, unresolvedAgent: "alpha-agent" },
+    { resolvedAlpha: true, unresolvedAgent: "beta-agent" },
+  ])(
+    "reports unresolved shared-workspace auth for $unresolvedAgent (resolved alpha: $resolvedAlpha)",
+    async ({ resolvedAlpha, unresolvedAgent }) => {
+      const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-shared-auth-");
+      if (resolvedAlpha) {
+        authStoresByAgentDir.set(path.join(testState.stateDir, "agents", "alpha-agent", "agent"), {
+          version: 1,
+          profiles: { "openai:alpha": { type: "api_key", provider: "openai", key: "alpha-key" } },
+        });
+      }
+      const result = await runReview({
+        config: {
+          agents: {
+            list: [
+              { id: "alpha-agent", default: true, workspace: workspaceDir },
+              { id: "beta-agent", workspace: workspaceDir },
+            ],
+          },
+          skills: { workshop: { autonomous: { mode: "auto" } } },
         },
-        skills: { workshop: { autonomous: { mode: "auto" } } },
-      },
-      env: testState.env,
-      onError,
-    });
+        env: testState.env,
+      });
 
-    const message = String(onError.mock.calls[0]?.[0]);
-    expect(message).toContain("no resolved auth credential");
-    expect(message).not.toContain("different collection-review identities");
-    expect(runEmbeddedAgent).not.toHaveBeenCalled();
-  });
-
-  it("reports an actionable auth error when only one shared-workspace agent resolves a credential", async () => {
-    const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-shared-mixed-");
-    await writeWorkspaceSkills(workspaceDir, [
-      { name: "alpha", description: "Alpha procedure" },
-      { name: "beta", description: "Beta procedure" },
-    ]);
-    authStoresByAgentDir.set(path.join(testState.stateDir, "agents", "alpha-agent", "agent"), {
-      version: 1,
-      profiles: { "openai:alpha": { type: "api_key", provider: "openai", key: "alpha-key" } },
-    });
-    // beta-agent has no entry: it resolves to an empty profile store, so its credential
-    // stays unresolved even though alpha-agent's resolves fine for the same provider.
-    const onError = vi.fn();
-
-    await runReview({
-      config: {
-        agents: {
-          list: [
-            { id: "alpha-agent", default: true, workspace: workspaceDir, skills: ["alpha"] },
-            { id: "beta-agent", workspace: workspaceDir, skills: ["beta"] },
-          ],
-        },
-        skills: { workshop: { autonomous: { mode: "auto" } } },
-      },
-      env: testState.env,
-      onError,
-    });
-
-    const message = String(onError.mock.calls[0]?.[0]);
-    expect(message).toContain("no resolved auth credential");
-    expect(message).not.toContain("different collection-review identities");
-    expect(runEmbeddedAgent).not.toHaveBeenCalled();
-  });
+      const authError = `no resolved auth credential for provider "openai" (agent "${unresolvedAgent}")`;
+      expect(result).toMatchObject({ status: "error", error: expect.stringContaining(authError) });
+      expect(
+        Object.values(readSkillReviewOutcomes({ env: testState.env }).collectionReviews),
+      ).toEqual([{ attemptedAtMs: expect.any(Number), error: expect.stringContaining(authError) }]);
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    },
+  );
 
   it("groups symlink aliases before comparing shared-workspace identities", async () => {
     const workspaceDir = await makeWorkspaceDir("openclaw-collection-review-real-workspace-");
