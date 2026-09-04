@@ -33,6 +33,30 @@ fresh lease. Every run still syncs the current checkout.
 `OPENCLAW_TESTBOX_ALLOW_STALE=1` is only for intentional diagnostics, not
 release proof.
 
+Testbox runs and POSIX remote changed gates freeze source into a Git bundle
+against the pinned base. These runs require Crabbox 0.37.0 or later for
+`sync-plan --json`; upgrade Crabbox before retrying an older binary. This API floor
+does not apply to help, warmup, status, or runs that do not prepare a source bundle.
+Selection uses Crabbox's sync policy and Git's repository, info, and effective global
+exclusions, including repo-local overrides, for untracked files. Tracked ignored
+files and staged ignored additions remain source; an explicit privacy exclusion
+conflicting with required tracked source stops the run before upload.
+
+The command binds the bundle digest and raw source tree. Before running the payload,
+the receiver applies deletions and restores file bytes, symlink target bytes, and
+Git executable modes, then verifies the filesystem directly. Git text filters do not
+normalize this snapshot. Missing, stale, or mismatched bundles fail closed.
+Producer-declared deletions must also be absent, even when the remote index has lost
+them. Deletions use the same privacy policy as source selection; unknown ignored
+runtime data is preserved. Unexpected nonignored receiver files stop the run instead
+of being deleted. The verification receipt reports the original source revision
+separately from the synthetic transport commit; remote `HEAD` identifies that
+verified transport tree, and changed gates compare it with the pinned base.
+Raw-byte differences can conservatively select additional changed paths. Git path
+names must be UTF-8; symlink targets remain raw bytes. Symlinked repository Crabbox
+configuration or ignore files, and privacy-excluded runtime configuration, are
+rejected before upload rather than changing their trust or privacy treatment.
+
 Local test commands below are the normal trusted development path. Keep proof
 proportional to the touched contract.
 
@@ -131,6 +155,20 @@ lease ID, and reuse it with `run --id <tbx_id>`. Stop the owned lease with
   `--script*`, `--env-helper`, capture/download flags, and `--stop-after` are not
   a substitute for the delegated Testbox workflow.
 
+When remote sync uses a temporary checkout, the wrapper preserves native
+`.crabbox/runs` and `.crabbox/captures` outputs together beneath a fresh
+`.crabbox/wrapper-artifacts/run-*` directory before removing that checkout.
+Repeated runs retain separate evidence even when native filenames match. The
+wrapper prints the old-to-new root mapping; native logs and generated proof may
+still reference the old paths. A preservation error fails the wrapper and retains
+the temporary checkout at the reported path for manual recovery.
+
+These are local artifacts, not published or fully sanitized proof. Blacksmith's
+native failure bundle contains captured stdout/stderr and diagnostic metadata;
+it does not automatically include remote UI screenshots or reports. Retrieve
+those separately before stopping the owned Testbox, and inspect all artifacts
+for secrets and private data before sharing.
+
 The native Windows Testbox idle monitor uses the running `sshd` service's local
 listener ports, not Blacksmith's externally forwarded SSH port. Established SSH
 connections keep the job alive; the `~/.testbox-last-activity` modification time
@@ -162,6 +200,9 @@ verify lease cleanup; never stop the operator's Gateway.
 1. `pnpm test:changed` for changed-scope Vitest proof.
 2. `pnpm test <path-or-filter>` for one file, directory, or explicit target.
 3. `pnpm test` only when you intentionally need the full local Vitest suite.
+
+The project runner prints wrapper usage for a sole `--help` or `-h` request.
+Compound requests, including `--help --no-help`, follow native Vitest option semantics.
 
 An existing UI directory target stays scoped to that directory, including when
 combined with explicit E2E test files. Tests retain their owning shared, isolated,
@@ -370,6 +411,16 @@ validates consumed bytes, inherited configuration, generator and manifest inputs
 and resolution topology without starting a compiler on hits. Cache hits restore
 into fresh staging and pass the same entry and relative declaration closure checks
 before publication.
+All tsdown declaration builds (the eight SDK/unified groups, workspace packages,
+and the AI package) resolve source and dependency realpaths within their checkout.
+Ancestor installs are invisible to TypeScript lookup; selected declaration paths
+that escape through symlinks or bundler resolution fail the build. Each checkout
+needs its own installed declaration inputs, including compiler libraries. Local
+pnpm links are supported when their targets remain inside the checkout; shared
+external installs are not. Actual compiler receipts remain unfiltered, and input
+changes still prevent publication. Runtime module resolution and the separate
+native tsgo typecheck and package-boundary owners retain their existing contracts.
+
 Local preparation never overwrites packaged declarations or writes workspace
 forwarding bridges.
 
@@ -484,7 +535,12 @@ do not describe a replay as recovery of lost files.
 
 Timeout diagnostics allocate fresh children beneath the existing
 `OPENCLAW_UI_E2E_DIAGNOSTIC_DIR` or default timeout directory, keeping each PNG and
-JSON report together. Mantis allocates an invocation directory for setup logs,
+JSON report together. Their `ci.shardIndex` and `ci.vitestShardCount` fields record
+`VITEST_SHARD_INDEX` and `VITEST_SHARD_COUNT`, respectively, as supplied by normal
+CI. Missing values remain `null`; manual and separate release E2E invocations do
+not infer this metadata from Vitest's `--shard` argument.
+
+Mantis allocates an invocation directory for setup logs,
 capture attempts, and its report; the builder preserves each attempt's relative
 paths and refuses to overwrite an existing report.
 
@@ -496,6 +552,47 @@ continues.
 Separate output owners remain: other real-Gateway suites, `chat-outbox-*`, and
 `chat-attachment-read-lifecycle`. Do not assume those owners have the ordinary
 mocked proof retention guarantee.
+
+### Screenshots during Chromium recordings
+
+The session-host command-state real-Gateway proof uses `page.screenshot({ path })`
+without `clip` or `fullPage: true`, keeping its existing viewport, recording size,
+waits, and animation options. This path was verified on Linux with Playwright
+1.62.1 and full Chrome for Testing 151.0.7922.34.
+
+Other recording owners have not been migrated or certified by this proof; some
+still use locator or full-page screenshots. This is not a suite-wide capture
+policy. Verify each owner's screenshot content and finalized video before
+changing its capture mode. When using the verified viewport path, crop any
+element-only PNG outside the browser. Cropping cannot recover missing content
+from an already-corrupted recording.
+
+In a macOS arm64 reproduction with Playwright 1.62.1 and its bundled full Chrome
+for Testing 151.0.7922.34, `locator.screenshot()` and
+`page.screenshot({ clip })` caused small screencast frames. The element appears at
+the video origin with gray elsewhere, even though the PNG, DOM geometry, and
+functional assertions are correct. `fullPage: true` is not a general workaround:
+a document larger than the viewport can instead produce a shrunken page with
+gray padding. Unclipped viewport captures preserved the recording in the same
+synthetic reproduction; other browser versions and platforms require their own
+verification.
+
+This is an upstream capture limitation, not a Gateway or context-cleanup failure.
+[Chromium's screenshot handler](https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/content/browser/devtools/protocol/page_handler.cc#1492)
+temporarily changes the shared view size and restores it after capture; its
+screencast producer can observe the intermediate surface.
+[Playwright's recorder](https://github.com/microsoft/playwright/blob/v1.62.1/packages/playwright-core/src/server/videoRecorder.ts#L166)
+pads undersized frames with gray. Closing the context finalizes the video but
+does not repair those frames. Do not filter out bad frames or change UI behavior
+to conceal this limitation.
+
+Verify finalized video content around every capture, not just its dimensions or
+the success of locator assertions. For a dependency upgrade, reproduce with a
+synthetic page containing an offset small element, compare element, clipped,
+viewport, and oversized full-page screenshots, and inspect every decoded frame.
+Keep real host/profile footage local; inspect public proof for synthetic-only
+content before sharing. Correct PNGs remain useful still-image proof, but a
+corrupted video is not continuous-flow proof.
 
 ## Gateway and E2E
 
