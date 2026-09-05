@@ -1297,12 +1297,26 @@ export async function runMemoryFlushIfNeeded(params: {
     typeof transcriptByteSize === "number" && transcriptByteSize >= forceFlushTranscriptBytes;
 
   const transcriptUsageSnapshot = sessionLogSnapshot?.usage;
-  const transcriptPromptTokens = transcriptUsageSnapshot?.promptTokens;
+  const transcriptPromptTokensAnchor = transcriptUsageSnapshot?.promptTokens;
   const transcriptOutputTokens = transcriptUsageSnapshot?.outputTokens;
-  const hasReliableTranscriptPromptTokens =
-    typeof transcriptPromptTokens === "number" &&
-    Number.isFinite(transcriptPromptTokens) &&
-    transcriptPromptTokens > 0;
+  const hasReliableTranscriptPromptTokensAnchor =
+    typeof transcriptPromptTokensAnchor === "number" &&
+    Number.isFinite(transcriptPromptTokensAnchor) &&
+    transcriptPromptTokensAnchor > 0;
+  // The anchor is the last provider-reported prompt total; messages appended after it
+  // (trailingMessages) are real, unaccounted growth. Fold their projected size in before
+  // trusting this as the "fresh" total downstream compaction checks skip re-deriving.
+  const transcriptTrailingProjectedTokens = hasReliableTranscriptPromptTokensAnchor
+    ? await estimateProviderPromptTokensFromMessages(
+        transcriptUsageSnapshot?.trailingMessages ?? [],
+        contextWindowTokens,
+      )
+    : undefined;
+  const transcriptPromptTokens =
+    hasReliableTranscriptPromptTokensAnchor && transcriptTrailingProjectedTokens !== undefined
+      ? transcriptPromptTokensAnchor + transcriptTrailingProjectedTokens
+      : undefined;
+  const hasReliableTranscriptPromptTokens = typeof transcriptPromptTokens === "number";
   const shouldPersistTranscriptPromptTokens =
     hasReliableTranscriptPromptTokens &&
     (!hasFreshPersistedPromptTokens ||
