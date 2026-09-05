@@ -577,6 +577,22 @@ async function estimateProviderPromptTokensFromMessages(
   return Number.isFinite(tokens) && tokens >= 0 ? Math.ceil(tokens) : undefined;
 }
 
+// Shared by preflight compaction and memory flush so a stale usage anchor never gets
+// stamped as the "fresh" total without folding in the trailing messages appended after it.
+async function resolveAnchoredPromptTokens(
+  usage: SessionTranscriptUsageSnapshot | undefined,
+  contextWindowTokens: number,
+): Promise<number | undefined> {
+  if (!hasUsableProviderPromptUsage(usage)) {
+    return undefined;
+  }
+  const trailingTokens = await estimateProviderPromptTokensFromMessages(
+    usage.trailingMessages,
+    contextWindowTokens,
+  );
+  return trailingTokens === undefined ? undefined : Math.ceil(usage.promptTokens) + trailingTokens;
+}
+
 async function estimatePromptTokensFromSessionTranscript(params: {
   agentId?: string;
   sessionId?: string;
@@ -620,18 +636,16 @@ async function estimatePromptTokensFromSessionTranscript(params: {
         ? Math.ceil(usage.outputTokens)
         : undefined;
     if (hasUsableProviderPromptUsage(usage)) {
-      const trailingMessages = usage.trailingMessages;
-      const trailingTokens = await estimateProviderPromptTokensFromMessages(
-        trailingMessages,
-        params.contextWindowTokens,
-      );
-      if (trailingTokens === undefined) {
+      const promptTokens = await resolveAnchoredPromptTokens(usage, params.contextWindowTokens);
+      if (promptTokens === undefined) {
         return undefined;
       }
       return {
-        promptTokens: Math.ceil(usage.promptTokens) + trailingTokens,
+        promptTokens,
         promptTokenSource:
-          trailingMessages.length > 0 ? "provider_usage_plus_prompt_projection" : "provider_usage",
+          usage.trailingMessages.length > 0
+            ? "provider_usage_plus_prompt_projection"
+            : "provider_usage",
         outputTokens: normalizedOutputTokens,
         transcriptByteSize: snapshot.byteSize,
       };
@@ -1297,25 +1311,11 @@ export async function runMemoryFlushIfNeeded(params: {
     typeof transcriptByteSize === "number" && transcriptByteSize >= forceFlushTranscriptBytes;
 
   const transcriptUsageSnapshot = sessionLogSnapshot?.usage;
-  const transcriptPromptTokensAnchor = transcriptUsageSnapshot?.promptTokens;
   const transcriptOutputTokens = transcriptUsageSnapshot?.outputTokens;
-  const hasReliableTranscriptPromptTokensAnchor =
-    typeof transcriptPromptTokensAnchor === "number" &&
-    Number.isFinite(transcriptPromptTokensAnchor) &&
-    transcriptPromptTokensAnchor > 0;
-  // The anchor is the last provider-reported prompt total; messages appended after it
-  // (trailingMessages) are real, unaccounted growth. Fold their projected size in before
-  // trusting this as the "fresh" total downstream compaction checks skip re-deriving.
-  const transcriptTrailingProjectedTokens = hasReliableTranscriptPromptTokensAnchor
-    ? await estimateProviderPromptTokensFromMessages(
-        transcriptUsageSnapshot?.trailingMessages ?? [],
-        contextWindowTokens,
-      )
-    : undefined;
-  const transcriptPromptTokens =
-    hasReliableTranscriptPromptTokensAnchor && transcriptTrailingProjectedTokens !== undefined
-      ? transcriptPromptTokensAnchor + transcriptTrailingProjectedTokens
-      : undefined;
+  const transcriptPromptTokens = await resolveAnchoredPromptTokens(
+    transcriptUsageSnapshot,
+    contextWindowTokens,
+  );
   const hasReliableTranscriptPromptTokens = typeof transcriptPromptTokens === "number";
   const shouldPersistTranscriptPromptTokens =
     hasReliableTranscriptPromptTokens &&
