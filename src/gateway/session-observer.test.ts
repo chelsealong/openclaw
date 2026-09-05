@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionObserverDigest } from "../../packages/gateway-protocol/src/schema/sessions.js";
+import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { defaultPersistDigest } from "./session-observer-model.js";
 import {
   createHarness,
   declareObserverVisibility,
@@ -620,6 +623,37 @@ describe("session observer", () => {
       headline: "Continuing without model",
     });
     harness.observer.dispose();
+  });
+
+  it("stops calling the utility model once the real session store reports the row missing", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const completeModel = vi.fn(async () =>
+        modelMessage({ headline: "Checking files", health: "on-track" }),
+      );
+      const harness = createHarness({ completeModel, persistDigest: defaultPersistDigest });
+      startAndAddToolNotes(harness.observer);
+
+      await vi.advanceTimersByTimeAsync(12_000);
+      await flushObserver();
+      expect(completeModel).toHaveBeenCalledOnce();
+      // No entry was ever written for this sessionKey in the real SQLite store,
+      // so defaultPersistDigest returned null and disableModelForRun fired.
+      expect(
+        loadSessionEntryReadOnly({ sessionKey: "agent:main:session-1", agentId: "main" }),
+      ).toBeUndefined();
+
+      for (let index = 0; index < 4; index += 1) {
+        harness.observer.handleEvent(
+          event({ stream: "tool", data: { phase: "start", name: "read", args: { index } } }),
+        );
+      }
+      await vi.advanceTimersByTimeAsync(12_000);
+      await flushObserver();
+      expect(completeModel).toHaveBeenCalledOnce();
+      harness.observer.dispose();
+    });
   });
 
   it("does not observe without subscribers and stops after unsubscribe", async () => {
