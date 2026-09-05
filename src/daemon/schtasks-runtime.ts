@@ -316,11 +316,13 @@ function probeScheduledTaskState(taskName: string): ScheduledTaskStateProbe {
     "try { $result.lastRunTime=$task.LastRunTime.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture) } catch {}",
     "$result | ConvertTo-Json -Compress; exit 0",
   ].join("; ");
-  // -File - (script piped over stdin) reads identically to -EncodedCommand but is not
+  // -Command - (script piped over stdin) reads identically to -EncodedCommand but is not
   // the base64-encoded-PowerShell pattern antivirus heuristics flag as malware evasion.
+  // Windows PowerShell 5.1's -File - echoes an interactive prompt/transcript ahead of the
+  // script's own stdout, corrupting the JSON/HRESULT parsing below; -Command - does not.
   const probe = spawnSync(
     getWindowsPowerShellExePath(),
-    ["-NoProfile", "-NonInteractive", "-File", "-"],
+    ["-NoProfile", "-NonInteractive", "-Command", "-"],
     { encoding: "utf8", timeout: 5_000, windowsHide: true, input: script },
   );
   if (probe.error) {

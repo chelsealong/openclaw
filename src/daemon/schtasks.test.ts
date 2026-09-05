@@ -168,12 +168,12 @@ describe("scheduled task runtime derivation", () => {
     expect(probeScheduledTaskExists("OpenClaw Gateway")).toBeNull();
   });
 
-  it("probes task state via -File stdin instead of the -EncodedCommand AV heuristic", () => {
+  it("probes task state via -Command stdin instead of the -EncodedCommand AV heuristic", () => {
     spawnSync.mockReturnValue({ status: 0, stdout: JSON.stringify({ state: 3 }) });
     expect(probeScheduledTaskExists("OpenClaw Gateway")).toBe(true);
     const [, args, options] = spawnSync.mock.calls[0] as [unknown, string[], { input?: string }];
     expect(args).not.toContain("-EncodedCommand");
-    expect(args).toEqual(expect.arrayContaining(["-File", "-"]));
+    expect(args).toEqual(expect.arrayContaining(["-Command", "-"]));
     expect(options.input).toContain("Schedule.Service");
   });
 

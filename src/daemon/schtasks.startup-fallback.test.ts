@@ -81,7 +81,8 @@ vi.mock("node:child_process", async () => {
     ...actual,
     spawn,
     spawnSync: (command: string, args?: readonly string[], options?: unknown) => {
-      const usesScriptStdin = Array.isArray(args) && args.includes("-File") && args.includes("-");
+      const usesScriptStdin =
+        Array.isArray(args) && args.includes("-Command") && args.includes("-");
       const input = (options as { input?: string } | undefined)?.input;
       if (usesScriptStdin && typeof input === "string" && input.includes("Schedule.Service")) {
         return taskProbe();
