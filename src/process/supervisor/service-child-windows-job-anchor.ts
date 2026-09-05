@@ -32,6 +32,13 @@ const STARTF_USESTDHANDLES = 0x0000_0100;
 const CREATE_NEW_PROCESS_GROUP = 0x0000_0200;
 const CREATE_UNICODE_ENVIRONMENT = 0x0000_0400;
 const EXTENDED_STARTUPINFO_PRESENT = 0x0008_0000;
+const CREATE_NO_WINDOW = 0x0800_0000;
+// Exported so a test can assert on the exact CreateProcessW flags without invoking native koffi bindings.
+export const WINDOWS_JOB_ANCHOR_CREATE_PROCESS_FLAGS =
+  CREATE_NEW_PROCESS_GROUP |
+  CREATE_UNICODE_ENVIRONMENT |
+  EXTENDED_STARTUPINFO_PRESENT |
+  CREATE_NO_WINDOW;
 const WAIT_OBJECT_0 = 0;
 const WAIT_TIMEOUT = 258;
 const WAIT_FAILED = 0xffff_ffff;
@@ -482,7 +489,7 @@ export function runServiceChildWindowsJobAnchor(): void {
             null,
             null,
             1,
-            CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+            WINDOWS_JOB_ANCHOR_CREATE_PROCESS_FLAGS,
             // NULL inherits; an explicitly empty environment must remain an empty block.
             next.env === undefined ? null : buildWindowsJobEnvironmentBlock(next.env),
             next.cwd ?? null,
