@@ -83,7 +83,7 @@ describe("durable pre-reply run failure", () => {
         {
           type: "custom_message",
           customType: "run-failed-before-reply",
-          content: `This turn did not run: ${error}.`,
+          content: `This turn ended before a reply: ${error}`,
           display: true,
           details: { runId, error },
         },
@@ -113,17 +113,34 @@ describe("durable pre-reply run failure", () => {
     },
   );
 
-  it.each(["end", "error"] as const)(
-    "records a run-timeout kill delivered as an aborted %s event",
-    async (phase) => {
+  it.each([
+    { phase: "end", error: undefined, reason: "Run timed out" },
+    { phase: "error", error: "request timed out", reason: "request timed out" },
+  ] as const)(
+    "records a run-timeout kill delivered as an aborted $phase event",
+    async ({ phase, error: timeoutError, reason }) => {
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
         await seed();
         await persistGatewaySessionLifecycleEvent({
           ...target,
-          event: { ...event, data: { ...event.data, phase, aborted: true, stopReason: "timeout" } },
+          event: {
+            ...event,
+            data: {
+              ...event.data,
+              phase,
+              aborted: true,
+              stopReason: "timeout",
+              error: timeoutError,
+            },
+          },
         });
         expect(await reports()).toMatchObject([
-          { type: "custom_message", customType: "run-failed-before-reply", details: { runId } },
+          {
+            type: "custom_message",
+            customType: "run-failed-before-reply",
+            content: `This turn ended before a reply: ${reason}`,
+            details: { runId, error: reason },
+          },
         ]);
       });
     },
