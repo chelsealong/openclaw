@@ -10,7 +10,7 @@ import { runWithCliHistoryWriter } from "../config/sessions/cli-history-boundary
 import {
   loadTranscriptEvents,
   patchSessionEntryCore,
-  resolveSessionTranscriptDatabasePath,
+  resolveSessionTranscriptRuntimeTarget,
   replaceTranscriptEvents,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
@@ -253,7 +253,7 @@ async function createCliHistoryFixture() {
     activeWriterRunId: cliRunId,
     status: "running",
   });
-  const scope = { ...cliTarget, storePath: resolveSessionTranscriptDatabasePath(cliTarget) };
+  const scope = await resolveSessionTranscriptRuntimeTarget(cliTarget);
   const admission = prepareSystemAgentRunAdmission({}, cliRunId, "main", "cli-timeout-test");
   const params: PreparedCliRunContext["params"] = {
     admittedRunContext: await admission.admit("embedded"),
