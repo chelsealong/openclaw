@@ -194,10 +194,15 @@ export function prepareAgentCommandExecutionIdentity(params: {
     ...admission,
     // Observational events do not await consumers. Finish their recovery write
     // before releasing the admission; explicit close remains immediate.
-    finish: () =>
-      Promise.resolve(turnRegistration).finally(() =>
-        drainAgentRunTerminalWrites(admission.operationalRunInstance).finally(admission.close),
-      ),
+    finish: async () => {
+      try {
+        await turnRegistration;
+      } finally {
+        await drainAgentRunTerminalWrites(admission.operationalRunInstance).finally(
+          admission.close,
+        );
+      }
+    },
     onRuntimeTurnStarted: (): Promise<void> | undefined => {
       if (!recovery || !isActive()) {
         return undefined;

@@ -436,13 +436,13 @@ export function startGatewayEventSubscriptions(params: {
         } else {
           // Context cleanup can precede a terminal event. Resolve its persisted
           // run mapping before the lazy chat handler consumes the same event.
-          terminalPreparation = getSessionKeyModule().then(({ resolveSessionKeyForRun }) => {
+          terminalPreparation = getSessionKeyModule().then(async ({ resolveSessionKeyForRun }) => {
             const sessionKey = resolveSessionKeyForRun(
               evt.runId,
               sessionAgentId ? { agentId: sessionAgentId } : undefined,
             );
             if (sessionKey) {
-              return prepareTerminalPersistence(sessionKey);
+              await prepareTerminalPersistence(sessionKey);
             }
           });
           writeContext?.track(terminalPreparation);
