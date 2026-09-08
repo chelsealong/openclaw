@@ -10,6 +10,7 @@ import {
   sendGoogleChatMessage,
   updateGoogleChatMessage,
 } from "./api.js";
+import { formatGoogleChatTextChunks } from "./format.js";
 import type { GoogleChatCoreRuntime, GoogleChatRuntimeEnv } from "./monitor-types.js";
 
 export type GoogleChatTypingMessage =
@@ -57,7 +58,7 @@ export async function deliverGoogleChatReply(params: {
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
   typingMessage?: GoogleChatTypingMessage;
 }): Promise<void> {
-  const { payload, account, spaceId, runtime, core, config, statusSink } = params;
+  const { payload, account, spaceId, runtime, statusSink } = params;
   // Clear this whenever the typing message is deleted or unavailable; otherwise
   // text delivery can keep retrying a dead message and drop content.
   let typingMessage = params.typingMessage;
@@ -121,7 +122,6 @@ export async function deliverGoogleChatReply(params: {
   }
 
   const chunkLimit = account.config.textChunkLimit ?? 4000;
-  const chunkMode = core.channel.text.resolveChunkMode(config, "googlechat", account.accountId);
   const recordOutboundStatus = () => {
     try {
       statusSink?.({ lastOutboundAt: Date.now() });
@@ -145,7 +145,7 @@ export async function deliverGoogleChatReply(params: {
       deliveryThreadName = sent?.threadName?.trim() || deliveryThreadName;
     }
   };
-  const chunks = core.channel.text.chunkMarkdownTextWithMode(reply.text, chunkLimit, chunkMode);
+  const chunks = formatGoogleChatTextChunks(reply.text, chunkLimit);
   for (const chunk of chunks) {
     if (!chunk) {
       continue;

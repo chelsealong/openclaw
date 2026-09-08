@@ -15,6 +15,22 @@ import type { ResolvedGoogleChatAccount } from "./accounts.js";
 import { deliverGoogleChatReply } from "./monitor-reply-delivery.js";
 import type { GoogleChatCoreRuntime, GoogleChatRuntimeEnv } from "./monitor-types.js";
 
+const CHUNKS = vi.hoisted(
+  () =>
+    [
+      "First chunk of the assistant reply.",
+      "Second chunk of the assistant reply.",
+      "Third chunk of the assistant reply.",
+    ] as const,
+);
+
+// Deterministic 3-chunk split standing in for the real formatter; the
+// chunker is not the changed surface, the per-chunk send loop is.
+vi.mock("./format.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./format.js")>()),
+  formatGoogleChatTextChunks: vi.fn(() => CHUNKS),
+}));
+
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
 const account = {
@@ -36,22 +52,7 @@ const account = {
 
 const config = {} as OpenClawConfig;
 
-const CHUNKS = [
-  "First chunk of the assistant reply.",
-  "Second chunk of the assistant reply.",
-  "Third chunk of the assistant reply.",
-] as const;
-
-const core = {
-  channel: {
-    text: {
-      resolveChunkMode: () => "markdown",
-      // Deterministic 3-chunk split standing in for the core chunker; the
-      // chunker is not the changed surface, the per-chunk send loop is.
-      chunkMarkdownTextWithMode: () => CHUNKS,
-    },
-  },
-} as unknown as GoogleChatCoreRuntime;
+const core = {} as unknown as GoogleChatCoreRuntime;
 
 type CreateAttempt = { text?: string; status: number };
 

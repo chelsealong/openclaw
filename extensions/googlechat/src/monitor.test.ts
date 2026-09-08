@@ -820,16 +820,16 @@ describe("googlechat monitor inbound space classification", () => {
         });
       },
     );
+    vi.spyOn(await import("./format.js"), "formatGoogleChatTextChunks").mockReturnValueOnce([
+      "first chunk",
+      "second chunk",
+    ]);
     const core = {
       logging: { shouldLogVerbose: () => false },
       channel: {
         inbound: {
           buildContext: vi.fn((payload: unknown) => payload),
           run: runTurn,
-        },
-        text: {
-          resolveChunkMode: vi.fn(() => "markdown"),
-          chunkMarkdownTextWithMode: vi.fn(() => ["first chunk", "second chunk"]),
         },
       },
     } as unknown as GoogleChatCoreRuntime;

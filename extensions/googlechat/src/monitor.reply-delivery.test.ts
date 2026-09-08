@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   deleteGoogleChatMessage: vi.fn(),
   sendGoogleChatMessage: vi.fn(),
   updateGoogleChatMessage: vi.fn(),
+  formatGoogleChatTextChunks: vi.fn((text: string) => [text]),
 }));
 
 vi.mock("./api.js", async (importOriginal) => ({
@@ -17,6 +18,11 @@ vi.mock("./api.js", async (importOriginal) => ({
   deleteGoogleChatMessage: mocks.deleteGoogleChatMessage,
   sendGoogleChatMessage: mocks.sendGoogleChatMessage,
   updateGoogleChatMessage: mocks.updateGoogleChatMessage,
+}));
+
+vi.mock("./format.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./format.js")>()),
+  formatGoogleChatTextChunks: mocks.formatGoogleChatTextChunks,
 }));
 
 const account = {
@@ -29,15 +35,10 @@ const account = {
 const config = {} as OpenClawConfig;
 
 function createCore(params?: {
-  chunks?: readonly string[];
   media?: { buffer: Buffer; contentType?: string; fileName?: string };
 }) {
   return {
     channel: {
-      text: {
-        resolveChunkMode: vi.fn(() => "markdown"),
-        chunkMarkdownTextWithMode: vi.fn((text: string) => params?.chunks ?? [text]),
-      },
       media: {
         readRemoteMediaBuffer: vi.fn(async () => params?.media ?? { buffer: Buffer.from("image") }),
       },
@@ -70,7 +71,8 @@ afterAll(() => {
 
 describe("Google Chat reply delivery", () => {
   it("does not resend the first chunk when the typing update result is ambiguous", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     const runtime = createRuntime();
     const statusSink = vi.fn();
     const updateError = new Error("response lost");
@@ -104,7 +106,8 @@ describe("Google Chat reply delivery", () => {
   });
 
   it("sends the first chunk after a confirmed missing typing placeholder", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     mocks.updateGoogleChatMessage.mockRejectedValueOnce(
       new GoogleChatApiError(404, "Google Chat API 404: message not found"),
     );
@@ -130,7 +133,8 @@ describe("Google Chat reply delivery", () => {
   });
 
   it("continues later chunks in the provider fallback thread", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     const runtime = createRuntime();
     mocks.sendGoogleChatMessage
       .mockResolvedValueOnce({
@@ -166,7 +170,8 @@ describe("Google Chat reply delivery", () => {
   });
 
   it("continues after a fallback typing placeholder in its delivered thread", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     const runtime = createRuntime();
     mocks.sendGoogleChatMessage.mockResolvedValueOnce({
       messageName: "spaces/AAA/messages/second",
@@ -202,7 +207,8 @@ describe("Google Chat reply delivery", () => {
   });
 
   it("keeps the requested thread when the provider omits thread metadata", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     const runtime = createRuntime();
     mocks.sendGoogleChatMessage.mockResolvedValue({
       messageName: "spaces/AAA/messages/sent",
@@ -224,7 +230,8 @@ describe("Google Chat reply delivery", () => {
   });
 
   it("keeps top-level chunks top-level when Google returns a thread name", async () => {
-    const core = createCore({ chunks: ["first chunk", "second chunk"] });
+    mocks.formatGoogleChatTextChunks.mockReturnValueOnce(["first chunk", "second chunk"]);
+    const core = createCore();
     const runtime = createRuntime();
     mocks.sendGoogleChatMessage.mockResolvedValue({
       messageName: "spaces/AAA/messages/sent",
@@ -244,6 +251,39 @@ describe("Google Chat reply delivery", () => {
     for (const call of mocks.sendGoogleChatMessage.mock.calls) {
       expect(call[0]?.thread).toBeUndefined();
     }
+  });
+
+  it("converts CommonMark to Google Chat markup before sending (regression for #141625)", async () => {
+    const { formatGoogleChatTextChunks: realFormatGoogleChatTextChunks } =
+      await vi.importActual<typeof import("./format.js")>("./format.js");
+    mocks.formatGoogleChatTextChunks.mockImplementationOnce(realFormatGoogleChatTextChunks);
+    // Kept for parity with a reverted fix, which reads this instead of the real
+    // formatter above; it must pass raw text through unconverted so the
+    // assertion below fails for the right reason (unconverted markdown), not a
+    // missing-stub crash.
+    const core = {
+      channel: {
+        text: {
+          resolveChunkMode: () => "markdown",
+          chunkMarkdownTextWithMode: (text: string) => [text],
+        },
+      },
+    } as unknown as GoogleChatCoreRuntime;
+    const runtime = createRuntime();
+    mocks.sendGoogleChatMessage.mockResolvedValue({ messageName: "spaces/AAA/messages/reply" });
+
+    await deliverGoogleChatReply({
+      payload: { text: "**bold**" },
+      account,
+      spaceId: "spaces/AAA",
+      runtime,
+      core,
+      config,
+    });
+
+    expect(mocks.sendGoogleChatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "*bold*" }),
+    );
   });
 
   it("replaces a typing message when the final reply target changed", async () => {
