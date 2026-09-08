@@ -113,6 +113,22 @@ describe("durable pre-reply run failure", () => {
     },
   );
 
+  it.each(["end", "error"] as const)(
+    "records a run-timeout kill delivered as an aborted %s event",
+    async (phase) => {
+      await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        await seed();
+        await persistGatewaySessionLifecycleEvent({
+          ...target,
+          event: { ...event, data: { ...event.data, phase, aborted: true, stopReason: "timeout" } },
+        });
+        expect(await reports()).toMatchObject([
+          { type: "custom_message", customType: "run-failed-before-reply", details: { runId } },
+        ]);
+      });
+    },
+  );
+
   it.each([
     { phase: "start" },
     { phase: "end" },
