@@ -58,9 +58,10 @@ class GatewayEffectiveConfigConflictError extends Error {
 export function isGatewayEffectiveConfigConflictError(error: unknown): boolean {
   return (
     error instanceof GatewayEffectiveConfigConflictError ||
-    (Boolean(error) &&
+    (error !== null &&
       typeof error === "object" &&
-      (error as { code?: unknown }).code === GATEWAY_EFFECTIVE_CONFIG_CONFLICT_CODE)
+      "code" in error &&
+      error.code === GATEWAY_EFFECTIVE_CONFIG_CONFLICT_CODE)
   );
 }
 
