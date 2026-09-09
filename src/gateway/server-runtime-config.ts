@@ -46,7 +46,7 @@ const GATEWAY_EFFECTIVE_CONFIG_CONFLICT_CODE = "GATEWAY_EFFECTIVE_CONFIG_CONFLIC
  * callers must classify it the same as a persisted-config validation failure rather than
  * a transient startup error eligible for restart.
  */
-export class GatewayEffectiveConfigConflictError extends Error {
+class GatewayEffectiveConfigConflictError extends Error {
   readonly code = GATEWAY_EFFECTIVE_CONFIG_CONFLICT_CODE;
 
   constructor(message: string) {
