@@ -685,7 +685,13 @@ export function settleCliBackendOutcome(params: {
   cleanupError: Error | undefined;
   deliveredMessagingSideEffect: boolean;
   diagnosticLifecycle?: ClaudeCliRunDiagnosticLifecycle;
-  failoverContext: { provider: string; model: string; sessionId: string; lane?: string };
+  failoverContext: {
+    provider: string;
+    model: string;
+    sessionId: string;
+    lane?: string;
+    authMode?: string;
+  };
 }): EmbeddedAgentRunResult {
   const {
     cleanupError,

@@ -9,7 +9,7 @@ import {
 } from "../failover-error.js";
 
 type CliExitFailoverErrorParams = {
-  context: Pick<FailoverError, "provider" | "model" | "sessionId" | "lane">;
+  context: Pick<FailoverError, "provider" | "model" | "sessionId" | "lane" | "authMode">;
   // Spawn supplies stderr/stdout windows; live stdout is already structured, so it supplies stderr.
   candidates: readonly string[];
   fallbackMessage: string;
@@ -22,7 +22,7 @@ type CliExitFailoverErrorParams = {
 export function createCliFailoverError(
   message: string,
   reason: FailoverError["reason"],
-  context: Pick<FailoverError, "provider" | "model" | "sessionId" | "lane">,
+  context: Pick<FailoverError, "provider" | "model" | "sessionId" | "lane" | "authMode">,
   options?: Pick<FailoverError, "cause" | "cliTimeout" | "code" | "timeout">,
 ): FailoverError {
   return new FailoverError(message, {

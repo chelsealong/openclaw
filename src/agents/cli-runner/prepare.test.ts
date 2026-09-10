@@ -1426,7 +1426,7 @@ describe("prepareCliRunContext", () => {
         resolveApiKeyForProfile,
       });
 
-      await fixture.prepare({
+      const context = await fixture.prepare({
         sessionKey: "agent:main:main",
         agentDir,
         provider: "claude-cli",
@@ -1440,6 +1440,9 @@ describe("prepareCliRunContext", () => {
         expect.objectContaining({ authProfileId: undefined, authCredential: undefined }),
       );
       expect(resolveApiKeyForProfile).not.toHaveBeenCalled();
+      // No forwarded credential means the CLI's own subscription/OAuth login
+      // is in effect; billing failures must not read as an API-key balance error.
+      expect(context.authMode).toBe("oauth");
     },
   );
 

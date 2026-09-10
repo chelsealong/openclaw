@@ -262,6 +262,7 @@ async function runPreparedCliAgentOwned(
     model: context.modelId,
     sessionId: params.sessionId,
     lane: params.lane,
+    authMode: context.authMode,
   };
   const sessionBindingDisabled = context.preparedBackend.backend.sessionMode === "none";
   const preparedContextAgentMeta =

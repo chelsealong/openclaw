@@ -912,6 +912,14 @@ async function prepareCliRunContextWithinReadFence(
       }
     }
   }
+  // A native auth profile means the CLI's own subscription/OAuth login is in
+  // effect with no OpenClaw-managed credential; billing failures must read as
+  // subscription/usage-limit copy rather than an API-key balance message.
+  const cliAuthMode = usesNativeAuthProfile
+    ? "oauth"
+    : authCredential?.type === "oauth" || authCredential?.type === "token"
+      ? authCredential.type
+      : undefined;
   const extraSystemPrompt = params.extraSystemPrompt?.trim() ?? "";
   const bindingFacts = params.cliSessionBindingFacts;
   const bindingExtraSystemPromptStatic =
@@ -2334,6 +2342,7 @@ async function prepareCliRunContextWithinReadFence(
       params: preparedParams,
       bindQuestionAnswerAuthority,
       effectiveAuthProfileId,
+      ...(cliAuthMode ? { authMode: cliAuthMode } : {}),
       ...(authStore ? { authProfileStore: authStore } : {}),
       agentDir,
       started,

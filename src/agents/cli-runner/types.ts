@@ -374,6 +374,8 @@ export type PreparedCliRunContext = {
   /** Core-only original caller policy, bound to each native request's exact lifetime. */
   bindQuestionAnswerAuthority?: (assertActive: () => void) => PreparedQuestionAnswerAuthority;
   effectiveAuthProfileId?: string;
+  /** Resolved credential class ("oauth" | "token") for billing-copy selection; unset for API-key auth. */
+  authMode?: string;
   /** Selected profile snapshot used only for terminal health settlement. */
   authProfileStore?: AuthProfileStore;
   agentDir?: string;
