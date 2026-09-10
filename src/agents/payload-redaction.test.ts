@@ -231,11 +231,32 @@ describe("sanitizeDiagnosticPayload", () => {
     },
   );
 
+  it.each([
+    "[2 more lines in file. Use offset=3 to continue.]",
+    "[1 more line in file. Use offset=2 to continue.]",
+    "[Read output capped at 8.0KB for this call. Use offset=9 to continue.]",
+  ])("preserves numeric bracketed pagination notices byte-for-byte", (value) => {
+    expect(sanitizeDiagnosticPayload(value)).toBe(value);
+  });
+
   it("fails closed for malformed JSON diagnostic strings", () => {
     const sanitized = sanitizeDiagnosticPayload('{"type":"video","data":"QUJDRA=="');
 
     expect(sanitized).not.toContain(MEDIA_DATA);
     expect(sanitized).toBe("[Malformed diagnostic JSON redacted]");
+  });
+
+  it("still fails closed for genuinely malformed numeric-leading array JSON", () => {
+    const sanitized = sanitizeDiagnosticPayload('[1, {"type":"video","data":"QUJDRA=="');
+
+    expect(sanitized).not.toContain(MEDIA_DATA);
+    expect(sanitized).toBe("[Malformed diagnostic JSON redacted]");
+  });
+
+  it("still redacts credential data from a well-formed numeric-leading array", () => {
+    const sanitized = sanitizeDiagnosticPayload('[1, {"type":"video","data":"QUJDRA=="}]');
+
+    expect(sanitized).not.toContain(MEDIA_DATA);
   });
 
   it("fails closed for hostile diagnostic properties", () => {
