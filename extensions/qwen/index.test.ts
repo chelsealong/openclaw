@@ -319,4 +319,32 @@ describe("qwen provider plugin", () => {
     const modelIds = tokenPlanProvider(globalAgain)?.models?.map((model) => model.id) ?? [];
     expect(new Set(modelIds).size).toBe(modelIds.length);
   });
+
+  it("classifies Alibaba's documented throttling quota code as rate_limit, not billing", async () => {
+    const { providers } = await registerProviderPlugin({
+      plugin: qwenPlugin,
+      id: "qwen",
+      name: "Qwen Provider",
+    });
+    const tokenPlanProvider = requireRegisteredProvider(providers, QWEN_TOKEN_PLAN_PROVIDER_ID);
+
+    expect(
+      tokenPlanProvider.classifyFailoverReason?.({
+        errorMessage:
+          '429 {"error":{"code":"insufficient_quota","message":"Allocated quota exceeded, please increase your quota limit."}}',
+      }),
+    ).toBe("rate_limit");
+    expect(
+      tokenPlanProvider.classifyFailoverReason?.({
+        errorMessage: "429 Throttling.AllocationQuota: Allocated quota exceeded",
+      }),
+    ).toBe("rate_limit");
+    // Alibaba's genuine billing codes still classify as billing.
+    expect(
+      tokenPlanProvider.classifyFailoverReason?.({
+        errorMessage:
+          '400 {"error":{"code":"PrepaidBillOverdue","message":"Your account is overdue."}}',
+      }),
+    ).toBe("billing");
+  });
 });

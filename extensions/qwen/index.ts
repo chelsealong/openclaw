@@ -44,6 +44,30 @@ const QWEN_TOKEN_PLAN_GLM_NO_MAX_THINKING_LEVEL_IDS = QWEN_TOKEN_PLAN_THINKING_L
   (id) => id !== "max",
 );
 
+// Alibaba documents Throttling.AllocationQuota with a structured
+// `insufficient_quota` code as TPS/TPM rate limiting, distinct from its
+// genuine billing codes (PrepaidBillOverdue / PostpaidBillOverdue). The
+// generic billing keyword table matches "insufficient_quota" on other
+// providers where it does mean exhausted credit, so this override is scoped
+// to the Qwen/Bailian provider hook rather than the shared message tables.
+// https://help.aliyun.com/zh/model-studio/error-code#token-limit
+const QWEN_BILL_OVERDUE_RE = /\b(?:Prepaid|Postpaid)BillOverdue\b/i;
+const QWEN_THROTTLING_QUOTA_RE = /\bThrottling\.AllocationQuota\b/i;
+const QWEN_INSUFFICIENT_QUOTA_CODE_RE = /"code"\s*:\s*"insufficient_quota"/i;
+
+function classifyQwenFailoverReason(errorMessage: string) {
+  if (QWEN_BILL_OVERDUE_RE.test(errorMessage)) {
+    return "billing" as const;
+  }
+  if (
+    QWEN_THROTTLING_QUOTA_RE.test(errorMessage) ||
+    QWEN_INSUFFICIENT_QUOTA_CODE_RE.test(errorMessage)
+  ) {
+    return "rate_limit" as const;
+  }
+  return undefined;
+}
+
 function resolveConfiguredQwenBaseUrl(
   config: { models?: { providers?: Record<string, { baseUrl?: string } | undefined> } } | undefined,
 ): string | undefined {
@@ -283,6 +307,7 @@ export default defineSingleProviderPluginEntry({
         ? { ...providerConfig, models }
         : undefined;
     },
+    classifyFailoverReason: ({ errorMessage }) => classifyQwenFailoverReason(errorMessage),
   },
   register(api) {
     api.registerProvider({
@@ -317,6 +342,7 @@ export default defineSingleProviderPluginEntry({
       },
       wrapStreamFn: wrapQwenProviderStream,
       resolveThinkingProfile: ({ modelId }) => resolveQwenTokenPlanThinkingProfile(modelId),
+      classifyFailoverReason: ({ errorMessage }) => classifyQwenFailoverReason(errorMessage),
     });
     api.registerProvider({
       id: QWEN_TOKEN_PLAN_LEGACY_PROVIDER_ID,
@@ -324,6 +350,7 @@ export default defineSingleProviderPluginEntry({
       docsPath: "/providers/qwen",
       auth: [],
       wrapStreamFn: wrapQwenProviderStream,
+      classifyFailoverReason: ({ errorMessage }) => classifyQwenFailoverReason(errorMessage),
     });
     api.registerMediaUnderstandingProvider(buildQwenMediaUnderstandingProvider());
     api.registerVideoGenerationProvider(qwenVideoGenerationProvider);
