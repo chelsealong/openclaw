@@ -469,6 +469,13 @@ function buildMediaGenerationTaskStatusText(params: {
     params.task.status === "queued" ||
     params.task.status === "running" ||
     params.task.terminalOutcome === "blocked";
+  // Delivery is queued behind this session's own active turn at this point;
+  // polling again cannot advance it, and only ending the turn can.
+  const isDeliveringCompletion =
+    params.task.progressSummary === MEDIA_GENERATION_DELIVERING_COMPLETION_PROGRESS;
+  const waitInstruction = isDeliveringCompletion
+    ? `Delivery is queued for this session; polling cannot speed this up. End this turn now and the finished ${params.completionLabel} will arrive automatically once delivery can proceed.`
+    : `Wait for the completion event; the completion agent will send the finished ${params.completionLabel} here when it's ready.`;
   const lines = [
     active
       ? `${params.nounLabel} task ${params.task.taskId} is already ${params.task.status}${provider ? ` with ${provider}` : ""}.`
@@ -476,9 +483,9 @@ function buildMediaGenerationTaskStatusText(params: {
     params.task.progressSummary ? `Progress: ${params.task.progressSummary}.` : null,
     params.duplicateGuard
       ? active
-        ? `Do not call ${params.toolName} again for this request. Wait for the completion event; the completion agent will send the finished ${params.completionLabel} here.`
+        ? `Do not call ${params.toolName} again for this request. ${waitInstruction}`
         : `Do not call ${params.toolName} again for the same request; this recent ${params.completionLabel} generation already completed.`
-      : `Wait for the completion event; the completion agent will send the finished ${params.completionLabel} here when it's ready.`,
+      : waitInstruction,
   ].filter((entry): entry is string => Boolean(entry));
   return lines.join("\n");
 }

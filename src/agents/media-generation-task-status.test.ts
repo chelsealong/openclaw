@@ -2,7 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
-import { recordRecentMediaGenerationTaskStartForSession } from "./media-generation-task-status-shared.js";
+import {
+  MEDIA_GENERATION_DELIVERING_COMPLETION_PROGRESS,
+  recordRecentMediaGenerationTaskStartForSession,
+} from "./media-generation-task-status-shared.js";
 import { resetRecentMediaGenerationDuplicateGuardsForTests } from "./media-generation-task-status-shared.test-support.js";
 import {
   buildActiveImageGenerationTaskPromptContextForSession,
@@ -98,6 +101,33 @@ describe("image generation task status", () => {
     expect(details.taskKind).toBe(IMAGE_GENERATION_TASK_KIND);
     expect(details.provider).toBe("openai");
     expect(details.progressSummary).toBe("Generating image");
+  });
+
+  it("tells a polling caller to end its turn once delivery is queued, not to keep waiting", () => {
+    // A caller stuck polling status while delivery is queued behind its own
+    // active turn can only resolve the deadlock by ending its turn; the old
+    // "wait for the completion event" text gave it no way to know that.
+    const statusText = buildImageGenerationTaskStatusText(
+      {
+        taskId: "task-delivering",
+        runtime: "cli",
+        taskKind: IMAGE_GENERATION_TASK_KIND,
+        sourceId: "image_generate:openai",
+        requesterSessionKey: "agent:main",
+        ownerKey: "agent:main",
+        scopeKind: "session",
+        task: "delivering task",
+        status: "running",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+        createdAt: Date.now(),
+        progressSummary: MEDIA_GENERATION_DELIVERING_COMPLETION_PROGRESS,
+      },
+      { duplicateGuard: true },
+    );
+
+    expect(statusText).toContain("End this turn now");
+    expect(statusText).not.toContain("Wait for the completion event");
   });
 
   it("can restrict active lookup to the matching image prompt", async () => {

@@ -535,7 +535,7 @@ export function scheduleMediaGenerationTaskCompletion<
         // while an exact cron continuation is still owned by its original run.
         beforeRetry: recordCompletionDeliveryProgress,
       });
-      if (wakeOutcome.status !== "delivered") {
+      if (wakeOutcome.status !== "delivered" && wakeOutcome.status !== "durably_queued") {
         const failureReason = "completion delivery was not confirmed after successful generation";
         terminalResult = resolveRequiredCompletionDeliveryFailureTerminalResult(failureReason);
         params.onWakeFailure(`${params.toolName} ${failureReason}`, {
