@@ -574,6 +574,26 @@ actor TalkModeRuntime {
 // MARK: - Gateway + TTS
 
 extension TalkModeRuntime {
+    static let defaultAssistantReplyTimeoutSeconds = 45
+
+    /// A configured `agents.defaults.timeoutSeconds` must not be cut short by
+    /// Talk Mode's own fixed wait, or a still-running local-model reply is
+    /// silently abandoned (#153145).
+    static func configuredAgentTimeoutSeconds(_ root: [String: Any] = OpenClawConfigFile.loadDict())
+        -> Int?
+    {
+        guard let agents = root["agents"] as? [String: Any],
+              let defaults = agents["defaults"] as? [String: Any]
+        else { return nil }
+        if let seconds = defaults["timeoutSeconds"] as? Int, seconds > 0 {
+            return seconds
+        }
+        if let number = defaults["timeoutSeconds"] as? NSNumber, number.intValue > 0 {
+            return number.intValue
+        }
+        return nil
+    }
+
     private func sendAndSpeak(_ transcript: String) async {
         let gen = self.lifecycleGeneration
         await reloadConfig()
@@ -587,6 +607,9 @@ extension TalkModeRuntime {
         }
         let runId = UUID().uuidString
         let startedAt = Date().timeIntervalSince1970
+        let configuredTimeoutSeconds = Self.configuredAgentTimeoutSeconds()
+        let assistantWaitTimeoutSeconds = max(
+            Self.defaultAssistantReplyTimeoutSeconds, configuredTimeoutSeconds ?? 0)
         self.logger.info(
             "talk send start runId=\(runId, privacy: .public) " +
                 "session=\(sessionKey, privacy: .public) " +
@@ -598,7 +621,9 @@ extension TalkModeRuntime {
                 message: prompt,
                 thinking: nil,
                 idempotencyKey: runId,
-                attachments: [])
+                attachments: [],
+                runTimeoutMs: configuredTimeoutSeconds.map { $0 * 1000 },
+                requestTimeoutMs: max(30_000, assistantWaitTimeoutSeconds * 1000))
             guard self.isCurrent(gen) else { return }
             let normalizedStatus = ChatSendStatus.normalized(response.status)
             self.logger.info(
@@ -626,7 +651,7 @@ extension TalkModeRuntime {
                 assistantText = await self.waitForAssistantEventText(
                     sessionKey: sessionKey,
                     runId: response.runId,
-                    timeoutSeconds: 45)
+                    timeoutSeconds: assistantWaitTimeoutSeconds)
                 if assistantText == nil {
                     self.logger.warning("talk assistant event text missing; using history fallback")
                     assistantText = await self.waitForAssistantTextFromHistory(

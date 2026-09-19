@@ -50,4 +50,24 @@ struct TalkModeConfigParsingTests {
 
         #expect(TalkModeRuntime.resolvedSilenceTimeoutMs(talk) == TalkDefaults.silenceTimeoutMs)
     }
+
+    @Test func `reads configured agent run timeout seconds`() {
+        let root: [String: Any] = [
+            "agents": ["defaults": ["timeoutSeconds": 600]],
+        ]
+
+        #expect(TalkModeRuntime.configuredAgentTimeoutSeconds(root) == 600)
+    }
+
+    @Test func `ignores non positive configured agent run timeout seconds`() {
+        let root: [String: Any] = [
+            "agents": ["defaults": ["timeoutSeconds": 0]],
+        ]
+
+        #expect(TalkModeRuntime.configuredAgentTimeoutSeconds(root) == nil)
+    }
+
+    @Test func `has no configured agent run timeout seconds when unset`() {
+        #expect(TalkModeRuntime.configuredAgentTimeoutSeconds([:]) == nil)
+    }
 }
