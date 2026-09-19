@@ -275,10 +275,15 @@ describe("memory runtime handles", () => {
 
       await expect(
         getActiveMemorySearchManagerCore({ cfg: memoryConfig, agentId: "main" }),
-      ).resolves.toEqual({
-        manager: null,
-        error: capability === "missing" ? "memory plugin unavailable" : "no index",
-      });
+      ).resolves.toEqual(
+        capability === "missing"
+          ? {
+              manager: null,
+              error: "memory plugin does not report diagnostics",
+              diagnosticsUnsupported: true,
+            }
+          : { manager: null, error: "no index" },
+      );
       await retirePluginCache(cache);
       expect(first.instance.lifecycle.signal.aborted).toBe(true);
 
@@ -293,6 +298,20 @@ describe("memory runtime handles", () => {
       expect(replacement.runtime.closeAllMemorySearchManagers).toHaveBeenCalledOnce();
     },
   );
+
+  it("flags diagnosticsUnsupported for an enabled slot owner without a memory capability", async () => {
+    const { registry } = createRegistry();
+    registry.memoryCapabilities = [];
+    mocks.loadPluginRegistryHandle.mockReturnValue(registry);
+
+    await expect(
+      getActiveMemorySearchManagerCore({ cfg: memoryConfig, agentId: "main" }),
+    ).resolves.toEqual({
+      manager: null,
+      error: "memory plugin does not report diagnostics",
+      diagnosticsUnsupported: true,
+    });
+  });
 
   it("enrolls cached standalone runtimes once across selection and cleanup resets", async () => {
     const first = createRegistry();

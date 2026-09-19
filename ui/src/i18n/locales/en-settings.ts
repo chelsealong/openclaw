@@ -1135,6 +1135,8 @@ const enSettings = {
         hibernating: "Memory is hibernating",
         needsAttention: "Memory needs attention",
         activeDescription: "{engine} · {mode}",
+        diagnosticsUnsupportedDescription:
+          "{engine} is active, but this plugin doesn't report memory diagnostics.",
         loadingDescription: "Checking this agent's memory engine and dream cycle.",
         offDescription: "Choose a memory engine in Settings to wake it up.",
         disabledDescription: "The selected memory engine is disabled. Re-enable it in Settings.",
@@ -1177,6 +1179,8 @@ const enSettings = {
         unavailable: "Unavailable",
         notChecked: "Not checked",
         notCheckedDescription: "Embedding readiness has not been checked yet.",
+        notReported: "Not reported",
+        notReportedDescription: "This plugin doesn't report embedding diagnostics.",
         checking: "Checking…",
         test: "Test",
         testing: "Testing…",

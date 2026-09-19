@@ -538,6 +538,28 @@ describe("doctor.memory.status", () => {
     expectEmbeddingErrorResponse(respond, "memory search unavailable");
   });
 
+  it("marks embeddings as unchecked instead of an error when the slot plugin does not report diagnostics", async () => {
+    getMemorySearchManager.mockResolvedValue({
+      manager: null,
+      error: "memory plugin does not report diagnostics",
+      diagnosticsUnsupported: true,
+    });
+    const respond = vi.fn();
+
+    await invokeDoctorMemory("doctor.memory.status", respond, { params: { probe: true } });
+
+    const payload = respondPayload(respond);
+    expectRecordFields(payload, {
+      agentId: "main",
+      diagnosticsUnsupported: true,
+      embedding: {
+        ok: false,
+        checked: false,
+        error: "memory plugin does not report diagnostics",
+      },
+    });
+  });
+
   it("returns probe failure when manager probe throws", async () => {
     const { close } = useMemoryManagerFixture({
       status: () => ({ provider: "openai" }),

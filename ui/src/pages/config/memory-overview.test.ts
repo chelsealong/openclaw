@@ -273,6 +273,29 @@ describe("renderMemoryOverview", () => {
     ).toBe(false);
   });
 
+  it("shows the plugin as awake without an error when its diagnostics are unsupported", () => {
+    const payload = fixturePayload();
+    payload.diagnosticsUnsupported = true;
+    payload.provider = undefined;
+    payload.embedding = {
+      ok: false,
+      checked: false,
+      error: "memory plugin does not report diagnostics",
+    };
+    const container = renderOverview({ kind: "ready", payload });
+
+    expect(container.textContent).toContain("Memory is awake");
+    expect(container.textContent).not.toContain("Memory needs attention");
+    expect(container.querySelector(".lob-reading-book")).not.toBeNull();
+    expect(container.textContent).toContain("doesn't report memory diagnostics");
+    expect(container.textContent).toContain("Not reported");
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>("button")].some(
+        (button) => button.textContent?.trim() === "Test",
+      ),
+    ).toBe(false);
+  });
+
   it("hides the embedding test once readiness is healthy", () => {
     const container = renderOverview({ kind: "ready", payload: fixturePayload() });
 

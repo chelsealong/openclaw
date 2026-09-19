@@ -177,6 +177,16 @@ export async function getActiveMemorySearchManagerCore(params: {
 }) {
   const owner = ensureMemoryRuntime(params);
   if (!owner) {
+    if (resolveMemoryRuntimePluginIds(params.cfg).length > 0) {
+      // The slot's plugin is enabled but never registered a memory capability
+      // (e.g. a third-party plugin that only uses agent hooks), so there is
+      // nothing to probe rather than a genuine failure.
+      return {
+        manager: null,
+        error: "memory plugin does not report diagnostics",
+        diagnosticsUnsupported: true,
+      };
+    }
     return { manager: null, error: "memory plugin unavailable" };
   }
   if (owner.standalone) {

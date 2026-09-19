@@ -82,10 +82,14 @@ function renderHero(props: MemoryOverviewProps) {
       : readyPayload
         ? hasEmbeddingError(readyPayload)
           ? (readyPayload.embedding.error ?? t("memoryPage.overview.health.unavailable"))
-          : t("memoryPage.overview.hero.activeDescription", {
-              engine: engineId ?? t("common.unknown"),
-              mode: searchMode(readyPayload),
-            })
+          : readyPayload.diagnosticsUnsupported
+            ? t("memoryPage.overview.hero.diagnosticsUnsupportedDescription", {
+                engine: engineId ?? t("common.unknown"),
+              })
+            : t("memoryPage.overview.hero.activeDescription", {
+                engine: engineId ?? t("common.unknown"),
+                mode: searchMode(readyPayload),
+              })
         : t("memoryPage.overview.hero.loadingDescription");
   const pose = off
     ? { sleeping: true }
@@ -211,15 +215,18 @@ function renderActivity(dreaming: DreamingStatus) {
 }
 
 function renderEngineHealth(payload: DoctorMemoryStatusPayload, props: MemoryOverviewProps) {
-  const notChecked = payload.embedding.checked === false;
-  const embeddingKind = payload.embedding.ok ? "ok" : notChecked ? "muted" : "danger";
+  const unsupported = payload.diagnosticsUnsupported === true;
+  const notChecked = payload.embedding.checked === false && !unsupported;
+  const embeddingKind = payload.embedding.ok ? "ok" : notChecked || unsupported ? "muted" : "danger";
   const embeddingLabel = props.probingEmbeddings
     ? t("memoryPage.overview.health.checking")
     : payload.embedding.ok
       ? t("memoryPage.overview.health.healthy")
-      : notChecked
-        ? t("memoryPage.overview.health.notChecked")
-        : t("memoryPage.overview.health.unavailable");
+      : unsupported
+        ? t("memoryPage.overview.health.notReported")
+        : notChecked
+          ? t("memoryPage.overview.health.notChecked")
+          : t("memoryPage.overview.health.unavailable");
   return renderSettingsSection(
     { title: t("memoryPage.overview.health.title") },
     html`
@@ -231,9 +238,11 @@ function renderEngineHealth(payload: DoctorMemoryStatusPayload, props: MemoryOve
         title: t("memoryPage.overview.health.embeddings"),
         description: payload.embedding.ok
           ? nothing
-          : notChecked
-            ? t("memoryPage.overview.health.notCheckedDescription")
-            : payload.embedding.error,
+          : unsupported
+            ? t("memoryPage.overview.health.notReportedDescription")
+            : notChecked
+              ? t("memoryPage.overview.health.notCheckedDescription")
+              : payload.embedding.error,
         control: html`
           ${renderSettingsStatus({ kind: embeddingKind, label: embeddingLabel })}
           ${

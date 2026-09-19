@@ -102,6 +102,8 @@ type DoctorMemoryDreamingPayload = DoctorMemoryDreamingConfigPayload & DreamingS
 export type DoctorMemoryStatusPayload = {
   agentId: string;
   provider?: string;
+  /** Set when the slot's plugin never registered a memory capability, so no diagnostics exist to check. */
+  diagnosticsUnsupported?: boolean;
   embedding: {
     ok: boolean;
     error?: string;
@@ -654,7 +656,7 @@ export const createDoctorHandlers = (
       return;
     }
     const { cfg, agentId, requestedAgentId } = resolved;
-    const { manager, error } = await getActiveMemorySearchManagerCore({
+    const { manager, error, diagnosticsUnsupported } = await getActiveMemorySearchManagerCore({
       cfg,
       agentId,
       purpose: "status",
@@ -662,8 +664,10 @@ export const createDoctorHandlers = (
     if (!manager) {
       const payload: DoctorMemoryStatusPayload = {
         agentId,
+        ...(diagnosticsUnsupported ? { diagnosticsUnsupported: true } : {}),
         embedding: {
           ok: false,
+          ...(diagnosticsUnsupported ? { checked: false as const } : {}),
           error: error ?? "memory search unavailable",
         },
       };
