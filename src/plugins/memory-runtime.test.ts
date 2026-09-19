@@ -313,6 +313,25 @@ describe("memory runtime handles", () => {
     });
   });
 
+  it("surfaces the real failure for a slot plugin that crashed while loading", async () => {
+    const { registry } = createRegistry();
+    registry.memoryCapabilities = [];
+    const record = registry.plugins.find((plugin) => plugin.id === "memory-core");
+    if (!record) {
+      throw new Error("expected memory-core plugin record in fixture registry");
+    }
+    record.status = "error";
+    record.error = "crashed during import: Cannot find module 'sqlite-vec'";
+    mocks.loadPluginRegistryHandle.mockReturnValue(registry);
+
+    await expect(
+      getActiveMemorySearchManagerCore({ cfg: memoryConfig, agentId: "main" }),
+    ).resolves.toEqual({
+      manager: null,
+      error: "crashed during import: Cannot find module 'sqlite-vec'",
+    });
+  });
+
   it("enrolls cached standalone runtimes once across selection and cleanup resets", async () => {
     const first = createRegistry();
     const second = createRegistry();

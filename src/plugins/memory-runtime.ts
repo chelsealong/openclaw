@@ -32,6 +32,12 @@ type WorkspaceMemoryPathClassification = Parameters<
   NonNullable<MemoryPluginRuntime["classifyWorkspaceMemoryPaths"]>
 >[0];
 type MemoryRuntimeOwner = { runtime: MemoryRuntime; standalone?: true };
+type MemoryRuntimeResolution = {
+  owner?: MemoryRuntimeOwner;
+  /** Status of the slot's plugin record when a registry load resolved no runtime. */
+  pluginStatus?: "loaded" | "disabled" | "error";
+  pluginError?: string;
+};
 const enrolledStandaloneMemoryRuntimes = new WeakSet<MemoryRuntime>();
 let standaloneMemoryRegistrySlot:
   | { runtime?: MemoryRuntime; retiredRuntimes: Set<MemoryRuntime> }
@@ -125,14 +131,14 @@ function listCurrentMemoryRuntimes(): MemoryRuntime[] {
 function ensureMemoryRuntime(params?: {
   cfg: OpenClawConfig;
   agentId: string;
-}): MemoryRuntimeOwner | undefined {
+}): MemoryRuntimeResolution {
   const current = getMemoryRuntime();
   if (current || !params) {
-    return current ? { runtime: current } : undefined;
+    return { owner: current ? { runtime: current } : undefined };
   }
   const onlyPluginIds = resolveMemoryRuntimePluginIds(params.cfg);
   if (onlyPluginIds.length === 0) {
-    return undefined;
+    return {};
   }
   const workspaceDir = resolveMemoryRuntimeWorkspaceDir(params.cfg, params.agentId);
   const registry = loadPluginRegistryHandle({
@@ -142,9 +148,14 @@ function ensureMemoryRuntime(params?: {
     activate: false,
   });
   const runtime = resolveMemoryRuntimeFromRegistry(registry);
+  const pluginRecord = registry.plugins.find((plugin) => plugin.id === onlyPluginIds[0]);
+  const resolution: MemoryRuntimeResolution = {
+    pluginStatus: pluginRecord?.status,
+    pluginError: pluginRecord?.error,
+  };
   const previousSlot = standaloneMemoryRegistrySlot;
   if (previousSlot?.runtime === runtime) {
-    return runtime ? { runtime, standalone: true } : undefined;
+    return { ...resolution, owner: runtime ? { runtime, standalone: true } : undefined };
   }
   const retiredRuntimes = new Set(previousSlot?.retiredRuntimes);
   if (previousSlot?.runtime) {
@@ -165,7 +176,7 @@ function ensureMemoryRuntime(params?: {
       enrolledStandaloneMemoryRuntimes.add(runtime);
     }
   }
-  return runtime ? { runtime, standalone: true } : undefined;
+  return { ...resolution, owner: runtime ? { runtime, standalone: true } : undefined };
 }
 
 /** Returns the active plugin-backed memory search manager for an agent. */
@@ -175,17 +186,20 @@ export async function getActiveMemorySearchManagerCore(params: {
   purpose?: "default" | "status" | "cli";
   inspectSources?: boolean;
 }) {
-  const owner = ensureMemoryRuntime(params);
+  const { owner, pluginStatus, pluginError } = ensureMemoryRuntime(params);
   if (!owner) {
-    if (resolveMemoryRuntimePluginIds(params.cfg).length > 0) {
-      // The slot's plugin is enabled but never registered a memory capability
-      // (e.g. a third-party plugin that only uses agent hooks), so there is
-      // nothing to probe rather than a genuine failure.
+    if (pluginStatus === "loaded") {
+      // The slot's plugin loaded and is enabled but never registered a memory
+      // capability (e.g. a third-party plugin that only uses agent hooks), so
+      // there is nothing to probe rather than a genuine failure.
       return {
         manager: null,
         error: "memory plugin does not report diagnostics",
         diagnosticsUnsupported: true,
       };
+    }
+    if (pluginStatus === "error") {
+      return { manager: null, error: pluginError ?? "memory plugin failed to load" };
     }
     return { manager: null, error: "memory plugin unavailable" };
   }
@@ -203,7 +217,7 @@ export async function getActiveMemorySearchManagerCore(params: {
 export async function authorizeActiveMemorySearchHits(
   params: MemorySearchAuthorization,
 ): Promise<MemorySearchAuthorization["hits"]> {
-  const owner = ensureMemoryRuntime(params);
+  const { owner } = ensureMemoryRuntime(params);
   if (!owner) {
     // Session artifacts need plugin-owned identity mapping before they are safe
     // to expose. Runtimes without that capability may still return memory hits.
@@ -225,7 +239,7 @@ export async function classifyActiveMemoryWorkspacePaths(
       classifications: Array<{ relativePath: string; originClass: string }>;
     }
 > {
-  const owner = ensureMemoryRuntime(params);
+  const { owner } = ensureMemoryRuntime(params);
   if (!owner) {
     return { status: "unavailable" };
   }
@@ -241,7 +255,7 @@ export async function classifyActiveMemoryWorkspacePaths(
 
 /** Resolves current memory backend config without constructing a manager. */
 export function resolveActiveMemoryBackendConfig(params: { cfg: OpenClawConfig; agentId: string }) {
-  const owner = ensureMemoryRuntime(params);
+  const { owner } = ensureMemoryRuntime(params);
   return owner ? owner.runtime.resolveMemoryBackendConfig(params) : null;
 }
 
