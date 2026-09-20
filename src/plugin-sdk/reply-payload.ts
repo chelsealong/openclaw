@@ -20,6 +20,7 @@ export type { MediaPayload } from "../channels/plugins/media-payload.js";
 export { buildMediaPayload } from "../channels/plugins/media-payload.js";
 /** Plugin-facing reply payload without core-only trusted local media internals. */
 export type ReplyPayload = Omit<InternalReplyPayload, "trustedLocalMedia">;
+
 export type AskUserQuestionOptionIndices = ReadonlyMap<string, ReadonlyMap<string, number>>;
 
 /** Read bounded Gateway-owned option ordering for one native ask_user question. */
@@ -72,21 +73,15 @@ export function resolveAskUserQuestionOptionIndex(params: {
 export type { ReplyPayloadTtsSupplement } from "../auto-reply/reply-payload.js";
 export {
   buildTtsSupplementMediaPayload,
+  copyReplyPayloadMetadata,
   FAST_MODE_AUTO_PROGRESS_KIND,
   getReplyPayloadTtsSupplement,
   isFastModeAutoProgressPayload,
   isReplyPayloadNonTerminalToolErrorWarning,
+  isReplyPayloadTerminalContent,
   isReplyPayloadTtsSupplement,
   markReplyPayloadAsTtsSupplement,
 } from "../auto-reply/reply-payload.js";
-/**
- * Terminal-lane classification only: excludes reasoning, commentary, and
- * status/compaction/fallback/TTS-supplement payloads. It does not check
- * whether `payload` is nonempty or otherwise sendable — pair it with the
- * relevant content/media checks (e.g. `hasReplyPayloadContent`) before
- * treating a payload as a deliverable answer.
- */
-export { isReplyPayloadTerminalContent } from "../auto-reply/reply-payload.js";
 
 /** Normalized outbound reply payload accepted by channel send helpers. */
 export type OutboundReplyPayload = {

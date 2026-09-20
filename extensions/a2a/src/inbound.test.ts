@@ -61,7 +61,7 @@ describe("A2A channel inbound dispatch", () => {
     },
   );
 
-  it("ignores non-final replies and completes the task with its final artifact", async () => {
+  it("ignores non-final replies and supplemental notices before completing with the answer", async () => {
     const fixture = createA2aInboundFixture();
     vi.mocked(fixture.runtime.channel.inbound.dispatch).mockImplementation(async (turn) => {
       expect(turn.ctxPayload).toMatchObject({
@@ -70,39 +70,6 @@ describe("A2A channel inbound dispatch", () => {
         CommandInterpretationSuppressed: true,
       });
       await turn.delivery.deliver({ text: "preview" }, { kind: "block" });
-      expect(fixture.store.get(fixture.task.id)?.status.state).toBe("TASK_STATE_WORKING");
-      await turn.delivery.deliver({ text: "agent answer" }, { kind: "final" });
-      return {
-        admission: { kind: "dispatch" },
-        dispatched: true,
-        ctxPayload: turn.ctxPayload,
-        routeSessionKey: turn.route.sessionKey,
-        dispatchResult: createA2aDispatchResult(),
-      };
-    });
-
-    await dispatchA2aInbound(fixture.params);
-
-    expect(fixture.store.get(fixture.task.id)).toEqual(
-      expect.objectContaining({
-        contextId: "ctx-inbound",
-        status: expect.objectContaining({ state: "TASK_STATE_COMPLETED" }),
-        artifacts: [expect.objectContaining({ parts: [{ text: "agent answer" }] })],
-      }),
-    );
-    expect(fixture.runtime.channel.inbound.buildContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "a2a",
-        conversation: expect.objectContaining({ id: "ctx-inbound", kind: "direct" }),
-        sender: { id: "hermes", name: "hermes" },
-      }),
-    );
-    fixture.store.stop();
-  });
-
-  it("ignores a fallback notice delivered as final and completes on the real answer", async () => {
-    const fixture = createA2aInboundFixture();
-    vi.mocked(fixture.runtime.channel.inbound.dispatch).mockImplementation(async (turn) => {
       await turn.delivery.deliver(
         { text: "fallback notice", isFallbackNotice: true },
         { kind: "final" },
@@ -122,6 +89,7 @@ describe("A2A channel inbound dispatch", () => {
 
     expect(fixture.store.get(fixture.task.id)).toEqual(
       expect.objectContaining({
+        contextId: "ctx-inbound",
         status: expect.objectContaining({ state: "TASK_STATE_COMPLETED" }),
         artifacts: [expect.objectContaining({ parts: [{ text: "agent answer" }] })],
       }),

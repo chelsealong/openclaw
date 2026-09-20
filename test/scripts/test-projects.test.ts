@@ -125,6 +125,11 @@ describe("test runtime prerequisites", () => {
       "runtime",
     ],
     [
+      "native catalog worker capture custody",
+      ["src/agents/prepared-model-catalog-worker.custody.integration.test.ts"],
+      "runtime",
+    ],
+    [
       "native Google Meet SDK",
       ["extensions/google-meet/src/transports/chrome-startup.test.ts"],
       "runtime",
@@ -316,6 +321,7 @@ describe("test runtime prerequisites", () => {
       [
         "agent-command-local.test.ts",
         "simple-completion-runtime.plugin-scope.test.ts",
+        "prepared-model-catalog-worker.custody.integration.test.ts",
         "prepared-model-catalog-worker.integration.test.ts",
         "runtime-plugins.context-engine.integration.test.ts",
       ],
@@ -326,6 +332,7 @@ describe("test runtime prerequisites", () => {
       [
         "agent-command-local.test.ts",
         "simple-completion-runtime.plugin-scope.test.ts",
+        "prepared-model-catalog-worker.custody.integration.test.ts",
         "prepared-model-catalog-worker.integration.test.ts",
         "runtime-plugins.context-engine.integration.test.ts",
       ],
@@ -1198,6 +1205,8 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/pr-crabbox-merge-bypass.test.ts",
         "test/scripts/release-ci-summary.test.ts",
         "test/scripts/release-tooling-identity.test.ts",
+        "test/scripts/security-review-event.test.ts",
+        "test/scripts/security-review-script.test.ts",
         "test/scripts/validate-release-publish-approval.test.ts",
       ],
     );
@@ -1383,6 +1392,8 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/openclaw-npm-plugin-recovery-workflow.test.ts",
         "test/scripts/openclaw-npm-resume-run.test.ts",
         "test/scripts/release-candidate-checklist.test.ts",
+        "test/scripts/release-publish-preflight-evidence.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
         "test/scripts/verify-stable-main-closeout.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
@@ -1421,6 +1432,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/plugin-npm-extended-stable-workflow.test.ts",
         "test/scripts/release-beta-verifier.test.ts",
         "test/scripts/release-candidate-checklist.test.ts",
+        "test/scripts/release-clawhub-children.test.ts",
         "test/scripts/release-no-push-workflow.test.ts",
         "test/scripts/release-plan-producer.test.ts",
         "test/scripts/release-publish-draft.test.ts",
@@ -1508,14 +1520,35 @@ describe("scripts/test-projects changed-target routing", () => {
     );
   });
 
-  it("keeps security-sensitive guard workflow edits on guard workflow tests", () => {
+  it("keeps security review workflow edits on the automatic review owners", () => {
     expectChangedTargets(
-      [".github/workflows/security-sensitive-guard.yml"],
+      [".github/workflows/security-review.yml"],
       [
-        "test/scripts/security-sensitive-guard-workflow.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
+        "test/scripts/security-review-event.test.ts",
+        "test/scripts/security-review-script.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
     );
+  });
+
+  it("keeps automatic review entry points and rollout changes on executable owner tests", () => {
+    expectChangedTargets(
+      ["scripts/github/security-review-event.mjs"],
+      ["test/scripts/security-review-event.test.ts"],
+    );
+    for (const reviewPath of [
+      "scripts/github/security-review.mjs",
+      "scripts/github/security-review-rollout.mjs",
+    ]) {
+      expectChangedTargets(
+        [reviewPath],
+        [
+          "test/scripts/security-review-script.test.ts",
+          "test/scripts/security-review-rollout.test.ts",
+        ],
+      );
+    }
   });
 
   it("keeps Crabbox and Testbox workflow edits on workflow regression tests", () => {
@@ -1741,7 +1774,7 @@ describe("scripts/test-projects changed-target routing", () => {
       ["scripts/github/dependency-guard.mjs"],
       [
         "test/scripts/dependency-guard-script.test.ts",
-        "test/scripts/dependency-guard-workflow.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
       ],
     );
 
@@ -1749,9 +1782,10 @@ describe("scripts/test-projects changed-target routing", () => {
       ["scripts/github/guard-shared.mjs"],
       [
         "test/scripts/dependency-guard-script.test.ts",
-        "test/scripts/dependency-guard-workflow.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
         "test/scripts/security-sensitive-guard-script.test.ts",
-        "test/scripts/security-sensitive-guard-workflow.test.ts",
+        "test/scripts/security-review-script.test.ts",
+        "test/scripts/security-review-event.test.ts",
       ],
     );
 
@@ -1764,7 +1798,7 @@ describe("scripts/test-projects changed-target routing", () => {
       ["scripts/github/security-sensitive-guard.mjs"],
       [
         "test/scripts/security-sensitive-guard-script.test.ts",
-        "test/scripts/security-sensitive-guard-workflow.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
       ],
     );
 
@@ -2548,6 +2582,10 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.unit-fast.config.ts",
       "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
     ],
+    [
+      "test/vitest/vitest.unit-fast-isolated.config.ts",
+      "src/state/openclaw-agent-execution-cleanup.test.ts",
+    ],
   ])("preserves whole-owner watch coverage for %s with %s", (config, file) => {
     const [plan] = buildVitestRunPlans(["--watch", config, file]);
     expect(plan).toMatchObject({
@@ -2635,10 +2673,6 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
     ],
     [
-      "src/agents/embedded-agent-runner/run.prepared-harness-source-delivery.integration.test.ts",
-      "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
-    ],
-    [
       "src/agents/embedded-agent-runner/run/attempt.abort-race.test.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     ],
@@ -2689,15 +2723,19 @@ describe("scripts/test-projects changed-target routing", () => {
     }
   });
 
+  const embeddedRunWorkerFiles = [
+    "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
+    "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+    "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+    "src/agents/embedded-agent-runner/run/run-attempt-dispatch.owner.test.ts",
+    "src/agents/embedded-agent-runner/run/failover-retry-controller.inline-auth.worker.test.ts",
+  ];
+
   it.each([
     {
       directory: "src/agents/embedded-agent-runner/run",
       config: "test/vitest/vitest.agents-embedded-agent-run.config.ts",
-      workerFiles: [
-        "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
-        "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
-        "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
-      ],
+      workerFiles: embeddedRunWorkerFiles,
     },
     {
       directory: "src/agents/runtime-plan",
@@ -2756,11 +2794,7 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.infra.config.ts",
         forwardedArgs: ["--sequence.shuffle", "--sequence.seed", "3"],
-        includePatterns: [
-          "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
-          "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
-          "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
-        ],
+        includePatterns: embeddedRunWorkerFiles,
         watchMode: false,
       },
       {
@@ -2793,10 +2827,7 @@ describe("scripts/test-projects changed-target routing", () => {
         {
           config: "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
           forwardedArgs: [],
-          includePatterns: [
-            `${root}/run.overflow-compaction.test.ts`,
-            `${root}/run.prepared-harness-source-delivery.integration.test.ts`,
-          ],
+          includePatterns: [`${root}/run.overflow-compaction.test.ts`],
           watchMode: false,
         },
         {
@@ -3078,6 +3109,7 @@ describe("scripts/test-projects changed-target routing", () => {
           "test/scripts/ci-git-prerequisites.test.ts",
           "test/scripts/ios-release-plan.test.ts",
           "test/scripts/mac-native-fixtures.test.ts",
+          "test/scripts/plugin-npm-publication-readback.test.ts",
         ],
         watchMode: false,
       },
@@ -4875,16 +4907,13 @@ describe("scripts/test-projects changed-target routing", () => {
   });
 
   it("routes forced stateful unit-fast tests to the isolated lane", () => {
-    const plans = buildVitestRunPlans(
-      ["src/system-agent/assistant.configured.test.ts"],
-      process.cwd(),
-    );
-
+    const file = "src/system-agent/assistant.configured.test.ts";
+    const plans = buildVitestRunPlans([file], process.cwd());
     expect(plans).toEqual([
       {
         config: "test/vitest/vitest.unit-fast-isolated.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/system-agent/assistant.configured.test.ts"],
+        includePatterns: [file],
         watchMode: false,
       },
     ]);
