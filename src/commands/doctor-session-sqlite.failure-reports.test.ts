@@ -70,6 +70,48 @@ describe("runDoctorSessionSqlite", () => {
     expect(recover.supportIssue).not.toHaveProperty("url");
   });
 
+  it("does not file a support issue when a recovered run validates clean", async () => {
+    const store = createLegacyStore();
+    fs.rmSync(store.storePath);
+    fs.rmSync(store.transcriptPath);
+    fs.rmSync(store.trajectoryPath);
+    fs.rmSync(store.unreferencedJsonlPath);
+    const runsDir = path.join(store.stateDir, "session-sqlite-migration-runs");
+    fs.mkdirSync(runsDir, { recursive: true, mode: 0o700 });
+    const manifestPath = path.join(runsDir, "clean-recovery.json");
+    const manifest: SessionSqliteMigrationManifest = {
+      failedAt: "2030-01-01T00:00:00.000Z",
+      manifestVersion: 3,
+      openClawVersion: "test",
+      runId: "clean-recovery",
+      startedAt: "2030-01-01T00:00:00.000Z",
+      targets: [
+        {
+          ...trustedMigrationTarget(store),
+          completedMoves: [],
+          issues: [],
+          plannedMoves: [],
+          validationBeforeArchive: "not_run",
+        },
+      ],
+    };
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+
+    const recover = await runDoctorSessionSqlite({
+      cfg: {},
+      env: store.env,
+      mode: "recover",
+    });
+
+    expect(recover.totals.issues).toBe(0);
+    expect(recover.migrationRun).toMatchObject({ manifestPath, runId: "clean-recovery" });
+    expect(recover.migrationRun).not.toHaveProperty("failureReportJsonPath");
+    expect(recover.migrationRun).not.toHaveProperty("failureReportMarkdownPath");
+    expect(recover.supportIssue).toBeUndefined();
+    expect(fs.existsSync(manifestPath.replace(/\.json$/u, ".failure.json"))).toBe(false);
+    expect(fs.existsSync(manifestPath.replace(/\.json$/u, ".failure.md"))).toBe(false);
+  });
+
   it.each(["replaced", "missing"] as const)(
     "refuses a support claim when the saved report is %s during consent",
     (change) => {
