@@ -83,6 +83,8 @@ type DetachedTaskFinalizeCommonParams = {
   preserveTerminalSummary?: boolean;
   detail?: JsonValue;
   suppressDelivery?: boolean;
+  /** Corrects source attribution to the provider that actually produced the result. */
+  sourceId?: string;
 };
 
 export type DetachedTaskCompleteParams = DetachedTaskFinalizeCommonParams & {

@@ -217,6 +217,8 @@ export type TaskRunStateTransitionParams = {
   detail?: JsonValue;
   eventSummary?: string | null;
   suppressDelivery?: boolean;
+  /** Corrects source attribution to the provider that actually produced the result. */
+  sourceId?: string;
 };
 
 type TaskRunDeliveryTransitionParams = {

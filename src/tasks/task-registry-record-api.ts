@@ -157,6 +157,7 @@ export function finalizeTaskRecordByRunId(params: {
   terminalOutcome?: TaskTerminalOutcome | null;
   detail?: JsonValue;
   suppressDelivery?: boolean;
+  sourceId?: string;
 }) {
   return updateTaskStateByRunId({
     runId: params.runId,
@@ -176,6 +177,7 @@ export function finalizeTaskRecordByRunId(params: {
     terminalOutcome: params.terminalOutcome,
     detail: params.detail,
     suppressDelivery: params.suppressDelivery,
+    sourceId: params.sourceId,
   });
 }
 

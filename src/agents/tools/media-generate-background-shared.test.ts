@@ -367,7 +367,13 @@ describe("scheduleMediaGenerationTaskCompletion", () => {
       path: "direct",
     });
     const lifecycle = createImageMediaLifecycle();
-    const handle = lifecycle.createTaskRun({ sessionKey, prompt: "proof image" });
+    // The task starts against a first-candidate provider; completion must
+    // record the provider that actually produced the media after failover.
+    const handle = lifecycle.createTaskRun({
+      sessionKey,
+      prompt: "proof image",
+      providerId: "first-candidate",
+    });
 
     scheduleImageCompletion({
       lifecycle,
@@ -377,6 +383,7 @@ describe("scheduleMediaGenerationTaskCompletion", () => {
       },
       run: async () => ({
         ...generatedImageResult(),
+        provider: "second-candidate",
         attachments: [{ type: "image" as const, path: "/tmp/proof.png" }],
       }),
     });
@@ -385,7 +392,8 @@ describe("scheduleMediaGenerationTaskCompletion", () => {
 
     expect(detachedTaskRuntimeMocks.completeTaskRunByRunId).toHaveBeenCalledWith(
       expect.objectContaining({
-        terminalSummary: "Generated 1 image with openai/gpt-image-1.",
+        terminalSummary: "Generated 1 image with second-candidate/gpt-image-1.",
+        sourceId: "image_generate:second-candidate",
       }),
     );
     expect(

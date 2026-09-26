@@ -156,6 +156,9 @@ function prepareStateTransition(
   if (params.detail !== undefined) {
     patch.detail = params.detail;
   }
+  if (params.sourceId !== undefined) {
+    patch.sourceId = params.sourceId;
+  }
   if (params.suppressDelivery) {
     // Teardown suppression must survive redundant lifecycle finalizers that
     // arrive after queues are cleared, or they can repopulate the stopped session.

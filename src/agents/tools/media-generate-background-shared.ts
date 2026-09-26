@@ -312,6 +312,7 @@ async function withMediaGenerationTaskKeepalive<T>(params: {
 
 function completeMediaGenerationTaskRun(
   params: CompleteMediaGenerationTaskRunParams & {
+    toolName: string;
     generatedLabel: string;
   },
 ) {
@@ -331,6 +332,9 @@ function completeMediaGenerationTaskRun(
         params.terminalResult?.terminalSummary ??
         `Generated ${params.count} ${params.generatedLabel}${params.count === 1 ? "" : "s"} with ${params.provider}/${params.model}.`,
       terminalOutcome: params.terminalResult?.terminalOutcome,
+      // The task may have started with an earlier candidate that failed over;
+      // record the provider that actually produced the result.
+      sourceId: params.provider ? `${params.toolName}:${params.provider}` : params.toolName,
     });
   } finally {
     clearMediaGenerationTaskRunContext(params.handle);
@@ -599,6 +603,7 @@ export function createMediaGenerationTaskLifecycle(params: {
     completeTaskRun(completionParams: CompleteMediaGenerationTaskRunParams) {
       completeMediaGenerationTaskRun({
         ...completionParams,
+        toolName: params.toolName,
         generatedLabel: params.generatedLabel,
       });
     },
