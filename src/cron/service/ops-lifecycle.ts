@@ -243,10 +243,15 @@ export async function start(state: CronServiceState): Promise<void> {
   if (state.stopped || state.lifecycleGeneration !== generation) {
     return;
   }
-  await runMissedJobs(state, {
-    skipJobIds: skipJobIds.size > 0 ? skipJobIds : undefined,
-    deferAgentWork: true,
-  });
+  let catchupFailure: Error | undefined;
+  try {
+    await runMissedJobs(state, {
+      skipJobIds: skipJobIds.size > 0 ? skipJobIds : undefined,
+      deferAgentWork: true,
+    });
+  } catch (err) {
+    catchupFailure = err instanceof Error ? err : new Error(String(err));
+  }
 
   await locked(state, async () => {
     await ensureLoaded(state, { forceReload: true });
@@ -261,15 +266,24 @@ export async function start(state: CronServiceState): Promise<void> {
     }
     armTimer(state);
     resumeForeignReceiptMonitor(state);
-    state.deps.log.info(
-      {
-        enabled: true,
-        jobs: state.store?.jobs.length ?? 0,
-        nextWakeAtMs: nextWakeAtMs(state) ?? null,
-      },
-      "cron: started",
-    );
+    const startupDetails = {
+      enabled: true,
+      jobs: state.store?.jobs.length ?? 0,
+      nextWakeAtMs: nextWakeAtMs(state) ?? null,
+    };
+    if (catchupFailure) {
+      state.deps.log.warn(
+        { ...startupDetails, err: catchupFailure.message },
+        "cron: armed the scheduler after startup catch-up failed",
+      );
+      return;
+    }
+    state.deps.log.info(startupDetails, "cron: started");
   });
+
+  if (catchupFailure) {
+    throw catchupFailure;
+  }
 }
 
 /** Stops the cron service timer without mutating persisted job state. */
