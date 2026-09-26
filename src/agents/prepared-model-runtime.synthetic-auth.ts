@@ -14,6 +14,11 @@ export function preparedSyntheticAuthProviderScope(
   if (scoped.has("openai")) {
     scoped.add("codex");
   }
+  // Anthropic's native runtime (Claude CLI) has a separate auth namespace too;
+  // a scoped anthropic refresh must still repopulate it.
+  if (scoped.has("anthropic")) {
+    scoped.add("claude-cli");
+  }
   return scoped;
 }
 
