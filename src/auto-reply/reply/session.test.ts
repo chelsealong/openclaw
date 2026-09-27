@@ -1932,6 +1932,52 @@ describe("initSessionState RawBody", () => {
     expect(store[sessionKey]?.pendingDeliveryNotice).toEqual(pendingDeliveryNotice);
   });
 
+  it("preserves the session-owned worktree binding across an implicit daily stale rollover (#159452)", async () => {
+    // Regression: a worker-placed session's worktree/repositoryWorkspaceId
+    // reference was dropped at the implicit daily/idle rollover boundary even
+    // though the underlying worktree stays live, so the next worker dispatch
+    // failed with "dispatch requires a session-owned workspace".
+    const storePath = await makeStorePath("openclaw-daily-rollover-worktree-");
+    const sessionKey = "agent:main:dashboard:worktree-rollover";
+    const staleStartedAt = Date.now() - 48 * 60 * 60 * 1000;
+    const worktree = { id: "worktree-159452", branch: "main", repoRoot: "/repo" };
+
+    await writeSessionStoreFast(storePath, {
+      [sessionKey]: {
+        sessionId: "session-before-worktree-rollover",
+        updatedAt: staleStartedAt,
+        sessionStartedAt: staleStartedAt,
+        lastInteractionAt: staleStartedAt,
+        systemSent: true,
+        worktree,
+        repositoryWorkspaceId: "repo-workspace-159452",
+      },
+    });
+
+    const result = await initSessionState({
+      ctx: {
+        RawBody: "hello again",
+        ChatType: "direct",
+        SessionKey: sessionKey,
+      },
+      cfg: {
+        session: { store: storePath, reset: { mode: "daily", atHour: 4 } },
+      } as OpenClawConfig,
+    });
+
+    expect(result.isNewSession).toBe(true);
+    expect(result.resetTriggered).toBe(false);
+    expect(result.sessionEntry.worktree).toEqual(worktree);
+    expect(result.sessionEntry.repositoryWorkspaceId).toBe("repo-workspace-159452");
+
+    const store = readSessionStoreFast(storePath) as Record<
+      string,
+      { worktree?: unknown; repositoryWorkspaceId?: string }
+    >;
+    expect(store[sessionKey]?.worktree).toEqual(worktree);
+    expect(store[sessionKey]?.repositoryWorkspaceId).toBe("repo-workspace-159452");
+  });
+
   it.each([undefined, "required"] as const)(
     "stamps trusted creation provenance for a new session (sandbox=%s)",
     async (sandbox) => {
