@@ -112,6 +112,11 @@ class SmsManager(
 
   companion object {
     private const val DEFAULT_SMS_LIMIT = 25
+
+    // Standard concatenated-SMS (UDH) segment size; used only when the platform
+    // divider throws (e.g. Samsung firmware gating EMS detection behind
+    // READ_PHONE_STATE, which this app does not request).
+    internal const val SMS_FALLBACK_CHUNK_SIZE = 153
     internal const val MAX_MIXED_BY_PHONE_CANDIDATE_WINDOW = 500
     private const val MMS_SMS_BY_PHONE_BASE = "content://mms-sms/messages/byphone"
     private const val MMS_CONTENT_BASE = "content://mms"
@@ -478,6 +483,17 @@ class SmsManager(
       return SendPlan(parts = parts, useMultipart = parts.size > 1)
     }
 
+    internal fun resolveSendPlan(
+      message: String,
+      fallbackChunkSize: Int = SMS_FALLBACK_CHUNK_SIZE,
+      primaryDivider: (String) -> List<String>,
+    ): SendPlan =
+      try {
+        buildSendPlan(message, primaryDivider)
+      } catch (e: SecurityException) {
+        buildSendPlan(message) { it.chunked(fallbackChunkSize) }
+      }
+
     internal fun buildPayloadJson(
       json: Json = JsonConfig,
       ok: Boolean,
@@ -579,7 +595,7 @@ class SmsManager(
         context.getSystemService(AndroidSmsManager::class.java)
           ?: throw IllegalStateException("SMS_UNAVAILABLE: SmsManager not available")
 
-      val plan = buildSendPlan(params.message) { smsManager.divideMessage(it) }
+      val plan = resolveSendPlan(params.message) { smsManager.divideMessage(it) }
       if (plan.useMultipart) {
         smsManager.sendMultipartTextMessage(
           params.to,

@@ -258,6 +258,24 @@ class SmsManagerTest {
   }
 
   @Test
+  fun resolveSendPlanUsesPrimaryDividerWhenItSucceeds() {
+    val plan = SmsManager.resolveSendPlan("hello") { listOf("a", "b") }
+    assertTrue(plan.useMultipart)
+    assertEquals(listOf("a", "b"), plan.parts)
+  }
+
+  @Test
+  fun resolveSendPlanFallsBackToChunkingWhenPrimaryDividerThrowsSecurityException() {
+    val message = "x".repeat(200)
+    val plan =
+      SmsManager.resolveSendPlan(message, fallbackChunkSize = 153) {
+        throw SecurityException("getGroupIdLevel1")
+      }
+    assertTrue(plan.useMultipart)
+    assertEquals(listOf(message.take(153), message.drop(153)), plan.parts)
+  }
+
+  @Test
   fun parseQueryParamsAcceptsEmptyPayload() {
     val result = SmsManager.parseQueryParams(null, json)
     assertTrue(result is SmsManager.QueryParseResult.Ok)
