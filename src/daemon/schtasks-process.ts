@@ -5,6 +5,7 @@ import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import { classifyOpenClawArgv } from "../infra/gateway-process-argv.js";
 import { inspectPortUsage } from "../infra/ports-inspect.js";
 import type { PortListener } from "../infra/ports-types.js";
+import { isSqliteIoError } from "../infra/sqlite-error-diagnostics.js";
 import { tryAcquireGatewayLifecycleCleanupCoordinator } from "../infra/state-database-coordinator.js";
 import { parseTcpPort, parseTcpPortFromArgs } from "../infra/tcp-port.js";
 import { getWindowsSystem32ExePath } from "../infra/windows-install-roots.js";
@@ -192,6 +193,26 @@ export async function resolveScheduledTaskOwnedGatewayPids(
   return ownership?.pids ?? [];
 }
 
+// schtasks /End kills the gateway before this reads its lease; Windows can briefly
+// surface SQLITE_IOERR_TRUNCATE while the dying process unmaps the WAL/SHM files.
+const OWNER_LEASE_TRANSIENT_IOERR_RETRIES = 4;
+const OWNER_LEASE_TRANSIENT_IOERR_DELAY_MS = 150;
+
+async function readGatewayOwnerLeaseWithTransientRetry(
+  ownerEnv: GatewayServiceEnv,
+): Promise<ReturnType<typeof readGatewayOwnerLease>> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return readGatewayOwnerLease({ env: ownerEnv });
+    } catch (error) {
+      if (attempt >= OWNER_LEASE_TRANSIENT_IOERR_RETRIES || !isSqliteIoError(error)) {
+        throw error;
+      }
+      await sleep(OWNER_LEASE_TRANSIENT_IOERR_DELAY_MS);
+    }
+  }
+}
+
 async function resolveScheduledTaskGatewayOwnership(
   env: GatewayServiceEnv,
   context?: { port: number | null; probeHosts?: readonly string[] },
@@ -206,7 +227,7 @@ async function resolveScheduledTaskGatewayOwnership(
     return null;
   }
   const ownerEnv = mergeGatewayServiceEnv(env, command);
-  const owner = readGatewayOwnerLease({ env: ownerEnv });
+  const owner = await readGatewayOwnerLeaseWithTransientRetry(ownerEnv);
   const taskName = resolveTaskName(env);
   const isTaskSupervisor = (supervisor: NonNullable<typeof owner>["supervisor"]) =>
     supervisor?.kind === "schtasks" && supervisor.name?.toLowerCase() === taskName.toLowerCase();

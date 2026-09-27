@@ -8,7 +8,7 @@ import {
   withStateDatabaseCoordinatorRuntimeDirectory,
 } from "../infra/state-database-coordinator.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import { resolveTaskScriptPath } from "./schtasks-layout.js";
+import { resolveTaskName, resolveTaskScriptPath } from "./schtasks-layout.js";
 import "./test-helpers/schtasks-base-mocks.js";
 import {
   inspectPortUsageMock,
@@ -241,3 +241,36 @@ it.each(["snapshot", "per-pid"])(
     });
   },
 );
+
+it("retries the owner-lease read after a transient SQLITE_IOERR from schtasks /End teardown (#159222)", async () => {
+  await withPreparedGatewayTask(async ({ env }) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    mockWindowsTaskkillSuccess();
+    inspectPortUsageMock.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 4242, command: "node.exe", commandLine: INSTALLED_GATEWAY_COMMAND_LINE }],
+      hints: [],
+    });
+    const transientTruncateError = Object.assign(new Error("disk I/O error"), {
+      code: "ERR_SQLITE_ERROR",
+      errcode: 1546, // SQLITE_IOERR_TRUNCATE
+    });
+    readGatewayOwnerLease
+      .mockImplementationOnce(() => {
+        throw transientTruncateError;
+      })
+      .mockReturnValue({
+        ...GATEWAY_OWNER,
+        supervisor: { kind: "schtasks", name: resolveTaskName(env) },
+      });
+
+    await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
+
+    // 1 failing + 1 successful ownership-resolution read, plus the termination
+    // loop's own owner-still-current check before it signals the process.
+    expect(readGatewayOwnerLease).toHaveBeenCalledTimes(3);
+    expect(sleepMock).toHaveBeenCalled();
+    expect(taskkillPids()).toEqual([4242]);
+  });
+});
