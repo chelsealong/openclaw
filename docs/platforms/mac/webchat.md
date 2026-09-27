@@ -38,6 +38,9 @@ The full native chat window is a split view:
 
 The anchored compact chat panel from the menu bar keeps the compact single-column layout with the same model, thinking, verbosity, and Fast controls inline, plus starter prompts, Talk Mode, voice notes, and Listen. Assistant reasoning and tool activity remain hidden in this compact surface.
 
+Native chat preserves Markdown paragraph breaks, including before lists and
+while responses are streaming.
+
 In the full macOS chat window, completed commentary, reasoning, and tool work
 collapse into a **Worked for…** disclosure above the answer. Expand it to inspect
 the work; final text, images, and other attachments stay visible. Active turns,
@@ -54,6 +57,16 @@ an amber clock. Hover for the exact status, which is also available to VoiceOver
 Names stay free of status suffixes, and unnamed tasks appear as **Subagent**.
 Reduced Motion keeps the running claw still. Existing detail expansion and
 completed-task retention are unchanged.
+
+## Message times and models
+
+Completed message groups show a quiet time label alongside message usage. Recent
+messages use relative time; messages at least a week old show a compact local
+date, including the year when needed. Hover the time for the full date, time,
+and time zone; VoiceOver reads those exact details too. Assistant replies also
+show the originating model recorded in the transcript, when known. Changing the
+composer's model does not relabel earlier replies. Live streaming, commentary,
+and tool activity do not gain timestamp footers.
 
 ## Pending questions and approvals
 
