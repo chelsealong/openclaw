@@ -355,10 +355,6 @@ function resolveReplySessionRolloverState(
     permissionMode: entry.permissionMode,
     sandboxMode: entry.sandboxMode,
     ...(entry.sandbox === "required" ? { sandbox: "required" } : {}),
-    // Worker placement re-dispatches against this reference; dropping it strands
-    // an otherwise-live session-owned worktree, mirroring performGatewaySessionReset.
-    worktree: entry.worktree,
-    repositoryWorkspaceId: entry.repositoryWorkspaceId,
   };
 }
 
@@ -857,6 +853,15 @@ async function initSessionStateAttemptLocked(
       // overrides these need no fallback-provenance filtering (#92562).
       // Explicit /new and /reset rotate CLI conversation bindings elsewhere.
       preservedState = resolveReplySessionRolloverState(entry, sessionKey);
+      // Implicit rollover keeps the worker workspace; explicit resets keep their detachment policy.
+      if (!resetTriggered) {
+        if (entry.worktree) {
+          preservedState.worktree = entry.worktree;
+        }
+        if (entry.repositoryWorkspaceId) {
+          preservedState.repositoryWorkspaceId = entry.repositoryWorkspaceId;
+        }
+      }
     }
   }
 
