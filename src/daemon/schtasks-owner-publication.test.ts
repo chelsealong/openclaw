@@ -26,6 +26,11 @@ const sleepMock = vi.hoisted(() =>
     timeState.now += ms;
   }),
 );
+const sleepSyncMock = vi.hoisted(() =>
+  vi.fn((ms: number) => {
+    timeState.now += ms;
+  }),
+);
 const spawnSync = vi.hoisted(() =>
   vi.fn<
     (
@@ -50,6 +55,7 @@ vi.mock("../infra/gateway-owner-lease.js", () => ({ readGatewayOwnerLease }));
 vi.mock("../utils.js", async (original) => ({
   ...(await original<typeof import("../utils.js")>()),
   sleep: sleepMock,
+  sleepSync: sleepSyncMock,
 }));
 const { terminateScheduledTaskGatewayListeners } = await import("./schtasks-process.js");
 const INSTALLED_GATEWAY_COMMAND_LINE =
@@ -102,6 +108,9 @@ beforeEach(() => {
   readGatewayOwnerLease.mockReset();
   spawnSync.mockReset();
   sleepMock.mockReset().mockImplementation(async (ms) => {
+    timeState.now += ms;
+  });
+  sleepSyncMock.mockReset().mockImplementation((ms) => {
     timeState.now += ms;
   });
   timeState.now = 0;
@@ -271,6 +280,38 @@ it("retries the owner-lease read after a transient SQLITE_IOERR from schtasks /E
     // loop's own owner-still-current check before it signals the process.
     expect(readGatewayOwnerLease).toHaveBeenCalledTimes(3);
     expect(sleepMock).toHaveBeenCalled();
+    expect(taskkillPids()).toEqual([4242]);
+  });
+});
+
+it("retries the owner-lease read immediately before termination after a transient SQLITE_IOERR (#159222)", async () => {
+  await withPreparedGatewayTask(async ({ env }) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    mockWindowsTaskkillSuccess();
+    inspectPortUsageMock.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 4242, command: "node.exe", commandLine: INSTALLED_GATEWAY_COMMAND_LINE }],
+      hints: [],
+    });
+    const owner: GatewayOwnerLeaseIdentity = {
+      ...GATEWAY_OWNER,
+      supervisor: { kind: "schtasks", name: resolveTaskName(env) },
+    };
+    const transientTruncateError = Object.assign(new Error("disk I/O error"), {
+      code: "ERR_SQLITE_ERROR",
+      errcode: 1546, // SQLITE_IOERR_TRUNCATE
+    });
+    readGatewayOwnerLease
+      .mockReturnValueOnce(owner) // ownership resolution
+      .mockImplementationOnce(() => {
+        throw transientTruncateError; // assertOwnerCurrent, right before termination
+      })
+      .mockReturnValue(owner);
+
+    await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
+
+    expect(sleepSyncMock).toHaveBeenCalled();
     expect(taskkillPids()).toEqual([4242]);
   });
 });

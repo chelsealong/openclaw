@@ -19,3 +19,8 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     setTimeout(resolve, delayMs);
   });
 }
+
+/** Blocking sleep for sync-only retry callbacks that cannot await. */
+export function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
