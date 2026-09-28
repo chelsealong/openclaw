@@ -587,6 +587,10 @@ export async function terminateScheduledTaskGatewayListeners(
           // Not gated on `stop`: the installer-rollback caller has no stop context to
           // fall back to a sharing-error recovery, so this recheck must retry itself.
           await retryScheduledTaskLeaseRead(() => ownership.assertOwnerCurrent(pid));
+          // The retry above can wait up to 15s; both authorities checked before it started
+          // may have been revoked during that wait, so recheck immediately before taskkill.
+          assertGatewayServiceUpdateCurrent();
+          assertCurrent?.();
         });
       }
       if (stop && !exclusion) {
