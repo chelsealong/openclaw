@@ -686,8 +686,11 @@ export async function terminateGatewayProcessTree(
   graceMs: number,
   assertCurrent?: () => void | Promise<void>,
 ): Promise<void> {
-  assertGatewayServiceUpdateCurrent();
+  // The awaited callback can retry for several seconds; either grant can be revoked
+  // during that wait, so recheck synchronously right after it resolves, immediately
+  // before the native termination effect below.
   await assertCurrent?.();
+  assertGatewayServiceUpdateCurrent();
   if (process.platform !== "win32") {
     // These PIDs come from argv/port ownership; leader verification avoids signaling our group.
     killProcessTree(pid, { graceMs });
@@ -704,8 +707,8 @@ export async function terminateGatewayProcessTree(
   if (await waitForProcessExit(pid, graceful.status === 0 && !graceful.error ? graceMs : 0)) {
     return;
   }
-  assertGatewayServiceUpdateCurrent();
   await assertCurrent?.();
+  assertGatewayServiceUpdateCurrent();
   const forced = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
     env: resolveServiceManagerEnv(),
     stdio: "ignore",
