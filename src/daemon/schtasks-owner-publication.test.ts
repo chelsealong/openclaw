@@ -3,16 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { GatewayOwnerLeaseIdentity } from "../infra/gateway-owner-lease.js";
-import {
-  acquireGatewayLifecycleCoordinator,
-  withStateDatabaseCoordinatorRuntimeDirectory,
-} from "../infra/state-database-coordinator.js";
+import { acquireGatewayStateOwner } from "../infra/gateway-state-owner.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { resolveTaskName, resolveTaskScriptPath } from "./schtasks-layout.js";
 import "./test-helpers/schtasks-base-mocks.js";
 import {
   inspectPortUsageMock,
   killProcessTreeMock,
+  makeSpawnSyncResult,
   resetSchtasksBaseMocks,
   withWindowsEnv,
 } from "./test-helpers/schtasks-fixtures.js";
@@ -23,11 +21,6 @@ const readGatewayOwnerLease = vi.hoisted(() =>
 );
 const sleepMock = vi.hoisted(() =>
   vi.fn(async (ms: number) => {
-    timeState.now += ms;
-  }),
-);
-const sleepSyncMock = vi.hoisted(() =>
-  vi.fn((ms: number) => {
     timeState.now += ms;
   }),
 );
@@ -55,7 +48,6 @@ vi.mock("../infra/gateway-owner-lease.js", () => ({ readGatewayOwnerLease }));
 vi.mock("../utils.js", async (original) => ({
   ...(await original<typeof import("../utils.js")>()),
   sleep: sleepMock,
-  sleepSync: sleepSyncMock,
 }));
 const { terminateScheduledTaskGatewayListeners } = await import("./schtasks-process.js");
 const INSTALLED_GATEWAY_COMMAND_LINE =
@@ -75,7 +67,7 @@ const GATEWAY_OWNER: GatewayOwnerLeaseIdentity = {
 async function withPreparedGatewayTask(
   run: (params: { env: Record<string, string> }) => Promise<void>,
 ) {
-  await withWindowsEnv("openclaw-owner-publication-", async ({ env, tmpDir }) => {
+  await withWindowsEnv("openclaw-owner-publication-", async ({ env }) => {
     const scriptPath = resolveTaskScriptPath(env);
     await fs.mkdir(path.dirname(scriptPath), { recursive: true });
     await fs.writeFile(
@@ -83,9 +75,7 @@ async function withPreparedGatewayTask(
       ["@echo off", INSTALLED_GATEWAY_COMMAND_LINE, ""].join("\r\n"),
       "utf8",
     );
-    await withStateDatabaseCoordinatorRuntimeDirectory(path.join(tmpDir, "coordinators"), () =>
-      run({ env }),
-    );
+    await run({ env });
   });
 }
 function mockWindowsTaskkillSuccess() {
@@ -110,9 +100,6 @@ beforeEach(() => {
   sleepMock.mockReset().mockImplementation(async (ms) => {
     timeState.now += ms;
   });
-  sleepSyncMock.mockReset().mockImplementation((ms) => {
-    timeState.now += ms;
-  });
   timeState.now = 0;
   vi.spyOn(Date, "now").mockImplementation(() => timeState.now);
 });
@@ -126,11 +113,11 @@ it.each(["snapshot", "port-only"])(
   async (discovery) => {
     await withPreparedGatewayTask(async ({ env }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-      const foreground = acquireGatewayLifecycleCoordinator({
+      mockWindowsTaskkillSuccess();
+      const foreground = acquireGatewayStateOwner({
         databasePath: resolveOpenClawStateSqlitePath(env),
       });
       try {
-        mockWindowsTaskkillSuccess();
         const foregroundCommand = INSTALLED_GATEWAY_COMMAND_LINE.replace(
           " gateway ",
           " gateway run ",
@@ -161,7 +148,7 @@ it.each(["snapshot", "port-only"])(
 
         expect(taskkillPids()).toEqual([]);
         expect(killProcessTreeMock).not.toHaveBeenCalled();
-        expect(foreground.closed).toBe(false);
+        expect(() => foreground.assertCurrent()).not.toThrow();
         readGatewayOwnerLease.mockReturnValue({ ...GATEWAY_OWNER, mode: "foreground" });
         await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([]);
       } finally {
@@ -176,8 +163,9 @@ it.each(["snapshot", "per-pid"])(
   async (discovery) => {
     await withPreparedGatewayTask(async ({ env }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+      mockWindowsTaskkillSuccess();
       const databasePath = resolveOpenClawStateSqlitePath(env);
-      const legacy = acquireGatewayLifecycleCoordinator({ databasePath });
+      const legacy = acquireGatewayStateOwner({ databasePath });
       let forced = false;
       let firstSnapshot = true;
       inspectPortUsageMock.mockResolvedValue({
@@ -215,6 +203,9 @@ it.each(["snapshot", "per-pid"])(
             signal: null,
           };
         }
+        if (args?.some((arg) => arg.includes("$process.StartTime"))) {
+          return makeSpawnSyncResult({ stdout: forced ? "" : "2026-09-27T00:00:00.000Z" });
+        }
         if (firstSnapshot && discovery === "per-pid") {
           firstSnapshot = false;
           return {
@@ -242,7 +233,7 @@ it.each(["snapshot", "per-pid"])(
       try {
         await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
         expect(taskkillPids()).toEqual([4242, 4242]);
-        const successor = acquireGatewayLifecycleCoordinator({ databasePath });
+        const successor = acquireGatewayStateOwner({ databasePath });
         successor.release();
       } finally {
         legacy.release();
@@ -251,40 +242,10 @@ it.each(["snapshot", "per-pid"])(
   },
 );
 
-it("retries the owner-lease read after a transient SQLITE_IOERR from schtasks /End teardown (#159222)", async () => {
-  await withPreparedGatewayTask(async ({ env }) => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    mockWindowsTaskkillSuccess();
-    inspectPortUsageMock.mockResolvedValue({
-      port: 18789,
-      status: "busy",
-      listeners: [{ pid: 4242, command: "node.exe", commandLine: INSTALLED_GATEWAY_COMMAND_LINE }],
-      hints: [],
-    });
-    const transientTruncateError = Object.assign(new Error("disk I/O error"), {
-      code: "ERR_SQLITE_ERROR",
-      errcode: 1546, // SQLITE_IOERR_TRUNCATE
-    });
-    readGatewayOwnerLease
-      .mockImplementationOnce(() => {
-        throw transientTruncateError;
-      })
-      .mockReturnValue({
-        ...GATEWAY_OWNER,
-        supervisor: { kind: "schtasks", name: resolveTaskName(env) },
-      });
-
-    await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
-
-    // 1 failing + 1 successful ownership-resolution read, plus the termination
-    // loop's own owner-still-current check before it signals the process.
-    expect(readGatewayOwnerLease).toHaveBeenCalledTimes(3);
-    expect(sleepMock).toHaveBeenCalled();
-    expect(taskkillPids()).toEqual([4242]);
-  });
-});
-
-it("retries the owner-lease read immediately before termination after a transient SQLITE_IOERR (#159222)", async () => {
+it("retries the pre-signal owner-lease recheck after a transient SQLITE_IOERR with no stop context (#159222)", async () => {
+  // schtasks-install-files.ts's installer restore() calls terminateScheduledTaskGatewayListeners(env)
+  // with no `stop` context, so it can't fall back on the stop-gated sharing-error recovery: the
+  // pre-signal recheck inside terminateGatewayProcessTree's callback must retry on its own.
   await withPreparedGatewayTask(async ({ env }) => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     mockWindowsTaskkillSuccess();
@@ -304,14 +265,15 @@ it("retries the owner-lease read immediately before termination after a transien
     });
     readGatewayOwnerLease
       .mockReturnValueOnce(owner) // ownership resolution
+      .mockReturnValueOnce(owner) // pre-loop owner-still-current check
       .mockImplementationOnce(() => {
-        throw transientTruncateError; // assertOwnerCurrent, right before termination
+        throw transientTruncateError; // pre-signal recheck inside terminateGatewayProcessTree
       })
-      .mockReturnValue(owner);
+      .mockReturnValue(owner); // retried pre-signal recheck succeeds
 
     await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
 
-    expect(sleepSyncMock).toHaveBeenCalled();
+    expect(sleepMock).toHaveBeenCalled();
     expect(taskkillPids()).toEqual([4242]);
   });
 });

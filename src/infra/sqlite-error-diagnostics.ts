@@ -36,7 +36,6 @@ export function classifyGatewayStorageFailure(error: unknown): GatewayStorageFai
 }
 
 const SQLITE_INSPECTION_OPERATIONS = {
-  coordinator: "acquiring its state-handles coordinator",
   source: "opening the source database",
   snapshot: "creating its private snapshot",
 } as const;
@@ -139,7 +138,6 @@ const SQLITE_BUSY_RESULT_CODE = 5;
 const SQLITE_LOCKED_RESULT_CODE = 6;
 const SQLITE_CORRUPT_RESULT_CODE = 11;
 const SQLITE_NOTADB_RESULT_CODE = 26;
-const SQLITE_IOERR_RESULT_CODE = 10;
 const SQLITE_PRIMARY_RESULT_CODE_MASK = 0xff;
 
 export function sqliteErrorCode(error: unknown): string | undefined {
@@ -170,13 +168,4 @@ export function isSqliteLockError(error: unknown): boolean {
 export function isSqliteCorruptionError(error: unknown): boolean {
   const primaryCode = sqlitePrimaryResultCode(error);
   return primaryCode === SQLITE_CORRUPT_RESULT_CODE || primaryCode === SQLITE_NOTADB_RESULT_CODE;
-}
-
-/** SQLITE_IOERR and its extended variants (e.g. TRUNCATE, SHMOPEN) share this primary code. */
-export function isSqliteIoError(error: unknown): boolean {
-  const code = sqliteErrorCode(error);
-  if (code === "SQLITE_IOERR" || code?.startsWith("SQLITE_IOERR_")) {
-    return true;
-  }
-  return sqlitePrimaryResultCode(error) === SQLITE_IOERR_RESULT_CODE;
 }
