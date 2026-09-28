@@ -248,17 +248,21 @@ it("retries the pre-signal owner-lease recheck after a transient SQLITE_IOERR wi
   // pre-signal recheck inside terminateGatewayProcessTree's callback must retry on its own.
   await withPreparedGatewayTask(async ({ env }) => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    mockWindowsTaskkillSuccess();
+    const owner: GatewayOwnerLeaseIdentity = {
+      ...GATEWAY_OWNER,
+      supervisor: { kind: "schtasks", name: resolveTaskName(env) },
+    };
+    spawnSync.mockImplementation((command, args) =>
+      args?.some((arg) => arg.includes("$process.StartTime"))
+        ? makeSpawnSyncResult({ stdout: new Date(owner.startedAt ?? 0).toISOString() })
+        : makeSpawnSyncResult(),
+    );
     inspectPortUsageMock.mockResolvedValue({
       port: 18789,
       status: "busy",
       listeners: [{ pid: 4242, command: "node.exe", commandLine: INSTALLED_GATEWAY_COMMAND_LINE }],
       hints: [],
     });
-    const owner: GatewayOwnerLeaseIdentity = {
-      ...GATEWAY_OWNER,
-      supervisor: { kind: "schtasks", name: resolveTaskName(env) },
-    };
     const transientTruncateError = Object.assign(new Error("disk I/O error"), {
       code: "ERR_SQLITE_ERROR",
       errcode: 1546, // SQLITE_IOERR_TRUNCATE
