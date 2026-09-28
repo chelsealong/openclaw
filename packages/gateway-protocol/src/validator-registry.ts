@@ -98,6 +98,8 @@ export const validateUsersGitHubDisconnectParams = compile(S.UsersGitHubDisconne
 export const validateUsersSelfResult = compile(S.UsersSelfResultSchema);
 export const validateUsersLinkEmailParams = compile(S.UsersLinkEmailParamsSchema);
 export const validateUsersLinkEmailResult = compile(S.UsersLinkEmailResultSchema);
+export const validateUsersMergeParams = compile(S.UsersMergeParamsSchema);
+export const validateUsersMergeResult = compile(S.UsersMergeResultSchema);
 export const validateUsersLinkChannelIdentityParams = compile(
   S.UsersLinkChannelIdentityParamsSchema,
 );
@@ -343,11 +345,6 @@ export const validateTaskSuggestionsListParams = compile(S.TaskSuggestionsListPa
 export const validateTaskSuggestionsCreateParams = compile(S.TaskSuggestionsCreateParamsSchema);
 export const validateTaskSuggestionsAcceptParams = compile(S.TaskSuggestionsAcceptParamsSchema);
 export const validateTaskSuggestionsDismissParams = compile(S.TaskSuggestionsDismissParamsSchema);
-export const validateTasksListParams = compile(S.TasksListParamsSchema);
-export const validateTasksGetParams = compile(S.TasksGetParamsSchema);
-export const validateTasksHistoryParams = compile(S.TasksHistoryParamsSchema);
-export const validateTasksCancelParams = compile(S.TasksCancelParamsSchema);
-export const validateTasksRecoveryParams = compile(S.TasksRecoveryParamsSchema);
 export const validateConfigGetParams = compile(S.ConfigGetParamsSchema);
 export const validateConfigSetParams = compile(S.ConfigSetParamsSchema);
 export const validateConfigApplyParams = compile(S.ConfigApplyParamsSchema);
