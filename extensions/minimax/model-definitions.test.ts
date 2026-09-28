@@ -18,6 +18,19 @@ describe("minimax model definitions", () => {
     });
   });
 
+  it("builds the M3.1 API model with its catalog metadata", () => {
+    expect(buildMinimaxApiModelDefinition("MiniMax-M3.1-Flash-Preview")).toEqual({
+      compat: { codeMode: "preferred" },
+      contextWindow: 1_000_000,
+      cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+      id: "MiniMax-M3.1-Flash-Preview",
+      input: ["text", "image"],
+      maxTokens: 131072,
+      name: "MiniMax M3.1 Flash Preview",
+      reasoning: true,
+    });
+  });
+
   it("falls back to generated metadata for an unknown model id", () => {
     expect(buildMinimaxApiModelDefinition("MiniMax-Future")).toEqual({
       contextWindow: EXPECTED_DEFAULT_CONTEXT_WINDOW,

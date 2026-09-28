@@ -97,6 +97,39 @@ describe("createMinimaxThinkingDisabledWrapper", () => {
       }).thinking,
     ).toEqual({ type: "enabled", budget_tokens: 1024 });
   });
+
+  it.each([
+    ["low", "low"],
+    ["xhigh", "xhigh"],
+  ] as const)(
+    "maps thinking level %s onto output_config.effort %s for MiniMax-M3.1",
+    (level, effort) => {
+      const payload = captureThinkingPayload({
+        model: { ...minimaxModel, id: "MiniMax-M3.1-Flash-Preview" },
+        thinkingLevel: level,
+      });
+      expect(payload.thinking).toEqual({ type: "adaptive" });
+      expect(payload.output_config).toEqual({ effort });
+    },
+  );
+
+  it("never sends disabled thinking for MiniMax-M3.1, even with an explicit off level", () => {
+    const payload = captureThinkingPayload({
+      model: { ...minimaxModel, id: "MiniMax-M3.1-Flash-Preview" },
+      payload: { thinking: { type: "disabled" } },
+      thinkingLevel: "off",
+    });
+    expect(payload.thinking).toEqual({ type: "adaptive" });
+    expect(payload.output_config).toBeUndefined();
+  });
+
+  it("omits output_config.effort for MiniMax-M3.1 when no thinking level is selected", () => {
+    const payload = captureThinkingPayload({
+      model: { ...minimaxModel, id: "MiniMax-M3.1-Flash-Preview" },
+    });
+    expect(payload.thinking).toEqual({ type: "adaptive" });
+    expect(payload.output_config).toBeUndefined();
+  });
 });
 
 describe("createMinimaxFastModeWrapper", () => {
