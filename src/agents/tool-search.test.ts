@@ -3094,6 +3094,26 @@ describe("Tool Search", () => {
     expect(writeTool.execute).not.toHaveBeenCalled();
   });
 
+  it("tells the model to call a direct-only tool directly instead of searching", async () => {
+    const catalogRef = createToolSearchCatalogRef();
+    applyToolSearchCatalog({
+      tools: [
+        ...structuredControlStubs(),
+        directOnlyTool("watcher_search", "Search watchers"),
+        pluginTool("fake_lookup", "Look up a record"),
+      ],
+      config: { tools: { toolSearch: { enabled: true, mode: "tools" } } } as never,
+      catalogRef,
+    });
+
+    await expect(catalogRuntime(catalogRef).call("watcher_search")).rejects.toThrow(
+      "watcher_search is not in the tool catalog; it is already available as a direct tool. Call watcher_search directly",
+    );
+    await expect(catalogRuntime(catalogRef).call("fake_missing")).rejects.toThrow(
+      "Use tool_search to find a tool",
+    );
+  });
+
   it("reuses an unchanged catalog only on the same ref", () => {
     const alpha = pluginTool("fake_reuse_alpha", "Alpha tool");
     const beta = pluginTool("fake_reuse_beta", "Beta tool");

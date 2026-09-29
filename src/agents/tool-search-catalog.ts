@@ -258,6 +258,7 @@ function registerToolSearchCatalog(params: {
   entries: ToolSearchCatalogEntry[];
   append?: boolean;
   toolExecutionAllow?: readonly string[];
+  directOnlyToolNames?: readonly string[];
 }): void {
   const prior = params.append ? params.catalogRef.current : undefined;
   // Appending client definitions cannot widen the current run's execution policy.
@@ -270,6 +271,7 @@ function registerToolSearchCatalog(params: {
   }
   const next = {
     entries: finalizeCatalogAvailability(Array.from(byId.values()), toolExecutionAllow),
+    directOnlyToolNames: params.append ? prior?.directOnlyToolNames : params.directOnlyToolNames,
     // Appended client tools extend the same counter lifetime. A replacement
     // gets a new scope so telemetry consumers never infer resets from values.
     // Hex avoids credential-shaped substrings that transcript redaction would alter.
@@ -458,6 +460,7 @@ export function applyToolCatalogCompaction(
 
   const visible: AnyAgentTool[] = [];
   let catalog: ToolSearchCatalogEntry[] = [];
+  const directOnlyToolNames: string[] = [];
   for (const tool of params.tools) {
     if (params.isVisibleControlTool(tool)) {
       visible.push(tool);
@@ -472,6 +475,9 @@ export function applyToolCatalogCompaction(
       if (!directVisible) {
         continue;
       }
+    }
+    if (tool.catalogMode === "direct-only") {
+      directOnlyToolNames.push(tool.name);
     }
     visible.push(tool);
   }
@@ -489,11 +495,13 @@ export function applyToolCatalogCompaction(
       : undefined;
   if (existingCatalog && reboundEntries) {
     existingCatalog.entries = reboundEntries;
+    existingCatalog.directOnlyToolNames = directOnlyToolNames;
   } else {
     registerToolSearchCatalog({
       catalogRef,
       entries: catalog,
       toolExecutionAllow: params.toolExecutionAllow,
+      directOnlyToolNames,
     });
   }
   return {

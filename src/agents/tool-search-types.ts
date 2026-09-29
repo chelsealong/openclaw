@@ -43,6 +43,8 @@ export type CatalogVisibilityOptions = {
 type UnknownToolRecoverySurface = "raw-tools" | "catalog";
 export type UnknownToolErrorOptions = {
   exactIdOnly?: boolean;
+  /** Model-visible tools kept out of the catalog; recovery must point at a direct call. */
+  directOnlyToolNames?: readonly string[];
   recoverySurface?: UnknownToolRecoverySurface;
 };
 export type ToolSearchCallOptions = CatalogVisibilityOptions &
@@ -117,6 +119,7 @@ export type ToolSearchCatalogEntry = {
 
 export type ToolSearchCatalogSession = {
   entries: ToolSearchCatalogEntry[];
+  directOnlyToolNames?: readonly string[];
   counterScope: string;
   searchCount: number;
   describeCount: number;

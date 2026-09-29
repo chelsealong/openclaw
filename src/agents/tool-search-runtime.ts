@@ -141,7 +141,12 @@ function findEntry(
   }
   const namedEntry = namedEntries[0];
   if (!namedEntry) {
-    throw new ToolInputError(formatUnknownToolIdError(needle, entries, options));
+    throw new ToolInputError(
+      formatUnknownToolIdError(needle, entries, {
+        ...options,
+        directOnlyToolNames: catalog.directOnlyToolNames,
+      }),
+    );
   }
   return namedEntry;
 }
@@ -155,7 +160,11 @@ function findEntryByExactId(
   const entry = catalog.entries.find((candidate) => candidate.id === needle);
   if (!entry) {
     throw new ToolInputError(
-      formatUnknownToolIdError(needle, catalog.entries, { ...errorOptions, exactIdOnly: true }),
+      formatUnknownToolIdError(needle, catalog.entries, {
+        ...errorOptions,
+        exactIdOnly: true,
+        directOnlyToolNames: catalog.directOnlyToolNames,
+      }),
     );
   }
   return entry;

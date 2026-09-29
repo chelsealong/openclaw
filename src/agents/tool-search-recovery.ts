@@ -65,6 +65,9 @@ export function formatUnknownToolIdError(
     const location = quotedLocation.length <= 1_024 ? quotedLocation : "its listed location";
     return `This id names a skill, not a callable tool. Load its complete instructions from ${location} using the skill-loading guidance in your system prompt.`;
   }
+  if (options.directOnlyToolNames?.includes(needle)) {
+    return `${needle} is not in the tool catalog; it is already available as a direct tool. Call ${needle} directly with its declared parameters.`;
+  }
   const nameCounts = new Map<string, number>();
   for (const entry of entries) {
     nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
