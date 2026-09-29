@@ -582,16 +582,17 @@ export async function terminateScheduledTaskGatewayListeners(
           continue;
         }
         await retryScheduledTaskLeaseRead(() => ownership.assertOwnerCurrent(pid));
-        await terminateGatewayProcessTree(pid, 300, async () => {
-          assertCurrent?.();
-          // Not gated on `stop`: the installer-rollback caller has no stop context to
-          // fall back to a sharing-error recovery, so this recheck must retry itself.
-          await retryScheduledTaskLeaseRead(() => ownership.assertOwnerCurrent(pid));
-          // The retry above can wait up to 15s; both authorities checked before it started
-          // may have been revoked during that wait, so recheck immediately before taskkill.
-          assertGatewayServiceUpdateCurrent();
-          assertCurrent?.();
-        });
+        await terminateGatewayProcessTree(
+          pid,
+          300,
+          async () => {
+            assertCurrent?.();
+            // Not gated on `stop`: the installer-rollback caller has no stop context to
+            // fall back to a sharing-error recovery, so this recheck must retry itself.
+            await retryScheduledTaskLeaseRead(() => ownership.assertOwnerCurrent(pid));
+          },
+          assertCurrent,
+        );
       }
       if (stop && !exclusion) {
         await retryScheduledTaskLeaseRead(ownership.assertOwnerCurrent);
@@ -685,11 +686,13 @@ export async function terminateGatewayProcessTree(
   pid: number,
   graceMs: number,
   assertCurrent?: () => void | Promise<void>,
+  assertCallerCurrent?: () => void,
 ): Promise<void> {
   // The awaited callback can retry for several seconds; either grant can be revoked
-  // during that wait, so recheck synchronously right after it resolves, immediately
-  // before the native termination effect below.
+  // during that wait, so recheck both synchronously right after it resolves,
+  // immediately before each native termination effect below.
   await assertCurrent?.();
+  assertCallerCurrent?.();
   assertGatewayServiceUpdateCurrent();
   if (process.platform !== "win32") {
     // These PIDs come from argv/port ownership; leader verification avoids signaling our group.
@@ -708,6 +711,7 @@ export async function terminateGatewayProcessTree(
     return;
   }
   await assertCurrent?.();
+  assertCallerCurrent?.();
   assertGatewayServiceUpdateCurrent();
   const forced = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
     env: resolveServiceManagerEnv(),

@@ -147,6 +147,31 @@ it("refuses graceful taskkill when update authority is revoked between the await
   expect(
     native.spawn.mock.calls.filter(([command]) => command.toLowerCase().endsWith("taskkill.exe")),
   ).toEqual([]);
+
+  // Same window, caller grant: revoked after `prepare` settles, before taskkill.
+  let callerRevoked = false;
+  revoked = false;
+  const assertCaller = () => {
+    if (callerRevoked) {
+      throw new Error("caller authority revoked after the pre-signal callback");
+    }
+  };
+  await expect(
+    terminateGatewayProcessTree(
+      4242,
+      300,
+      async () => {
+        await Promise.resolve();
+        queueMicrotask(() => {
+          callerRevoked = true;
+        });
+      },
+      assertCaller,
+    ),
+  ).rejects.toThrow("caller authority revoked after the pre-signal callback");
+  expect(
+    native.spawn.mock.calls.filter(([command]) => command.toLowerCase().endsWith("taskkill.exe")),
+  ).toEqual([]);
 });
 
 it("rechecks ownership after the asynchronous Windows suppression guard", async () => {
