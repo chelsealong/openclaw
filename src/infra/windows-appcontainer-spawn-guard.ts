@@ -18,15 +18,15 @@ function readIsAppContainer(): boolean {
   );
   const token: [bigint | null] = [null];
   if (!openToken(getCurrentProcess(), 0x0008, token)) {
-    return false;
+    throw new Error("Could not check for a Windows AppContainer: OpenProcessToken failed.");
   }
   try {
     const value = Buffer.alloc(4);
     const required: [number] = [0];
-    return (
-      getTokenInformation(token[0], TOKEN_IS_APP_CONTAINER, value, value.length, required) !== 0 &&
-      value.readUInt32LE(0) !== 0
-    );
+    if (getTokenInformation(token[0], TOKEN_IS_APP_CONTAINER, value, value.length, required) === 0) {
+      throw new Error("Could not check for a Windows AppContainer: GetTokenInformation failed.");
+    }
+    return value.readUInt32LE(0) !== 0;
   } finally {
     closeHandle(token[0]);
   }
