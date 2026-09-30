@@ -102,6 +102,7 @@ const GUARDIAN_TIMEOUT_WARNING =
 const LOG_ONLY_CODEX_WARNING_PATTERNS = [
   /^Configured service tier `[^`\r\n]+` is not advertised as supported for model `[^`\r\n]+` and will be omitted from requests\.$/,
   /^Code Mode is enabled in configuration, but model `[^`\r\n]+` does not advertise Code Mode support\. This may degrade model performance\. Disable `features\.code_mode` and `features\.code_mode_only`, or select a model whose metadata enables Code Mode\.$/,
+  /^Codex couldn't save diagnostic logs to its local database\. (?:Use \/feedback with logs included before closing Codex, or run|Run) `codex doctor` for diagnostics\.$/,
 ];
 
 export function projectNormalizedToolItem(params: {

@@ -316,6 +316,8 @@ describe("CodexAppServerEventProjector reasoning and guardian projection", () =>
   it.each([
     "Configured service tier `priority` is not advertised as supported for model `test-no-tier-model` and will be omitted from requests.",
     "Code Mode is enabled in configuration, but model `gpt-5.6-sol` does not advertise Code Mode support. This may degrade model performance. Disable `features.code_mode` and `features.code_mode_only`, or select a model whose metadata enables Code Mode.",
+    "Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.",
+    "Codex couldn't save diagnostic logs to its local database. Run `codex doctor` for diagnostics.",
   ])("keeps only the exact managed warning log-only: %s", async (message) => {
     const warn = vi.spyOn(embeddedAgentLog, "warn").mockImplementation(() => {});
     const { send, onAgentEvent } = await observeProjector();
