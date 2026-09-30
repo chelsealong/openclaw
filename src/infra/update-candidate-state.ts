@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { z } from "zod";
 import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -53,6 +54,7 @@ import {
 } from "./update-candidate-state.inspection.js";
 import { finishStateInspection } from "./update-candidate-state.process.js";
 import { readUpdateStateDatabaseSizes } from "./update-candidate-state.sizes.js";
+import { UPDATE_RUN_DIAGNOSTIC_LIMIT, UPDATE_RUN_TEXT_LIMIT } from "./update-run-limits.js";
 import type { UpdateDatabaseGenerations } from "./update-database-generations.js";
 
 const UpdateStateSchemaVersionsSchema = z.array(
@@ -304,7 +306,12 @@ export async function readUpdateCandidateStateInventoryInProcess(
       ...input,
       sharedStateDatabasePath,
       onProgress,
-      onWarning: (warning) => pluginWarnings.push(warning),
+      onWarning: (warning) => {
+        // The worker serializes this array to stdout; the parent applies the same caps later.
+        if (pluginWarnings.length < UPDATE_RUN_DIAGNOSTIC_LIMIT) {
+          pluginWarnings.push(truncateUtf16Safe(warning, UPDATE_RUN_TEXT_LIMIT));
+        }
+      },
     });
     await fs.writeFile(planPath, JSON.stringify(plugins));
     return {
