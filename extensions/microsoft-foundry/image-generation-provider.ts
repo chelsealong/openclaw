@@ -73,7 +73,11 @@ function ensureMaiImageModel(
 
 function isMaiImageEditModel(modelName: string): boolean {
   const normalized = normalizeOptionalLowercaseString(modelName);
-  return normalized === "mai-image-2.5" || normalized === "mai-image-2.5-flash";
+  return (
+    normalized === "mai-image-2.6" ||
+    normalized === "mai-image-2.5" ||
+    normalized === "mai-image-2.5-flash"
+  );
 }
 
 function resolveMaiImageSize(size: string | undefined): { width: number; height: number } {
