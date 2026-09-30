@@ -94,6 +94,11 @@ export async function listPendingLegacyCollectionBackupRoots(
           : undefined;
       // Keep workspace admission for existing archive and same-pass relocation recovery.
       if (workspaceDirs.size === 1 && candidateAgentIds.length === 0) {
+        // A retired workspace can no longer prove ownership once every backup already has a
+        // history-only archive under some configured agent; the retained source is complete.
+        if (await isFullyArchivedByAnyAgent(backups, config, env)) {
+          continue;
+        }
         const verifiedAgents = await verifyLegacyCollectionBackupOwners(backups, config, env);
         const candidates = verifiedAgents.filter((agent) => agent.verified);
         if (candidates.length === 1) {
@@ -143,6 +148,25 @@ export async function listPendingLegacyCollectionBackupRoots(
     }
   }
   return roots;
+}
+
+async function isFullyArchivedByAnyAgent(
+  backups: readonly LegacyCollectionBackup[],
+  config: OpenClawConfig,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const destinationRoots = listAgentIds(config).map((agentId) =>
+    resolveSkillCollectionBackupRoot(config, agentId, env),
+  );
+  for (const backup of backups) {
+    const archived = await Promise.all(
+      destinationRoots.map((root) => isHistoryOnlyBackup(path.join(root, backup.manifest.id))),
+    );
+    if (!archived.some(Boolean)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 type LegacyCollectionBackup = {

@@ -231,6 +231,35 @@ describe("doctor Skill Workshop collection backup migration", () => {
     ).resolves.toMatchObject({ legacyBackupRootCount: 0 });
   });
 
+  it("stops warning about a history-only archived backup once its workspace is retired", async () => {
+    const workspaceDir = await fs.realpath(
+      await tempDirs.make("openclaw-workshop-legacy-backup-workspace-"),
+    );
+    const resultContent =
+      "---\nname: legacy-collection-skill\ndescription: Current skill\n---\n\n# After cleanup\n";
+    await seedLegacyCollectionBackup({
+      workspaceDir,
+      backupId: "2026-09-01T00-00-00.000Z-legacy1",
+      backupContent:
+        "---\nname: legacy-collection-skill\ndescription: Legacy backup\n---\n\n# Before cleanup\n",
+      resultContent,
+    });
+    const mapped = {
+      agents: { list: [{ id: "main", default: true, workspace: workspaceDir }] },
+    };
+    await migrateLegacySkillWorkshopProposals({ config: mapped, env: testState.env });
+    const retired = {
+      agents: { list: [{ id: "main", default: true, workspace: testState.workspaceDir }] },
+    };
+
+    await expect(
+      inspectLegacySkillWorkshopMigration({ config: retired, env: testState.env }),
+    ).resolves.toMatchObject({ legacyBackupRootCount: 0 });
+    await expect(
+      migrateLegacySkillWorkshopProposals({ config: retired, env: testState.env }),
+    ).resolves.toEqual(expect.objectContaining({ changes: [], migrated: 0, warnings: [] }));
+  });
+
   it.each([
     { createdBy: "cli" as const, matchingReview: true },
     { createdBy: "skill-workshop" as const, matchingReview: true },
