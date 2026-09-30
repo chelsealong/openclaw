@@ -29,9 +29,7 @@ export function buildPublicModelProjection(
   options: { includeDetails?: boolean } = {},
 ): ModelsListEntry {
   const contextWindow = resolvePositiveSafeInteger(entry.contextWindow);
-  const contextTokens = options.includeDetails
-    ? resolvePositiveSafeInteger(entry.contextTokens)
-    : undefined;
+  const contextTokens = resolvePositiveSafeInteger(entry.contextTokens);
   return {
     id: entry.id,
     name: entry.name,

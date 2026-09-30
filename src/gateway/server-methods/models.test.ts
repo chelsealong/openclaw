@@ -2183,7 +2183,7 @@ describe("models.list", () => {
     expect(payload.models[0]).toMatchObject({ effectiveFastMode: expected });
   });
 
-  it("does not reinterpret context tokens or expose model input metadata", async () => {
+  it("keeps the active context budget but hides model input metadata by default", async () => {
     const { request, respond } = requestModelsList({
       view: "all",
       loadGatewayModelCatalog: catalogLoader([
@@ -2210,6 +2210,7 @@ describe("models.list", () => {
             available: false,
             unavailableReason: "missing-auth",
             contextWindow: 128_000,
+            contextTokens: 96_000,
           },
         ],
       },
