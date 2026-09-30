@@ -272,7 +272,7 @@ export function buildMicrosoftFoundryImageGenerationProvider(): ImageGenerationP
       }
       if (mode === "edits" && !hasMetadata && !isFoundryMaiImageModel(model)) {
         throw new Error(
-          "Microsoft Foundry MAI image edits require MAI-Image-2.5 model metadata for custom deployment names.",
+          "Microsoft Foundry MAI image edits require MAI-Image-2.5 or MAI-Image-2.6 model metadata for custom deployment names.",
         );
       }
 

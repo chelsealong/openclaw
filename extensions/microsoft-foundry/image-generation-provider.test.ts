@@ -431,7 +431,7 @@ describe("microsoft foundry image generation provider", () => {
         cfg: buildConfig({ includeModel: false }),
         inputImages: [{ buffer: Buffer.from("input"), mimeType: "image/png" }],
       }),
-    ).rejects.toThrow("edits require MAI-Image-2.5 model metadata");
+    ).rejects.toThrow("edits require MAI-Image-2.5 or MAI-Image-2.6 model metadata");
     expect(resolveApiKeyForProviderMock).not.toHaveBeenCalled();
     expect(postMultipartRequestMock).not.toHaveBeenCalled();
   });
