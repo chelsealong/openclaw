@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { runStep } from "./update-runner-command.js";
 
+describe("update command stdin", () => {
+  it("spawns steps with an empty stdin instead of the inherited terminal", async () => {
+    let received: { input?: string | Uint8Array } | undefined;
+    await runStep({
+      name: "package-install",
+      argv: ["pnpm", "add", "-g", "openclaw"],
+      cwd: "/fixture",
+      timeoutMs: 1000,
+      stepIndex: 0,
+      totalSteps: 1,
+      runCommand: async (_argv, options) => {
+        received = options;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    expect(received?.input).toBe("");
+  });
+});
+
 describe("update command failure diagnostics", () => {
   it.each(["stderr", "stdout"] as const)(
     "keeps the sanitized child cause below a package-manager banner in %s",

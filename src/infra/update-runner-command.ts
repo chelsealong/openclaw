@@ -69,6 +69,9 @@ export async function runStep(opts: RunStepOptions): Promise<UpdateStepResult> {
       cwd,
       timeoutMs,
       env,
+      // Output is captured, so a prompt could never be answered; an inherited TTY stdin makes
+      // package managers (pnpm 12) fail with "not a terminal". Give the child an empty stdin.
+      input: "",
     });
   } catch (error) {
     commandError = { cause: error };
