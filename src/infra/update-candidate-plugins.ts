@@ -10,6 +10,7 @@ import {
 } from "../config/plugin-install-record-map.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   isPluginInPackageBundledRoots,
   resolveBundledDirFromPackageRoot,
@@ -261,6 +262,8 @@ async function readCopiedPluginIndex(shared: string): Promise<
   }
 }
 
+const log = createSubsystemLogger("update/candidate-plugins");
+
 /** Inventory reads only private SQLite state and freezes the complete plugin projection. */
 export async function prepareUpdateCandidatePlugins(
   params: UpdateCandidatePluginProjectionParams & {
@@ -350,16 +353,27 @@ export async function prepareUpdateCandidatePlugins(
   for (const source of roots.keys()) {
     assertUpdateCandidatePluginCopySource(source, targetStateDir);
   }
-  const dependencies = inspectPluginSourceDependencies(
-    resolveUpdateCandidatePluginSourceEntries(
-      discoverConfiguredPluginLoadPaths({
-        loadPaths: locators.map(({ real }) => real),
-        env: params.env,
-      }).candidates,
-      params.config,
-    ),
-  );
-  for (const source of [...dependencies.packageRoots, ...dependencies.files]) {
+  const dependencies = resolveUpdateCandidatePluginSourceEntries(
+    discoverConfiguredPluginLoadPaths({
+      loadPaths: locators.map(({ real }) => real),
+      env: params.env,
+    }).candidates,
+    params.config,
+  ).flatMap((entry) => {
+    try {
+      return [inspectPluginSourceDependencies([entry])];
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) {
+        throw error;
+      }
+      // The plugin root is still copied; only its dependency discovery is skipped.
+      log.warn(
+        `Update snapshot could not inspect plugin ${entry.pluginId} (${entry.entryFile}): ${error.message}. Continuing without dependency discovery for this entry.`,
+      );
+      return [];
+    }
+  });
+  for (const source of dependencies.flatMap((graph) => [...graph.packageRoots, ...graph.files])) {
     if (![...roots.keys()].some((root) => isPathInside(root, source))) {
       roots.set(source, project(source));
     }
@@ -371,7 +385,9 @@ export async function prepareUpdateCandidatePlugins(
     candidateRoot: params.candidateRoot,
     onProgress: params.onProgress,
   });
-  dependencies.assertSourceCurrent();
+  for (const graph of dependencies) {
+    graph.assertSourceCurrent();
+  }
   const aliases: UpdateCandidatePluginPlan["aliases"] = [];
   for (const { source, real, file, preserveBasename } of locators) {
     const copy = trees.copies.find(([directory]) => isPathInside(directory, real));
