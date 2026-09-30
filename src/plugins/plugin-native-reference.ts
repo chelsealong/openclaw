@@ -75,11 +75,16 @@ export function assertPluginNativeReferenceNamespace(
   namespace: PluginNativeNamespaceFact,
   boundary: string,
   expectedHost?: string,
+  verifiedDirectories?: Set<string>,
 ): void {
   const relative = pluginNativeNamespaceMemberRelativePath(namespace, fact.capturedPath);
   const directory = path.dirname(relative);
+  // Targets in one directory share one companion walk within a synchronous validation pass.
+  const verifiedKey = `${path.dirname(target)}\0${directory}`;
   try {
-    for (const [name, member] of Object.entries(namespace.members)) {
+    for (const [name, member] of verifiedDirectories?.has(verifiedKey)
+      ? []
+      : Object.entries(namespace.members)) {
       if (!isPathInside(directory, name || ".")) {
         continue;
       }
@@ -110,6 +115,7 @@ export function assertPluginNativeReferenceNamespace(
         throw new Error(`Companion ${name} differs from its captured bytes`);
       }
     }
+    verifiedDirectories?.add(verifiedKey);
     if (expectedHost && resolveNativeHost(target) !== expectedHost) {
       throw new Error("The native companion directory resolves a different OpenClaw host");
     }
