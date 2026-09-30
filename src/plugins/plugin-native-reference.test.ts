@@ -59,5 +59,43 @@ describe("assertPluginNativeReferenceNamespace", () => {
     };
     expect(walk()).toBe(9);
     expect(walk(new Set())).toBe(3);
+
+    // A second namespace sharing the generated directory must not reuse the first one's result.
+    const otherRoot = path.join(root, "other");
+    fs.mkdirSync(path.join(otherRoot, "content"), { recursive: true });
+    fs.writeFileSync(path.join(otherRoot, "content", "a.node"), "other");
+    const other: PluginNativeNamespaceFact = {
+      ...namespace,
+      capturedRoot: otherRoot,
+      members: {
+        "a.node": {
+          ...namespace.members["a.node"],
+          source: path.join(otherRoot, "content", "a.node"),
+        },
+      },
+    };
+    const cache = new Set<string>();
+    const first = facts[0];
+    assertPluginNativeReferenceNamespace(
+      first.target,
+      first.fact,
+      namespace,
+      root,
+      undefined,
+      cache,
+    );
+    expect(() =>
+      assertPluginNativeReferenceNamespace(
+        first.target,
+        {
+          ...first.fact,
+          capturedPath: path.join(otherRoot, "content", "a.node"),
+        } as PluginNativeArtifactFact,
+        other,
+        root,
+        undefined,
+        cache,
+      ),
+    ).toThrow("cannot be preserved");
   });
 });

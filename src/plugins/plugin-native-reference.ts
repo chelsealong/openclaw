@@ -79,8 +79,13 @@ export function assertPluginNativeReferenceNamespace(
 ): void {
   const relative = pluginNativeNamespaceMemberRelativePath(namespace, fact.capturedPath);
   const directory = path.dirname(relative);
-  // Targets in one directory share one companion walk within a synchronous validation pass.
-  const verifiedKey = `${path.dirname(target)}\0${directory}`;
+  // Targets in one directory and namespace share one companion walk within a synchronous validation pass.
+  const verifiedKey = [
+    namespace.capturedRoot,
+    namespace.sourceDirectory,
+    path.dirname(target),
+    directory,
+  ].join("\0");
   try {
     for (const [name, member] of verifiedDirectories?.has(verifiedKey)
       ? []
