@@ -10,7 +10,6 @@ import {
 } from "../config/plugin-install-record-map.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   isPluginInPackageBundledRoots,
   resolveBundledDirFromPackageRoot,
@@ -262,11 +261,10 @@ async function readCopiedPluginIndex(shared: string): Promise<
   }
 }
 
-const log = createSubsystemLogger("update/candidate-plugins");
-
 /** Inventory reads only private SQLite state and freezes the complete plugin projection. */
 export async function prepareUpdateCandidatePlugins(
   params: UpdateCandidatePluginProjectionParams & {
+    onWarning?: (warning: string) => void;
     sharedStateDatabasePath?: string;
     onProgress?: () => void | Promise<void>;
   },
@@ -367,7 +365,7 @@ export async function prepareUpdateCandidatePlugins(
         throw error;
       }
       // The plugin root is still copied; only its dependency discovery is skipped.
-      log.warn(
+      params.onWarning?.(
         `Update snapshot could not inspect plugin ${entry.pluginId} (${entry.entryFile}): ${error.message}. Continuing without dependency discovery for this entry.`,
       );
       return [];

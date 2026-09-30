@@ -885,9 +885,15 @@ it("projects a plugin whose source cannot be parsed instead of failing the snaps
     targetStateDir: path.join(root, "candidate"),
     candidateRoot: root,
   } satisfies Parameters<typeof prepareUpdateCandidatePlugins>[0];
-  const projection = await prepareUpdateCandidatePlugins(params);
+  const warnings: string[] = [];
+  const projection = await prepareUpdateCandidatePlugins({
+    ...params,
+    onWarning: (warning) => warnings.push(warning),
+  });
   const paths = await copyUpdateCandidatePlugins(projection, params);
   expect(await fs.readFile(path.join(paths[plugin]!, "index.mjs"), "utf8")).toContain("value");
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("plugin broken");
 });
 
 it("keeps an optional-only linked node_modules copy bounded to its module owner", async () => {

@@ -135,6 +135,7 @@ export const UpdateCandidateSnapshotInventorySchema = z.object({
   databases: UpdateCandidateStateInventorySchema,
   pluginBytes: z.number().nonnegative(),
   pluginPlan: z.literal(UPDATE_CANDIDATE_PLUGIN_PLAN_FILENAME),
+  pluginWarnings: z.array(z.string()).optional(),
 });
 export const UpdateStateSchemaInspectionPlanSchema = z.object({
   files: z.array(z.tuple([z.string(), StateDatabaseDiscoverySchema])),
@@ -298,16 +299,19 @@ export async function readUpdateCandidateStateInventoryInProcess(
   ): Promise<z.infer<typeof UpdateCandidateSnapshotInventorySchema>> => {
     // Database discovery is complete; plugin failures must retain their own phase.
     input.onProgress?.({ phase: "plugin inventory", path: input.stateDir });
+    const pluginWarnings: string[] = [];
     const plugins = await prepareUpdateCandidatePlugins({
       ...input,
       sharedStateDatabasePath,
       onProgress,
+      onWarning: (warning) => pluginWarnings.push(warning),
     });
     await fs.writeFile(planPath, JSON.stringify(plugins));
     return {
       databases: files,
       pluginBytes: plugins.bytes,
       pluginPlan: UPDATE_CANDIDATE_PLUGIN_PLAN_FILENAME,
+      pluginWarnings,
     };
   };
   if (await fileExists(shared)) {
