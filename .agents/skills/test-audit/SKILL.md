@@ -175,8 +175,9 @@ Never edit source or tests while Vitest is running in the checkout. Follow
 CI retries need evidence. For an apparently unrelated infrastructure failure,
 inspect the failed step, run the exact case or smallest lane in isolation, and
 check whether the changed paths intersect it. One targeted retry can classify a
-transient failure; repeated failures remain blockers, and blanket retries hide
-them.
+transient failure. If it recurs, investigate within bounds, record the failure
+and remaining uncertainty, and continue under the normal CI and review gates;
+an unresolved failure alone does not block landing. Blanket retries hide it.
 
 ## Landing and continuation
 
