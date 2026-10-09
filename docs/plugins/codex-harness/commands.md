@@ -148,9 +148,11 @@ run-specific authority, and Codex's restricted-turn policy can change the
 surface when the turn starts.
 
 When inference is permitted, use an isolated test session with the intended
-policy. Use `/codex binding` to get its thread id, then inspect the native
-thread locally with `codex resume <thread-id>`. This helps investigate observed
-behavior, but still does not provide a guaranteed complete tool inventory.
+policy. Use `/codex threads [filter]` to find the pilot's thread id;
+`/codex binding` can show it only when the conversation was explicitly bound.
+Inspect the native thread on the same host with the same `CODEX_HOME` as the
+pilot runtime. This helps investigate observed behavior, but still does not
+provide a guaranteed complete tool inventory.
 Use `/diagnostics` only when you intentionally want to upload Codex thread
 feedback and logs to OpenAI after approving the command. If inference is not
 permitted yet, keep the pilot offline and treat the preview as provisional.
@@ -161,11 +163,15 @@ The fastest way to inspect a bad Codex run is often to open the native
 Codex thread directly:
 
 ```bash
-codex resume <thread-id>
+CODEX_HOME="/path/to/selected-native-home" codex resume <thread-id>
 ```
 
-Get the thread id from the completed `/diagnostics` reply, `/codex binding`,
-or `/codex threads [filter]`.
+Get the thread id from `/codex threads [filter]`, an explicitly bound
+conversation's `/codex binding`, or a completed `/diagnostics` reply. Run the
+CLI on the host that ran the pilot, with the same native home: local stdio uses
+the agent directory's `codex-home` by default, while user-home scope uses the
+selected user Codex home. See [environment isolation](/plugins/codex-harness/app-server#environment-isolation)
+for home selection; a plain CLI invocation may search a different home.
 
 For upload mechanics and runtime-level diagnostics boundaries, see
 [Codex harness runtime](/plugins/codex-harness-runtime#codex-feedback-upload).
