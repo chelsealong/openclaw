@@ -284,7 +284,7 @@ export async function getMessageFeishu(params: {
           const { name } = await resolveFeishuSenderName({
             account,
             senderId,
-            log: logVerbose,
+            log: (...args) => logVerbose(args.map(String).join(" ")),
           });
           senderNames.set(senderId, name ?? senderId);
         }
