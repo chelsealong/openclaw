@@ -5,6 +5,7 @@ import {
 import { escapeHtml, truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
 import { parseInteractiveCardContent } from "./interactive-message-content.js";
+import { normalizeMentions, type FeishuTextMention } from "./mention.js";
 import { renderPostContent } from "./post.js";
 
 export function formatFeishuMediaContent(
@@ -25,12 +26,16 @@ export function formatFeishuMediaContent(
   return "";
 }
 
-function formatSubMessageContent(content: string, contentType: string): string {
+function formatSubMessageContent(
+  content: string,
+  contentType: string,
+  mentions?: ReadonlyArray<FeishuTextMention>,
+): string {
   try {
     const parsed = JSON.parse(content);
     switch (contentType) {
       case "text":
-        return parsed.text || content;
+        return normalizeMentions(parsed.text || content, mentions);
       case "post":
         return renderPostContent(parsed).textContent;
       case "interactive":
@@ -80,6 +85,7 @@ export function parseMergeForwardContent(
     upper_message_id?: string;
     create_time?: string;
     sender?: { id?: string };
+    mentions?: ReadonlyArray<FeishuTextMention>;
   }>,
 ): string {
   const maxMessages = 50;

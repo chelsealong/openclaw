@@ -17,6 +17,10 @@ export type CrabboxState = Pick<OpenClawPluginApi["runtime"]["state"], "openKeye
 type WorkerNodeRuntimeIdentity = NonNullable<
   NonNullable<Parameters<WorkerProvider["provision"]>[2]>["nodeRuntimeIdentity"]
 >;
+export type WarmStartStatus = Parameters<
+  NonNullable<NonNullable<Parameters<WorkerProvider["provision"]>[2]>["reportStartStatus"]>
+>[0];
+export type WarmColdReason = Extract<WarmStartStatus, { mode: "cold" }>["reason"];
 
 export type WarmImageRecord = {
   checkpointId: string;
@@ -34,6 +38,7 @@ export type WarmImageRecord = {
 };
 
 export type WarmAllocationRecord = {
+  coldReason?: WarmColdReason;
   choice: { kind: "cold" } | { kind: "checkpoint"; checkpointId: string };
   machineClass: string;
   /** Absent in existing Linux allocations. */
@@ -53,6 +58,7 @@ export type WarmAllocationRecord = {
 
 export type WarmProfileRecord = {
   version: 3;
+  latestColdReason?: WarmColdReason;
   /** Configured profile that most recently allocated from this key; display only. */
   profileId?: string;
   backend?: string;
@@ -63,6 +69,8 @@ export type WarmProfileRecord = {
   projectKey?: string;
   image?: WarmImageRecord;
   previous?: WarmImageRecord;
+  /** Latest native-capture refusal; retained for display without suppressing later attempts. */
+  captureUnsupported?: { atMs: number; provider: string; message: string };
   allocations: Record<string, WarmAllocationRecord>;
   operation?:
     | {
@@ -135,11 +143,24 @@ function requireCanonicalProfile(record: WarmProfileRecord | undefined) {
     typeof value.createdAtMs === "number" &&
     Number.isSafeInteger(value.createdAtMs) &&
     value.createdAtMs >= 0;
+  const validCaptureUnsupported = (value: unknown) =>
+    isRecord(value) &&
+    typeof value.atMs === "number" &&
+    Number.isSafeInteger(value.atMs) &&
+    value.atMs >= 0 &&
+    typeof value.provider === "string" &&
+    value.provider.length > 0 &&
+    value.provider.length <= 128 &&
+    typeof value.message === "string" &&
+    value.message.length > 0 &&
+    value.message.length <= 1024;
   if (
     record &&
     (!isRecord(record.allocations) ||
       (record.image && !validImage(record.image)) ||
       (record.previous && !validImage(record.previous)) ||
+      (record.captureUnsupported !== undefined &&
+        !validCaptureUnsupported(record.captureUnsupported)) ||
       Object.values(record.allocations).some(
         (allocation) =>
           !isRecord(allocation) ||
@@ -156,6 +177,17 @@ function requireCanonicalProfile(record: WarmProfileRecord | undefined) {
   }
   return record;
 }
+
+export const isCrabboxCaptureRefusalRetained = (
+  record: WarmProfileRecord,
+  refreshAfterMs: number,
+): boolean =>
+  record.captureUnsupported !== undefined &&
+  Date.now() < record.captureUnsupported.atMs + refreshAfterMs;
+
+/** Crabbox diagnostics follow Go error style without a final period. */
+export const crabboxCaptureUnsupportedSentence = (message: string) =>
+  `${message.replace(/[.\s]+$/u, "")}.`;
 
 export const sameCrabboxWarmImageGeneration = (
   left: WarmAllocationRecord["imageGeneration"] | undefined,
@@ -352,6 +384,7 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
       id: string;
       projectKey?: string;
       availableImage?: WarmImageRecord;
+      coldReason?: WarmColdReason;
       displayFacts?: WarmProfileDisplayFacts;
       allocation: Omit<WarmAllocationRecord, "choice" | "imageGeneration">;
       assertCurrent: () => void;
@@ -396,10 +429,16 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
             : { kind: "cold" };
         const next = {
           ...record,
+          ...(choice.kind === "cold"
+            ? { latestColdReason: params.coldReason ?? "snapshot-unavailable" }
+            : {}),
           allocations: {
             ...record.allocations,
             [params.id]: {
               choice,
+              ...(choice.kind === "cold"
+                ? { coldReason: params.coldReason ?? "snapshot-unavailable" }
+                : {}),
               ...params.allocation,
               imageGeneration:
                 choice.kind === "checkpoint"
@@ -485,7 +524,7 @@ export function withoutCrabboxWarmImageOperation(record: WarmProfileRecord): War
   return profile;
 }
 
-export function crabboxWarmImageCaptureStatus(_key: string, record: WarmProfileRecord) {
+export function crabboxWarmImageCaptureStatus(record: WarmProfileRecord) {
   const capture = record.operation?.type === "capture" ? record.operation : undefined;
   if (!capture) {
     return undefined;
@@ -498,12 +537,6 @@ export function crabboxWarmImageCaptureStatus(_key: string, record: WarmProfileR
     phase: capture.phase,
     stale: Date.now() - capture.startedAtMs >= CAPTURE_WARNING_AGE_MS,
   };
-}
-
-export function isCrabboxWarmImageCaptureUncertain(
-  capture: NonNullable<ReturnType<typeof crabboxWarmImageCaptureStatus>>,
-): boolean {
-  return capture.phase === "uncertain";
 }
 
 export const CRABBOX_WARM_IMAGE_WAIT_HINT =
@@ -551,7 +584,9 @@ export function projectCrabboxWarmImage(key: string, value: WarmProfileRecord) {
         }
       : undefined,
     allocations: value.allocations,
-    capture: crabboxWarmImageCaptureStatus(key, value),
+    capture: crabboxWarmImageCaptureStatus(value),
+    captureUnsupported: value.captureUnsupported,
+    latestColdReason: value.latestColdReason,
     retirement:
       value.operation?.type === "retire"
         ? { checkpointId: value.operation.checkpointId }
@@ -617,7 +652,7 @@ export async function recoverCrabboxWarmImageCapture(
   }
   const store = openCrabboxWarmImageStore(state);
   const entry = (await store.entries()).find(
-    ({ key, value }) => crabboxWarmImageCaptureStatus(key, value)?.selector === selector,
+    ({ value }) => crabboxWarmImageCaptureStatus(value)?.selector === selector,
   );
   if (!entry || !(await clearCrabboxWarmImageCapture(store, entry.key, selector))) {
     throw new Error(
