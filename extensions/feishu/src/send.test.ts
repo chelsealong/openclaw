@@ -483,6 +483,33 @@ describe("getMessageFeishu", () => {
       content: "{bad json}",
     });
   });
+
+  it("looks up senders only for the first 50 chronological forwarded children", async () => {
+    const children = Array.from({ length: 51 }, (_, index) => ({
+      upper_message_id: "om_lookup_limit",
+      msg_type: "text",
+      create_time: String(index),
+      sender: { id: `ou_lookup_limit_${index}` },
+      body: body({ text: `child ${index}` }),
+    })).toReversed();
+    const getUser = vi.fn(async (_request: { path: { user_id: string } }) => ({
+      data: { user: { name: "Sender" } },
+    }));
+    mockCreateFeishuClient.mockReturnValue({
+      im: { message: { get: mockClientGet } },
+      contact: { user: { get: getUser } },
+    });
+    mockClientGet.mockResolvedValueOnce(
+      page([{ message_id: "om_lookup_limit", msg_type: "merge_forward" }, ...children]),
+    );
+
+    const result = await getMessageFeishu({ cfg: {}, messageId: "om_lookup_limit" });
+    expect(getUser.mock.calls.map(([request]) => request.path.user_id)).toEqual(
+      Array.from({ length: 50 }, (_, index) => `ou_lookup_limit_${index}`),
+    );
+    expect(result?.content).toContain("... and 1 more messages");
+    expect(result?.content).not.toContain("child 50");
+  });
 });
 
 describe("editMessageFeishu", () => {

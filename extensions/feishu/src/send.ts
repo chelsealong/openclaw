@@ -274,24 +274,21 @@ export async function getMessageFeishu(params: {
     const parsedItem = parseFeishuMessageItem(item, messageId);
     if (parsedItem.contentType === "merge_forward" && responseItems) {
       const account = resolveFeishuRuntimeAccount({ cfg, accountId });
-      const senderNames = new Map<string, string>();
-      if (account.config.resolveSenderNames ?? true) {
-        for (const child of responseItems) {
-          const senderId = child.sender?.id;
-          if (!senderId || child === item || senderNames.has(senderId)) {
-            continue;
-          }
-          const { name } = await resolveFeishuSenderName({
-            account,
-            senderId,
-            log: (...args) => logVerbose(args.map(String).join(" ")),
-          });
-          senderNames.set(senderId, name ?? senderId);
-        }
-      }
       return {
         ...parsedItem,
-        content: parseMergeForwardContent(responseItems, senderNames),
+        content: await parseMergeForwardContent(
+          responseItems,
+          (account.config.resolveSenderNames ?? true)
+            ? async (senderId) =>
+                (
+                  await resolveFeishuSenderName({
+                    account,
+                    senderId,
+                    log: (...args) => logVerbose(args.map(String).join(" ")),
+                  })
+                ).name
+            : undefined,
+        ),
       };
     }
     return parsedItem;

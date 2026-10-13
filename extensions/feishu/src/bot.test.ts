@@ -1462,7 +1462,7 @@ describe("handleFeishuMessage command authorization", () => {
     },
   );
 
-  it("does not partially parse malformed merge_forward create_time values", () => {
+  it("does not partially parse malformed merge_forward create_time values", async () => {
     const items = [
       {
         message_id: "container",
@@ -1492,12 +1492,12 @@ describe("handleFeishuMessage command authorization", () => {
       },
     ];
 
-    expect(parseMergeForwardContent(items)).toBe(
+    expect(await parseMergeForwardContent(items)).toBe(
       "[Merged and Forwarded Messages]\n- partial\n- [1970-01-01T00:00:01.000Z] valid\n- ou_original: out of range",
     );
   });
 
-  it("bounds merged-forward prompt content and marks truncation", () => {
+  it("bounds merged-forward prompt content and marks truncation", async () => {
     const items = [
       {
         message_id: "container",
@@ -1512,7 +1512,7 @@ describe("handleFeishuMessage command authorization", () => {
       },
     ];
 
-    const parsed = parseMergeForwardContent(items);
+    const parsed = await parseMergeForwardContent(items);
 
     expect(parsed.length).toBeLessThanOrEqual(20_000);
     expect(parsed.endsWith("\n... [Merged-forward content truncated]")).toBe(true);
