@@ -1483,10 +1483,17 @@ describe("handleFeishuMessage command authorization", () => {
         body: { content: JSON.stringify({ text: "valid" }) },
         create_time: "1000",
       },
+      {
+        upper_message_id: "container",
+        msg_type: "text",
+        body: { content: JSON.stringify({ text: "out of range" }) },
+        create_time: "8640000000000001",
+        sender: { id: "ou_original" },
+      },
     ];
 
     expect(parseMergeForwardContent(items)).toBe(
-      "[Merged and Forwarded Messages]\n- partial\n- [1970-01-01T00:00:01.000Z] valid",
+      "[Merged and Forwarded Messages]\n- partial\n- [1970-01-01T00:00:01.000Z] valid\n- ou_original: out of range",
     );
   });
 

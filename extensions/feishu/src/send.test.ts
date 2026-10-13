@@ -101,6 +101,7 @@ beforeEach(() => {
   mockResolveFeishuAccount.mockReturnValue({
     accountId: "default",
     configured: true,
+    config: {},
   });
   mockCreateFeishuClient.mockReturnValue({
     im: {
@@ -652,7 +653,7 @@ describe("fetched text mentions", () => {
       }
       expect(content).toBe(
         surface === "forward"
-          ? `[Merged and Forwarded Messages]\n- ${normalized}\n- <at user_id="ou_other">Other</at>`
+          ? `[Merged and Forwarded Messages]\n- [1970-01-01T00:00:01.000Z] ${normalized}\n- [1970-01-01T00:00:02.000Z] <at user_id="ou_other">Other</at>`
           : normalized,
       );
       expect(response).toEqual(before);

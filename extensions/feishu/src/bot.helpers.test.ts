@@ -72,7 +72,7 @@ it("keeps forwarded sticker keys and styled posts in chronological order", () =>
   ];
   const before = structuredClone(items);
   expect(parseMergeForwardContent(items)).toBe(
-    '[Merged and Forwarded Messages]\n- <sticker key="file_forwarded_sticker"/>\n- Forwarded\n\n**Status** *[Docs](https://example.com)*',
+    '[Merged and Forwarded Messages]\n- [1970-01-01T00:00:01.000Z] <sticker key="file_forwarded_sticker"/>\n- [1970-01-01T00:00:02.000Z] Forwarded\n\n**Status** *[Docs](https://example.com)*',
   );
   expect(items).toEqual(before);
 });

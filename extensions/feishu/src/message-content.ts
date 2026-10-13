@@ -60,24 +60,6 @@ function formatSubMessageContent(
   }
 }
 
-function formatMergeForwardTimestamp(createTime: string | undefined): string | undefined {
-  const ms = parseStrictNonNegativeInteger(createTime);
-  return ms === undefined ? undefined : timestampMsToIsoString(ms);
-}
-
-function formatMergeForwardLine(item: {
-  msg_type?: string;
-  body?: { content?: string };
-  create_time?: string;
-  sender?: { id?: string };
-}): string {
-  const body = formatSubMessageContent(item.body?.content || "", item.msg_type || "text");
-  const timestamp = formatMergeForwardTimestamp(item.create_time);
-  const senderId = item.sender?.id;
-  const timePrefix = timestamp ? `[${timestamp}] ` : "";
-  return senderId ? `${timePrefix}${senderId}: ${body}` : `${timePrefix}${body}`;
-}
-
 export function parseMergeForwardContent(
   items: ReadonlyArray<{
     msg_type?: string;
@@ -87,6 +69,7 @@ export function parseMergeForwardContent(
     sender?: { id?: string };
     mentions?: ReadonlyArray<FeishuTextMention>;
   }>,
+  senderNames?: ReadonlyMap<string, string>,
 ): string {
   const maxMessages = 50;
   if (items.length === 0) {
@@ -109,7 +92,16 @@ export function parseMergeForwardContent(
 
   const lines = ["[Merged and Forwarded Messages]"];
   for (const item of subMessages.slice(0, maxMessages)) {
-    lines.push(`- ${formatMergeForwardLine(item)}`);
+    const body = formatSubMessageContent(
+      item.body?.content || "",
+      item.msg_type || "text",
+      item.mentions,
+    );
+    const ms = parseStrictNonNegativeInteger(item.create_time);
+    const timestamp = ms === undefined ? undefined : timestampMsToIsoString(ms);
+    const senderId = item.sender?.id;
+    const sender = senderId ? (senderNames?.get(senderId) ?? senderId) : undefined;
+    lines.push(`- ${timestamp ? `[${timestamp}] ` : ""}${sender ? `${sender}: ` : ""}${body}`);
   }
   if (subMessages.length > maxMessages) {
     lines.push(`... and ${subMessages.length - maxMessages} more messages`);
