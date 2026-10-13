@@ -602,7 +602,7 @@ describe("ConfigPage Updates integration", () => {
     await waitForSolid(() => expect(refreshUpdateStatus).toHaveBeenCalledTimes(2));
   });
 
-  it("stages policy changes through patchForm and confirms Update now before overlays", async () => {
+  it("stages policy changes through patchForm and confirms Update Gateway before overlays", async () => {
     const patchForm = vi.fn();
     const updateActions = {
       captureUpdateTarget: () => () => true,
@@ -656,8 +656,10 @@ describe("ConfigPage Updates integration", () => {
     context.overlays.snapshot.updateStatusRefreshing = true;
     publishConfigSource(context.overlays);
     flush();
-    const checkingButton = container.querySelector<HTMLButtonElement>(".btn.primary")!;
-    expect(checkingButton.textContent?.trim()).toBe("Update now");
+    const checkingButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Update Gateway…",
+    )!;
+    expect(checkingButton.textContent?.trim()).toBe("Update Gateway…");
     expect(checkingButton.disabled).toBe(true);
     expect(checkingButton.title).toBe("Checking for updates…");
     expect(container.querySelector(".settings-status")?.textContent).toContain(
@@ -674,7 +676,9 @@ describe("ConfigPage Updates integration", () => {
     };
     publishConfigSource(context.overlays);
     flush();
-    const unknownUpdateButton = container.querySelector<HTMLButtonElement>(".btn.primary")!;
+    const unknownUpdateButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Update Gateway…",
+    )!;
     expect(unknownUpdateButton.disabled).toBe(true);
     expect(unknownUpdateButton.title).toBe(
       "Check for updates successfully before starting an update.",
@@ -687,7 +691,9 @@ describe("ConfigPage Updates integration", () => {
     };
     publishConfigSource(context.overlays);
     flush();
-    const knownUpdateButton = container.querySelector<HTMLButtonElement>(".btn.primary")!;
+    const knownUpdateButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Update Gateway…",
+    )!;
     expect(knownUpdateButton.disabled).toBe(false);
     expect(knownUpdateButton.title).toBe("");
     expect(container.querySelector(".settings-status")?.textContent).toContain(
@@ -730,7 +736,7 @@ describe("ConfigPage Updates integration", () => {
     automatic.checked = true;
     automatic.dispatchEvent(new Event("change"));
     [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("Update now"))
+      .find((button) => button.textContent?.includes("Update Gateway…"))
       ?.click();
     await nextFrame();
 
