@@ -23,6 +23,23 @@ afterEach(() => {
 });
 
 describe("process-owned directory observation", () => {
+  it("keeps an earlier recovery timer while adding later observations", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(0);
+    const first = tempDirs.make("owned-directory-first-");
+    const second = tempDirs.make("owned-directory-second-");
+    const firstListener = vi.fn();
+    const secondListener = vi.fn();
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    subscriptions.push(observeOwnedDirectory(first, firstListener, { recoveryIntervalMs: 30_000 }));
+    const timerCalls = timer.mock.calls.length;
+    subscriptions.push(observeOwnedDirectory(second, secondListener));
+    expect(timer).toHaveBeenCalledTimes(timerCalls);
+    vi.advanceTimersByTime(30_000);
+    expect(firstListener).toHaveBeenCalledOnce();
+    expect(secondListener).not.toHaveBeenCalled();
+  });
+
   it("recovers healthy watches every five minutes while authority subscribers keep 30 seconds", () => {
     vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     vi.setSystemTime(0);

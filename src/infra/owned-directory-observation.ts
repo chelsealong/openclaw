@@ -14,6 +14,7 @@ type Source = { path: string; watcher: fs.FSWatcher; directories: Set<Directory>
 const directories = new Map<string, Directory>();
 const sources = new Map<string, Source>();
 let fallback: ReturnType<typeof setTimeout> | undefined;
+let fallbackDueAtMs = Infinity;
 const REPAIR_INTERVAL_MS = 30_000;
 const RECOVERY_INTERVAL_MS = 300_000;
 
@@ -44,16 +45,27 @@ function fallbackInterval(directory: Directory): number {
     : REPAIR_INTERVAL_MS;
 }
 
-function scheduleFallback() {
-  clearTimeout(fallback);
-  fallback = undefined;
+function scheduleFallback(directory?: Directory) {
   if (!directories.size) {
+    clearTimeout(fallback);
+    fallback = undefined;
+    fallbackDueAtMs = Infinity;
     return;
   }
-  const delayMs = Math.min(...Array.from(directories.values(), fallbackRemaining));
+  const delayMs = directory
+    ? fallbackRemaining(directory)
+    : Math.min(...Array.from(directories.values(), fallbackRemaining));
+  const dueAtMs = performance.now() + Math.max(0, Math.ceil(delayMs));
+  if (fallback && fallbackDueAtMs <= dueAtMs) {
+    return;
+  }
+  clearTimeout(fallback);
+  fallbackDueAtMs = dueAtMs;
   fallback = runInDetachedAsyncContext(() =>
     setTimeout(
       () => {
+        fallback = undefined;
+        fallbackDueAtMs = Infinity;
         for (const entry of Array.from(directories.values())) {
           if (fallbackRemaining(entry) > 0 || directories.get(entry.path) !== entry) {
             continue;
@@ -174,7 +186,7 @@ export function observeOwnedDirectory(
   const listener: Listener = (filename) => onChange(filename);
   selected.listeners.set(listener, options?.recoveryIntervalMs ?? RECOVERY_INTERVAL_MS);
   retainEarlierFallback(selected, nextFallback(fallbackInterval(selected)));
-  scheduleFallback();
+  scheduleFallback(selected);
   return {
     close() {
       if (!selected.listeners.delete(listener) || selected.listeners.size) {
@@ -182,10 +194,8 @@ export function observeOwnedDirectory(
       }
       directories.delete(key);
       detach(selected);
+      // A removed earliest deadline may fire early; the callback then rearms the survivors.
       if (!directories.size) {
-        clearTimeout(fallback);
-        fallback = undefined;
-      } else {
         scheduleFallback();
       }
     },

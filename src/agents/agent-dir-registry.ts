@@ -66,13 +66,6 @@ function registryPath(agentDir: string, env?: NodeJS.ProcessEnv, registering = f
       ),
     );
   }
-  for (const [oldestPath, oldest] of preparedPaths) {
-    if (preparedPaths.size <= 256) {
-      break;
-    }
-    preparedPaths.delete(oldestPath);
-    oldest.close();
-  }
   return key;
 }
 
