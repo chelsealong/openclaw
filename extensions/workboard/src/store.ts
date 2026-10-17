@@ -295,6 +295,15 @@ export class WorkboardStore extends WorkboardNotificationStore {
         const patch: WorkboardOwnedCardPatch = {};
         let metadata: Record<string, unknown> | undefined;
         const launch = card.metadata?.automation?.launch;
+        // A blocked managed attempt has released its claim. Its late session end
+        // must not settle the attempt again after an operator requeues the card.
+        if (
+          input.association &&
+          launch?.phase === "accepted" &&
+          card.execution?.status === "blocked"
+        ) {
+          return undefined;
+        }
         const associationIsCurrent =
           !input.association ||
           ((input.sourceUpdatedAt === undefined ||
