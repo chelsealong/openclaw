@@ -35,7 +35,7 @@ vi.mock("../../../plugins/plugin-peer-link.js", async (importOriginal) => {
 });
 vi.mock("../../../plugins/npm-project-roots.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../plugins/npm-project-roots.js")>();
-  return { ...actual, listManagedPluginNpmRoots: mocks.managedRoots };
+  return { ...actual, listInstalledPluginNpmRoots: mocks.managedRoots };
 });
 // mock-isolation: Script payload checks without launching installed plugin code.
 vi.mock("../../../plugins/payload-verification.js", () => ({
@@ -135,7 +135,7 @@ describe("runPostCorePluginConvergence", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.managedRoots.mockImplementation((npmRoot: string) => Promise.resolve([npmRoot]));
+    mocks.managedRoots.mockImplementation((npmRoot: string) => [npmRoot]);
     mocks.repairBundled.mockReturnValue(null);
     mockRepairs();
     mocks.relinkPeers.mockResolvedValue(peerResult);
@@ -166,7 +166,7 @@ describe("runPostCorePluginConvergence", () => {
       let refuse = false;
       let completed = false;
       let siblingSettled = false;
-      mocks.managedRoots.mockResolvedValue(["first-root", "second-root"]);
+      mocks.managedRoots.mockReturnValue(["first-root", "second-root"]);
       mocks.relinkPeers.mockImplementation(
         async (params: { npmRoot: string; beforePersistentApply?: () => void }) => {
           if (params.npmRoot === "first-root") {
@@ -263,11 +263,11 @@ describe("runPostCorePluginConvergence", () => {
     });
   });
 
-  it("repairs managed npm openclaw peer links in every managed npm project before payload smoke checks", async () => {
+  it("repairs selected managed npm roots before payload smoke checks", async () => {
     const stateDir = makeTempDir();
     mockRepairs({ codex: { source: "npm", installPath: "/p/codex" } });
     const roots = [path.join(stateDir, "npm"), path.join(stateDir, "npm", "projects", "codex")];
-    mocks.managedRoots.mockResolvedValue(roots);
+    mocks.managedRoots.mockReturnValue(roots);
     mocks.relinkPeers
       .mockResolvedValueOnce(peerResult)
       .mockResolvedValueOnce({ checked: 1, attempted: 1, repaired: 1, skipped: 0 });

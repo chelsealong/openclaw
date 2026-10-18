@@ -12,7 +12,7 @@ import {
   resolveDefaultPluginExtensionsDir,
   resolveDefaultPluginNpmDir,
 } from "../../../plugins/install-paths.js";
-import { listManagedPluginNpmRoots } from "../../../plugins/npm-project-roots.js";
+import { listInstalledPluginNpmRoots } from "../../../plugins/npm-project-roots.js";
 import type { PluginPayloadSmokeFailure } from "../../../plugins/payload-verification.js";
 import { withPluginLifecycleLease } from "../../../plugins/plugin-lifecycle-lease.js";
 import {
@@ -105,7 +105,10 @@ async function repairInstalledOpenClawHostLinks(params: {
     packageReadFailures.push({ error, packageDir });
   };
   try {
-    const npmRoots = await listManagedPluginNpmRoots(resolveDefaultPluginNpmDir(params.env));
+    const npmRoots = listInstalledPluginNpmRoots(
+      resolveDefaultPluginNpmDir(params.env),
+      params.installRecords,
+    );
     const results = await Promise.allSettled(
       npmRoots.map((npmRoot) =>
         relinkOpenClawPeerDependenciesInManagedNpmRoot({

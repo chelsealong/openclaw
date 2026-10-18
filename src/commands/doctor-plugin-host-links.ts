@@ -10,7 +10,10 @@ import {
   loadInstalledPluginIndexInstallRecords,
   type InstalledPluginIndexRecordStoreOptions,
 } from "../plugins/installed-plugin-index-records.js";
-import { listManagedPluginNpmRootsSync } from "../plugins/npm-project-roots.js";
+import {
+  listInstalledPluginNpmRoots,
+  listManagedPluginNpmRootsSync,
+} from "../plugins/npm-project-roots.js";
 import {
   auditOpenClawPeerDependenciesInManagedNpmRoot,
   reconcileRegisteredOpenClawHostLinks,
@@ -55,8 +58,12 @@ export async function listPluginOpenClawHostLinkIssues(
     (failures: PluginPackageReadFailure[]) => (error: unknown, packageDir: string) => {
       failures.push({ packageDir, reason: formatPackageReadFailure(error) });
     };
+  const installRecords = await loadInstalledPluginIndexInstallRecords(params);
   const audits = await Promise.all(
-    resolveDoctorPluginNpmRoots(params).map((npmRoot) =>
+    listInstalledPluginNpmRoots(
+      params.stateDir ? path.join(params.stateDir, "npm") : resolveDefaultPluginNpmDir(params.env),
+      installRecords,
+    ).map((npmRoot) =>
       auditOpenClawPeerDependenciesInManagedNpmRoot({
         npmRoot,
         onPackageReadError: recordReadFailure(packageReadFailures),
@@ -64,7 +71,7 @@ export async function listPluginOpenClawHostLinkIssues(
     ),
   );
   const registeredAudit = await reconcileRegisteredOpenClawHostLinks({
-    installRecords: await loadInstalledPluginIndexInstallRecords(params),
+    installRecords,
     extensionsDir: resolveRegisteredPluginExtensionsRoot(params),
     env: params.env,
     mode: "audit",
@@ -81,7 +88,6 @@ export async function listPluginOpenClawHostLinkIssues(
 export async function maybeRepairPluginOpenClawHostLinks(
   params: PluginHostLinkDoctorParams,
 ): Promise<boolean> {
-  const npmRoots = resolveDoctorPluginNpmRoots(params);
   if (!params.prompter.shouldRepair) {
     const audit = await listPluginOpenClawHostLinkIssues(params);
     const reportLinks = (
@@ -135,6 +141,11 @@ export async function maybeRepairPluginOpenClawHostLinks(
       `Could not inspect ${kind} package ${shortenHomePath(packageDir)}: ${formatPackageReadFailure(error)}`,
     );
   };
+  const installRecords = await loadInstalledPluginIndexInstallRecords(params);
+  const npmRoots = listInstalledPluginNpmRoots(
+    params.stateDir ? path.join(params.stateDir, "npm") : resolveDefaultPluginNpmDir(params.env),
+    installRecords,
+  );
   const results = await Promise.all(
     npmRoots.map((npmRoot) =>
       relinkOpenClawPeerDependenciesInManagedNpmRoot({
@@ -146,7 +157,7 @@ export async function maybeRepairPluginOpenClawHostLinks(
   );
   const repaired = results.reduce((total, result) => total + result.repaired, 0);
   const registeredRepair = await reconcileRegisteredOpenClawHostLinks({
-    installRecords: await loadInstalledPluginIndexInstallRecords(params),
+    installRecords,
     extensionsDir: resolveRegisteredPluginExtensionsRoot(params),
     env: params.env,
     mode: "repair",

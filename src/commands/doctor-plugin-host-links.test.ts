@@ -5,7 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { note } from "../../packages/terminal-core/src/note.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import {
+  resolvePluginNpmGenerationProjectDir,
+  resolvePluginNpmProjectDir,
+} from "../plugins/install-paths.js";
 import { seedInstalledPluginIndex } from "../plugins/test-helpers/installed-plugin-index.js";
+import { writeManagedNpmPlugin } from "../plugins/test-helpers/managed-npm-plugin.js";
+import {
+  listPluginOpenClawHostLinkIssues,
+  maybeRepairPluginOpenClawHostLinks,
+} from "./doctor-plugin-host-links.js";
 import {
   detectPluginRegistryHealthIssues,
   maybeRepairPluginRegistryState,
@@ -104,6 +113,52 @@ function createDoctorParams(stateDir: string, shouldRepair: boolean) {
     prompter: { shouldRepair },
   };
 }
+
+it("audits and repairs only the recorded managed npm generation", async () => {
+  const stateDir = tempDirs.make("openclaw-doctor-generation-links-");
+  const packageName = "@fixture/generation";
+  const npmDir = path.join(stateDir, "npm");
+  const flatRoot = resolvePluginNpmProjectDir({ npmDir, packageName });
+  const makeGeneration = (key: string) => {
+    const flatPackage = writeManagedNpmPlugin({
+      stateDir,
+      packageName,
+      pluginId: "generation",
+      version: "1.0.0",
+    });
+    const generationRoot = resolvePluginNpmGenerationProjectDir({
+      npmDir,
+      packageName,
+      generationKey: key,
+    });
+    fs.renameSync(flatRoot, generationRoot);
+    const packageDir = path.join(generationRoot, path.relative(flatRoot, flatPackage));
+    const manifestPath = path.join(packageDir, "package.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({ ...manifest, peerDependencies: { openclaw: "*" } }),
+    );
+    const hostDir = path.join(packageDir, "node_modules", "openclaw");
+    fs.mkdirSync(hostDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(hostDir, "package.json"),
+      JSON.stringify({ name: "openclaw", version: "0.0.1" }),
+    );
+    return { packageDir, hostDir };
+  };
+  const selected = makeGeneration("selected");
+  const stale = makeGeneration("stale");
+  await writeInstallRecords(stateDir, {
+    generation: { source: "npm", installPath: selected.packageDir, resolvedName: packageName },
+  });
+
+  const issues = await listPluginOpenClawHostLinkIssues(createDoctorParams(stateDir, false));
+  expect(issues.peerLinkIssues.map((issue) => issue.packageDir)).toEqual([selected.packageDir]);
+  await maybeRepairPluginOpenClawHostLinks(createDoctorParams(stateDir, true));
+  expect(fs.lstatSync(selected.hostDir).isSymbolicLink()).toBe(true);
+  expect(fs.lstatSync(stale.hostDir).isDirectory()).toBe(true);
+});
 
 describe("registered host links", () => {
   const source = "clawhub";

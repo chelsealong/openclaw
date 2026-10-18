@@ -2,9 +2,11 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { tryReadJsonSync } from "../infra/json-files.js";
 import { isNotFoundPathError } from "../infra/path-guards.js";
 import {
+  isPluginNpmManagedPath,
   isPluginNpmProjectDir,
   resolvePluginNpmProjectsDir,
   validatePluginId,
@@ -88,4 +90,38 @@ export function listManagedPluginNpmRootsSync(npmRoot: string): string[] {
 /** Async variant of managed npm root discovery. */
 export async function listManagedPluginNpmRoots(npmRoot: string): Promise<string[]> {
   return [npmRoot, ...(await listManagedPluginNpmProjectRoots(npmRoot))];
+}
+
+/** Host-link maintenance follows selected installs; recovery and cleanup still scan all projects. */
+export function listInstalledPluginNpmRoots(
+  npmRoot: string,
+  records: Record<string, PluginInstallRecord>,
+): string[] {
+  const selected = new Set<string>();
+  for (const record of Object.values(records)) {
+    if (record.source !== "npm" || !record.installPath) {
+      continue;
+    }
+    const installPath = path.resolve(record.installPath);
+    const parent = path.dirname(installPath);
+    const packageName = path.basename(parent).startsWith("@")
+      ? `${path.basename(parent)}/${path.basename(installPath)}`
+      : path.basename(installPath);
+    if (validatePluginId(packageName) !== null) {
+      continue;
+    }
+    const nodeModulesPath = path.join("node_modules", ...packageName.split("/"));
+    if (!installPath.endsWith(`${path.sep}${nodeModulesPath}`)) {
+      continue;
+    }
+    const projectRoot = installPath.slice(0, -nodeModulesPath.length - 1);
+    const owned =
+      projectRoot === path.resolve(npmRoot)
+        ? isPluginNpmManagedPath({ managedPath: installPath, npmDir: npmRoot })
+        : isPluginNpmProjectDir({ packageName, projectDir: projectRoot, npmDir: npmRoot });
+    if (owned) {
+      selected.add(projectRoot);
+    }
+  }
+  return sortPaths([...selected]);
 }
