@@ -63,6 +63,7 @@ const RUNTIME_COORDINATION_ERROR_NAMES = new Set([
   "WorkerWorkspaceReconciliationError",
   "ActiveTurnClaimError",
   "SqliteWorkerError",
+  "SessionCapabilityMetadataChangedError",
 ]);
 
 export { recordModelFallbackStop } from "./model-fallback-stop.js";
