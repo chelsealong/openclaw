@@ -462,12 +462,18 @@ describe("update-cli", () => {
     },
   );
 
-  it.each([
-    { name: "update channel", run: () => update.invokeUpdateCli({ channel: "" }) },
-    { name: "finalization channel", run: () => update.updateFinalizeCommand({ channel: "" }) },
-  ])("rejects an explicitly empty $name before mutation", async ({ name, run }) => {
+  it.each(
+    ["", 'beta"\nFORGED'].flatMap((channel) => [
+      { name: "update channel", channel, run: () => update.invokeUpdateCli({ channel }) },
+      {
+        name: "finalization channel",
+        channel,
+        run: () => update.updateFinalizeCommand({ channel }),
+      },
+    ]),
+  )("rejects invalid $name ($channel) before mutation", async ({ name, channel, run }) => {
     const runsBefore = update.listUpdateRuns();
-    const message = '--channel must be "stable", "extended-stable", "beta", or "dev" (got "")';
+    const message = `--channel must be "stable", "extended-stable", "beta", or "dev" (got ${JSON.stringify(channel)})`;
     if (name === "finalization channel") {
       const failure = await run().catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(ExpectedCliError);

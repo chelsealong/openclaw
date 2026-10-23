@@ -8,7 +8,11 @@ import { runCliProcessChild } from "./cli-process-child.test-helpers.js";
 it.each(
   ["repair", "finalize"].flatMap((command) =>
     ["parent", "leaf", "human"].flatMap((format) =>
-      ["", "unrecognized-channel"].map((channel) => ({ command, format, channel })),
+      ["", "unrecognized-channel", 'beta"\nFORGED'].map((channel) => ({
+        command,
+        format,
+        channel,
+      })),
     ),
   ),
 )(
@@ -44,3 +48,33 @@ it.each(
     });
   },
 );
+
+it("escapes an invalid update channel in JSON output", async () => {
+  await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+    await state.writeConfig({ update: { channel: "stable" } });
+    const before = await fs.readFile(state.configPath, "utf8");
+    const channel = 'beta"\nFORGED';
+    const result = await runCliProcessChild({
+      nodeArgs: [
+        ...resolveRuntimeWorkerArgv(resolveRuntimeWorkerUrl(cliRecoveryEntrypoints.cli)),
+        "update",
+        "--json",
+        "--channel",
+        channel,
+      ],
+      env: { ...process.env, ...state.env, OPENCLAW_TEST_RUNTIME_LOG: "1" },
+    });
+    const message = `--channel must be "stable", "extended-stable", "beta", or "dev" (got ${JSON.stringify(channel)})`;
+    expect(result, result.stderr).toMatchObject({ code: 1, signal: null });
+    expect(result.stderr.trim().split("\n")).toEqual([
+      "[openclaw] The CLI command failed.",
+      `[openclaw] Reason: ${message}`,
+      "[openclaw] For help, run `openclaw doctor`.",
+    ]);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      error: { type: "cli_error", message },
+    });
+    expect(await fs.readFile(state.configPath, "utf8")).toBe(before);
+  });
+});
