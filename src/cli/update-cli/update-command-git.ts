@@ -442,6 +442,7 @@ export async function updateGitInstall(params: {
       config,
       stateDir: resolveStateDir(env),
       env,
+      backupDirectory: params.switchToGit ? undefined : path.join(params.root, ".artifacts"),
     });
     await reportUpdateStepCompletion(params.progress, { ...snapshot, index: 0, total: 0 });
     assertCurrent?.();

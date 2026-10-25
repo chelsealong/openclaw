@@ -27,7 +27,10 @@ import { isSqliteSnapshotFile } from "./sqlite-file-header.js";
 import { resolveSqliteDatabaseFilePaths } from "./sqlite-files.js";
 import { createPrivateSqliteDirectory } from "./sqlite-private-directory.js";
 import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
-import { measureUpdateStateFiles } from "./update-candidate-io.js";
+import {
+  measureUpdateStateFiles,
+  requiredUpdateDatabaseBackupBytes,
+} from "./update-candidate-io.js";
 import { UpdateStateDatabaseOwnerSchema } from "./update-candidate-paths.js";
 import type { UpdateStateInspectionProgress } from "./update-candidate-state.diagnostics.js";
 import {
@@ -190,7 +193,7 @@ async function checkDatabaseBackupSpace(directory: string, files: readonly strin
   };
   const reserve = 64 * 1024 * 1024;
   // This volume holds snapshots, same-volume rollback copies, and acquisition/publication scratch.
-  check(directory, bytes === 0 ? 0 : 2 * bytes + 3 * largest + reserve, "Update database backup");
+  check(directory, requiredUpdateDatabaseBackupBytes(bytes, largest), "Update database backup");
   const backupDevice = (await fs.stat(directory, { bigint: true })).dev;
   const sources = new Map<bigint | string, { directory: string; bytes: number; largest: number }>();
   for (const family of families) {

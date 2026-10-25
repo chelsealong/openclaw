@@ -21,6 +21,11 @@ export async function measureUpdateStateFiles(
   return { bytes, largest, families };
 }
 
+/** Space for backup snapshots, same-volume rollback copies, and publication scratch. */
+export function requiredUpdateDatabaseBackupBytes(bytes: number, largest: number): number {
+  return bytes === 0 ? 0 : 2 * bytes + 3 * largest + 64 * 1024 * 1024;
+}
+
 /** Bound private update I/O without releasing accepted work before it settles. */
 export async function withUpdateCandidateIoBudget<T>(
   params: {

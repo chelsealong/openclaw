@@ -465,6 +465,25 @@ it.each([
   },
 );
 
+it("checks durable backup space separately from candidate snapshot space", async () => {
+  const f = await fixture(8, ["main", "second"], false);
+  const backupDirectory = path.join(f.root, ".artifacts");
+  let backupSpaceMiB = 100;
+  capacity((target) => (target === backupDirectory ? backupSpaceMiB : 140) * 1024 ** 2);
+  const params = {
+    config: {},
+    stateDir: f.stateDir,
+    env: {},
+    backupDirectory,
+  };
+  const result = await assessInitialUpdateSnapshotCapacity(params);
+  expect(result.exitCode).toBe(1);
+  expect(result.stderrTail).toContain("Update database backup");
+  await expect(fs.stat(backupDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  backupSpaceMiB = 140;
+  expect((await assessInitialUpdateSnapshotCapacity(params)).exitCode).toBe(0);
+});
+
 it("copies and verifies both databases within the admitted capacity", async () => {
   const f = await capacityFixture(100, true);
   const rehearsal = await f.prepare();

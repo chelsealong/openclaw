@@ -15,7 +15,11 @@ import { hasNodeErrorCode } from "./path-guards.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
 import { createPrivateSqliteTempDirectory } from "./sqlite-private-directory.js";
-import { measureUpdateStateFiles, withUpdateCandidateIoBudget } from "./update-candidate-io.js";
+import {
+  measureUpdateStateFiles,
+  requiredUpdateDatabaseBackupBytes,
+  withUpdateCandidateIoBudget,
+} from "./update-candidate-io.js";
 import {
   readUpdateCandidatePluginCodeLinks,
   type UpdateCandidatePluginCodeLink,
@@ -114,6 +118,8 @@ type InitialSnapshotParams = {
   config: OpenClawConfig;
   stateDir: string;
   env: NodeJS.ProcessEnv;
+  /** Durable database backup destination for an existing Git checkout. */
+  backupDirectory?: string;
 };
 
 /** Measure known SQLite families without allocating state or reading the candidate plugin inventory. */
@@ -125,6 +131,7 @@ async function measureInitialUpdateSnapshotState(params: InitialSnapshotParams) 
   return {
     capacity: measureSnapshotCapacity(params.stateDir, { ...size, pluginBytes: null }, params.env),
     families: size.families,
+    backupRequiredBytes: requiredUpdateDatabaseBackupBytes(size.bytes, size.largest),
   };
 }
 
@@ -138,18 +145,29 @@ export async function assessInitialUpdateSnapshotCapacity(
     cwd: params.stateDir,
   };
   try {
-    const { capacity, families } = await measureInitialUpdateSnapshotState(params);
+    const { capacity, families, backupRequiredBytes } =
+      await measureInitialUpdateSnapshotState(params);
+    const backupSpace = params.backupDirectory
+      ? (tryReadDiskSpace(params.backupDirectory)?.availableBytes ?? null)
+      : null;
+    const backupRefused = backupSpace !== null && backupSpace < backupRequiredBytes;
     // Refuse only at the existing allocator's data-at-risk boundary: every
     // eligible destination is known to be too small for the private state copy.
-    const refused =
+    const snapshotRefused =
       capacity.candidates.length > 0 &&
       capacity.candidates.every(
         (candidate) =>
           candidate.availableBytes !== null && candidate.availableBytes < capacity.requiredBytes,
       );
+    const refused = snapshotRefused || backupRefused;
     const diagnostics = [
       "Snapshot size estimate: plugin copies and registered external databases are measured after staging.",
       `Initial snapshot needs ${formatDiskSpaceBytes(capacity.requiredBytes)} for ${formatDiskSpaceBytes(capacity.sqliteBytes)} of known SQLite files and temporary working space.`,
+      ...(params.backupDirectory
+        ? [
+            `Update database backup near ${params.backupDirectory}: ${formatDiskSpaceBytes(backupRequiredBytes)} needed; ${backupSpace === null ? "free space unknown" : `${formatDiskSpaceBytes(backupSpace)} free`}.`,
+          ]
+        : []),
       ...capacity.candidates.map(
         (candidate) =>
           `${candidate.kind} ${candidate.directory}: ${formatDiskSpaceBytes(capacity.requiredBytes)} needed; ${candidate.availableBytes === null ? "free space unknown" : `${formatDiskSpaceBytes(candidate.availableBytes)} free`}.`,
@@ -165,9 +183,13 @@ export async function assessInitialUpdateSnapshotCapacity(
         durationMs: Date.now() - started,
         exitCode: 1,
         stderrTail: [
-          "snapshot-capacity-insufficient: no eligible directory has enough free space for the required state snapshot.",
+          backupRefused
+            ? "snapshot-capacity-insufficient: insufficient space for the update database backup before validation."
+            : "snapshot-capacity-insufficient: no eligible directory has enough free space for the required state snapshot.",
           ...diagnostics,
-          "Free space on a reported filesystem or set TMPDIR to a writable directory with enough space, then retry the update.",
+          backupRefused
+            ? "Free space at the database backup destination before retrying the update."
+            : "Free space on a reported filesystem or set TMPDIR to a writable directory with enough space, then retry the update.",
         ].join("\n"),
         snapshotCapacity: capacity,
       };
