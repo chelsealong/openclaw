@@ -630,7 +630,6 @@ describe("memory-core dreaming phases", () => {
   it("checkpoints session transcript ingestion and skips unchanged transcripts", async () => {
     setStateDir(path.join(workspaceDir, ".state"));
     const { sweep } = createDailyHarness({ includeMainAgent: true, memorySearchEnabled: false });
-
     const transcriptName = `dreaming-${"x".repeat(48)}`;
     const snippetTranscriptName = "snippet-boundary";
     const renderedSource = `[main/sessions/main/${transcriptName}#L4] `;
@@ -662,13 +661,13 @@ describe("memory-core dreaming phases", () => {
       ],
     });
 
-    let firstSessionIngestion;
-    await withClock(async () => {
-      await sweepLight(sweep, 5);
-      firstSessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
-      await sweepLight(sweep, 6);
-    });
-
+    const inventory = vi.spyOn(sessionCorpus, "listSessionTranscriptCorpusEntriesForAgent");
+    await runLight(sweep);
+    const discovered = await inventory.mock.results[0]?.value;
+    inventory.mockRestore();
+    expect(JSON.stringify(discovered)).not.toContain('"contentRevision"');
+    const firstSessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
+    await runLight(sweep, 6);
     const sessionIngestion = await dreamingTestState.readSessionIngestionState(workspaceDir);
     expect(firstSessionIngestion).toStrictEqual(sessionIngestion);
     expect(Object.keys(sessionIngestion.files)).toContain(`main:sessions/main/${transcriptName}`);
@@ -704,43 +703,6 @@ describe("memory-core dreaming phases", () => {
     expect(snippets).toContain("Set retention to 365 days.");
     const ranked = await rankCandidates(Date.parse("2026-04-05T19:00:00.000Z"));
     expect(ranked).toHaveLength(0);
-  });
-
-  it("discovers transcripts without inventory revisions and scans later changes", async () => {
-    setStateDir(path.join(workspaceDir, ".state"));
-    const { sweep } = createDailyHarness({ includeMainAgent: true, memorySearchEnabled: false });
-    const listCorpus = sessionCorpus.listSessionTranscriptCorpusEntriesForAgent;
-    let discovered: Awaited<ReturnType<typeof listCorpus>> = [];
-    const inventory = vi
-      .spyOn(sessionCorpus, "listSessionTranscriptCorpusEntriesForAgent")
-      .mockImplementation(async (...args) => {
-        discovered = await listCorpus(...args);
-        return discovered;
-      });
-    const sessionId = "revision-skip";
-    try {
-      await seedTranscript({
-        sessionId,
-        messages: [makeMessage("user", "2026-04-05T18:01:00.000Z", "Keep the first note.")],
-      });
-      await runLight(sweep);
-      expect(discovered).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ sessionId, transcriptSource: "sqlite" }),
-        ]),
-      );
-      expect(discovered.every((entry) => entry.contentRevision === undefined)).toBe(true);
-      expect(await fs.readFile(corpusPath(), "utf-8")).toContain("Keep the first note.");
-
-      await seedTranscript({
-        sessionId,
-        messages: [makeMessage("user", "2026-04-05T18:02:00.000Z", "Keep the next note.")],
-      });
-      await runLight(sweep, 6);
-      expect(await fs.readFile(corpusPath(), "utf-8")).toContain("Keep the next note.");
-    } finally {
-      inventory.mockRestore();
-    }
   });
 
   it("records policy exclusions and keeps forgotten sessions excluded after policy removal and resweeps", async () => {
