@@ -46,6 +46,10 @@ Methods an operator client calls on behalf of a person: helper reads, exec appro
   - A saved `toolOverrides.webSearch=false` excludes core `web_search`. Changing
     this override selects the matching preview instead of reusing the other
     state's cached inventory.
+  - Saved sandbox policy filters both core tools and warm MCP catalogs. A session
+    that requires a sandbox keeps that policy even when local sandbox mode is
+    off. A matching active remote-exec placement also applies sandbox policy.
+    Previewing tools does not provision a sandbox or grant execution authority.
   - `tools.effective` is read-only for MCP: it may project a warm session MCP
     catalog through the final tool policy, but does not create MCP runtimes,
     connect transports, or issue `tools/list`. If no matching warm catalog
@@ -175,9 +179,18 @@ catalog consumers, retaining cancellation and any explicit request deadline.
   aliases. Unknown provider IDs return `INVALID_REQUEST` with the rejected ID.
   Omit the filter or run `openclaw models list --all` to list models and their
   provider IDs.
-- `includeDetails: true` includes available input modalities, effective
-  `contextTokens`, and a `local` endpoint classification. It does not expose
-  endpoint URLs, headers, credentials, costs or runtime request parameters.
+- Rows include `contextWindow` (the model's maximum) and the effective
+  `contextTokens` budget when those values are known, so pickers can show the
+  active budget without session metadata.
+- `includeDetails: true` also includes available input modalities and a `local`
+  endpoint classification. It does not expose endpoint URLs, headers,
+  credentials, costs or runtime request parameters.
+
+An unchanged catalog renewal emits `chat.metadata.changed` with
+`modelCatalogChanged: false` and `modelCatalogStatusChanged: true`. The Control UI
+refreshes only cached receipts that still contain `pendingProviders`; settled
+catalogs remain reusable. Inventory, availability, and account changes still
+invalidate affected catalogs.
 
 The Control UI shares the initial `models.snapshot` with matching configured
 catalog readers. If bootstrap does not deliver it within one second, readers

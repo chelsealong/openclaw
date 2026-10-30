@@ -1,4 +1,4 @@
-import { For, createMemo, createSignal } from "solid-js";
+import { Errored, For, Loading, Show, createMemo, createSignal, latest } from "solid-js";
 import { SESSION_COMMUNICATION_MODES } from "../../../packages/gateway-protocol/src/session-communication.js";
 import { registerSessionOrganizationEnglish } from "../i18n/locales/en-session-organization.ts";
 import { formatUiError } from "../lib/format-error.ts";
@@ -215,18 +215,7 @@ export function useSessionMenuDetails(
       </For>
     </div>
   );
-  const communicationStart: MenuEntry = {
-    kind: "content",
-    id: "communication-start",
-    content: <div class="session-menu__separator" role="separator" />,
-  };
-  const communicationEnd: MenuEntry = {
-    kind: "content",
-    id: "communication-end",
-    content: <div class="session-menu__separator" role="separator" />,
-  };
   const communication = (): MenuEntry[] => [
-    communicationStart,
     { kind: "content", id: "communication-controls", content: communicationControls },
     ...(policy()?.send !== undefined || policy()?.receive !== undefined
       ? [
@@ -240,8 +229,40 @@ export function useSessionMenuDetails(
           },
         ]
       : []),
-    communicationEnd,
   ];
-  const error = () => actions.advanced.error;
-  return { ownerStatus, ownerOptions, communication, error };
+  const ReadStatus = () => {
+    return <>{(latest(actions.advanced.read), null)}</>;
+  };
+  const readStatus: MenuEntry = {
+    id: "reload-settings",
+    get label() {
+      return t("common.retry");
+    },
+    render: (attributes) => (
+      <Show when={actions.advanced.readKey()} keyed>
+        <Errored
+          fallback={(error) => (
+            <>
+              <div class="session-menu__info" role="alert">
+                {formatUiError(error())}
+              </div>
+              <button
+                {...attributes}
+                class="oc-menu-item session-menu__item"
+                type="button"
+                value="reload-settings"
+              >
+                {t("common.retry")}
+              </button>
+            </>
+          )}
+        >
+          <Loading fallback={null} on={actions.advanced.readKey()}>
+            <ReadStatus />
+          </Loading>
+        </Errored>
+      </Show>
+    ),
+  };
+  return { ownerStatus, ownerOptions, communication, readStatus };
 }

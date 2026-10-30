@@ -1,3 +1,4 @@
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   resolveCronJobEffectiveAgentId,
   tryResolveCronJobEffectiveAgentId,
@@ -40,6 +41,27 @@ import type {
   GatewayRequestContext,
   GatewayRequestHandlerOptions,
 } from "./types.js";
+
+/** Check stored and requested kinds: metadata-only edits must not revive command jobs. */
+export function assertCronModelJobAllowed(
+  client: GatewayClient | null,
+  config: OpenClawConfig,
+  job: Pick<CronJobCreate, "payload" | "schedule">,
+  patch?: CronJobPatch,
+): void {
+  if (
+    client?.internal?.agentRuntimeIdentity &&
+    config.tools?.gatewayPolicy?.automations?.allowCommandJobs === false &&
+    (job.payload.kind === "command" ||
+      job.schedule.kind === "on-exit" ||
+      patch?.payload?.kind === "command" ||
+      patch?.schedule?.kind === "on-exit")
+  ) {
+    throw new TypeError(
+      "Gateway tool policy denies model changes to or runs of command automations.",
+    );
+  }
+}
 
 export function resolveCronCreatorAuthorityCapture(
   callerScope: CronCallerScope | undefined,
@@ -104,7 +126,7 @@ export function resolveCronMutationCommitGuard(
   callerAuthority?: Pick<
     GatewayRequestHandlerOptions,
     "sessionMutationCommitGuard" | "hasCurrentClientAuthority"
-  >,
+  > & { modelJobPolicy?: { config: OpenClawConfig; jobId: string; patch?: CronJobPatch } },
 ): (() => void) | undefined {
   const validatesAuthority =
     client?.internal?.agentRuntimeIdentity && context.validateAgentRuntimeApprovalAuthority;
@@ -135,6 +157,14 @@ export function resolveCronMutationCommitGuard(
       throw new TypeError("Gateway caller authority is no longer active.");
     }
     manageAll?.();
+    if (identity && callerAuthority?.modelJobPolicy) {
+      const { config, jobId, patch } = callerAuthority.modelJobPolicy;
+      const job = context.cron.getJob(jobId);
+      if (!job) {
+        throw new TypeError(`unknown cron job id: ${jobId}`);
+      }
+      assertCronModelJobAllowed(client, config, job, patch);
+    }
     if (validatesAuthority) {
       assertActiveAgentRuntimeAuthority(client, context);
     }
@@ -336,6 +366,26 @@ function isOperatorCommandCronJob(job: CronJob): boolean {
   );
 }
 
+/**
+ * Whether the caller is a trusted job's recorded owner conversation. Visibility accepts owner
+ * records written before account stamping; changing what runs needs the proven account.
+ */
+export function cronTrustedJobOwnedByCaller(
+  job: Pick<CronJob, "owner">,
+  callerScope: Pick<CronCallerScope, "sessionKey" | "accountId">,
+  options: { requireAccount?: boolean } = {},
+): boolean {
+  const sessionKey = callerScope.sessionKey?.trim();
+  const ownerAccountId = job.owner?.accountId;
+  return (
+    Boolean(sessionKey) &&
+    job.owner?.sessionKey?.trim() === sessionKey &&
+    (ownerAccountId
+      ? normalizeAccountId(ownerAccountId) === callerScope.accountId
+      : !options.requireAccount)
+  );
+}
+
 export function cronJobMatchesCallerScope(params: {
   job: CronJob;
   callerScope: CronCallerScope | undefined;
@@ -368,13 +418,15 @@ export function cronJobMatchesCallerScope(params: {
   ) {
     return true;
   }
-  // Account jobs retain the exact creator session's scheduled authority.
+  // Account jobs retain the exact creator session's scheduled authority. Trusted jobs stay
+  // visible to their recorded owner conversation; edits that change what runs narrow them.
   if (
     policy &&
-    (policy.mode === "trusted" ||
-      params.callerScope.sessionKey?.trim() !== policy.ownerSessionKey ||
-      params.job.owner?.sessionKey?.trim() !== policy.ownerSessionKey ||
-      params.callerScope.accountId !== normalizeAccountId(policy.ownerAccountId))
+    (policy.mode === "trusted"
+      ? !cronTrustedJobOwnedByCaller(params.job, params.callerScope)
+      : params.callerScope.sessionKey?.trim() !== policy.ownerSessionKey ||
+        params.job.owner?.sessionKey?.trim() !== policy.ownerSessionKey ||
+        params.callerScope.accountId !== normalizeAccountId(policy.ownerAccountId))
   ) {
     return false;
   }
@@ -403,7 +455,13 @@ export function cronJobMatchesDeclarationScope(params: {
   defaultAgentId?: string;
 }): boolean {
   if (params.callerScope) {
-    return cronJobMatchesCallerScope(params);
+    // Owner visibility of trusted jobs is for lifecycle and narrowing updates; a declaration
+    // replaces the whole definition, so it never converges onto operator authority.
+    return (
+      (Boolean(params.callerScope.manageAll) ||
+        params.job.scheduledToolPolicy?.mode !== "trusted") &&
+      cronJobMatchesCallerScope(params)
+    );
   }
 
   // Declarative convergence preserves the matched job's owner, so account identity must be part
