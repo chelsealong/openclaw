@@ -680,6 +680,39 @@ describe("sessions_send gating", () => {
     expect(runSessionsSendA2AFlow).not.toHaveBeenCalled();
   });
 
+  it.each(["ok", "error"] as const)(
+    "does not deliver a delayed %s to a cron script requester",
+    async (status) => {
+      const deliverRequesterReply = vi.fn().mockResolvedValue(undefined);
+      const { runSessionsSendA2AFlow: runReplyFlow } = await vi.importActual<
+        typeof import("./sessions-send-tool.a2a.js")
+      >("./sessions-send-tool.a2a.js");
+      runSessionsSendA2AFlow.mockImplementation(async (params) =>
+        runReplyFlow({
+          ...params,
+          reply:
+            status === "ok"
+              ? {
+                  status: "ok",
+                  replyText: "Done",
+                  terminalReply: { disposition: "visible", text: "Done" },
+                }
+              : { status: "error", error: "Target failed" },
+          deliverRequesterReply,
+        }),
+      );
+
+      await executeFireAndForgetA2AFrom("agent:main:cron:job:trigger");
+      await Promise.all(runSessionsSendA2AFlow.mock.results.map((result) => result.value));
+
+      expect(
+        callGatewayMock.mock.calls.filter(([request]) => request.method === "agent"),
+      ).toHaveLength(1);
+      expect(deliverRequesterReply).not.toHaveBeenCalled();
+      expect(runSessionsSendA2AFlow).not.toHaveBeenCalled();
+    },
+  );
+
   it("caps oversized timeoutSeconds before waiting for the target run", async () => {
     const targetSessionKey = "agent:main:other";
     const tool = createMainSessionsSendTool({ config: createAllSessionsConfig() });
